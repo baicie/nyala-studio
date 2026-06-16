@@ -29,7 +29,15 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     watch: {
-      ignored: ['**/src-tauri/**'],
+      // Cargo puts build artifacts at the workspace-root `target/` (since
+      // src-tauri is a workspace member), not inside src-tauri/target.
+      // Watching those files crashes Vite on Windows with EBUSY when Cargo
+      // briefly locks the .dll/.pdb it's writing.
+      ignored: [
+        '**/src-tauri/**',
+        '**/target/**',
+        '**/crates/**/target/**',
+      ],
     },
   },
   envPrefix: ['VITE_', 'TAURI_'],
