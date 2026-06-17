@@ -1,0 +1,168 @@
+.sql-connections-viewlet {
+	min-width: 0;
+}
+
+.sql-connections-view {
+	box-sizing: border-box;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 8px;
+	overflow: hidden;
+}
+
+.sql-connections-form {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	flex: 0 0 auto;
+}
+
+.sql-connections-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	font-size: 11px;
+	opacity: 0.95;
+}
+
+.sql-connections-input {
+	box-sizing: border-box;
+	width: 100%;
+	height: 26px;
+	padding: 3px 6px;
+	border: 1px solid var(--vscode-input-border);
+	color: var(--vscode-input-foreground);
+	background: var(--vscode-input-background);
+	outline: none;
+}
+
+.sql-connections-input:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.sql-connections-options {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	font-size: 11px;
+}
+
+.sql-connections-checkbox {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.sql-connections-actions {
+	display: flex;
+	gap: 6px;
+}
+
+.sql-connections-button {
+	height: 26px;
+	padding: 0 10px;
+	border: 1px solid var(--vscode-button-border);
+	color: var(--vscode-button-secondaryForeground);
+	background: var(--vscode-button-secondaryBackground);
+	cursor: pointer;
+}
+
+.sql-connections-button.primary {
+	color: var(--vscode-button-foreground);
+	background: var(--vscode-button-background);
+}
+
+.sql-connections-button:hover {
+	background: var(--vscode-button-hoverBackground);
+}
+
+.sql-connections-message {
+	min-height: 18px;
+	font-size: 11px;
+	opacity: 0.85;
+	white-space: pre-wrap;
+}
+
+.sql-connections-message.error {
+	color: var(--vscode-errorForeground);
+	opacity: 1;
+}
+
+.sql-connections-tree {
+	flex: 1 1 auto;
+	overflow: auto;
+	outline: none;
+	font-size: 12px;
+}
+
+.sql-connection-node-wrapper {
+	min-width: 0;
+}
+
+.sql-connection-node {
+	display: flex;
+	align-items: center;
+	min-height: 22px;
+	gap: 4px;
+	white-space: nowrap;
+	user-select: none;
+}
+
+.sql-connection-node:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.sql-connection-node-twisty {
+	width: 16px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	color: inherit;
+	background: transparent;
+	cursor: pointer;
+}
+
+.sql-connection-node-icon {
+	width: 16px;
+	text-align: center;
+	opacity: 0.85;
+}
+
+.sql-connection-node-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sql-connection-node-description {
+	margin-left: 4px;
+	opacity: 0.62;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sql-connection-node-action {
+	margin-left: auto;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	color: inherit;
+	background: transparent;
+	cursor: pointer;
+	opacity: 0;
+}
+
+.sql-connection-node:hover .sql-connection-node-action {
+	opacity: 0.8;
+}
+
+.sql-connection-node.type-error .sql-connection-node-label,
+.sql-connection-node.type-error .sql-connection-node-description {
+	color: var(--vscode-errorForeground);
+}
+
+.sql-connection-node.type-empty {
+	opacity: 0.75;
+}

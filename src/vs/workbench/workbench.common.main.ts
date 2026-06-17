@@ -205,6 +205,9 @@ import './contrib/files/browser/explorerViewlet.js';
 import './contrib/files/browser/fileActions.contribution.js';
 import './contrib/files/browser/files.contribution.js';
 
+// SQL Studio
+import './contrib/sqlConnections/browser/sqlConnections.contribution.js';
+
 // Bulk Edit
 import './contrib/bulkEdit/browser/bulkEditService.js';
 
