@@ -1,15 +1,15 @@
 [package]
-name = "sidex"
-version = "0.1.3"
-description = "SideX - A fast, open-source code editor"
-authors = ["Siden Technologies Inc"]
+name = "sql-studio-next"
+version = "0.1.0"
+description = "SQL Studio Next - A VS Code-like SQL workbench built on Tauri"
+authors = ["baicie"]
 license = "MIT"
-repository = "https://github.com/sidenai/sidex"
+repository = "https://github.com/baicie/sql-studio-next"
 edition = "2021"
 rust-version = "1.91.0"
 
 [[bin]]
-name = "SideX"
+name = "sql-studio-next"
 path = "src/main.rs"
 
 [lib]
@@ -95,7 +95,7 @@ sidex-remote = { path = "../crates/sidex-remote" }
 sidex-settings = { path = "../crates/sidex-settings" }
 sidex-theme = { path = "../crates/sidex-theme" }
 
-# SideX crates
+# SideX upstream crates retained as internal implementation assets.
 sidex-git = { path = "../crates/sidex-git" }
 sidex-workspace = { path = "../crates/sidex-workspace" }
 

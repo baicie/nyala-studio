@@ -50,7 +50,8 @@ pub(crate) fn resolve_windows_shell() -> String {
 #[cfg(target_os = "windows")]
 fn is_git_bash_path(path: &std::path::Path) -> bool {
     let normalized = path.to_string_lossy().replace('/', "\\").to_lowercase();
-    normalized.ends_with("\\git\\bin\\bash.exe") || normalized.ends_with("\\git\\usr\\bin\\bash.exe")
+    normalized.ends_with("\\git\\bin\\bash.exe")
+        || normalized.ends_with("\\git\\usr\\bin\\bash.exe")
 }
 
 #[cfg(target_os = "windows")]
@@ -62,7 +63,12 @@ fn resolve_git_bash() -> Option<String> {
             let root = std::path::PathBuf::from(root);
             candidates.push(root.join("Git").join("bin").join("bash.exe"));
             candidates.push(root.join("Git").join("usr").join("bin").join("bash.exe"));
-            candidates.push(root.join("Programs").join("Git").join("bin").join("bash.exe"));
+            candidates.push(
+                root.join("Programs")
+                    .join("Git")
+                    .join("bin")
+                    .join("bash.exe"),
+            );
             candidates.push(
                 root.join("Programs")
                     .join("Git")

@@ -26,11 +26,11 @@ members = [
 exclude = ["extensions-rust"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.91.0"
 license = "MIT"
-repository = "https://github.com/sidenai/sidex"
+repository = "https://github.com/baicie/sql-studio-next"
 
 [workspace.dependencies]
 # Internal crates

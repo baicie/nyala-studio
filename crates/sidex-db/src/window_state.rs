@@ -60,9 +60,7 @@ pub fn save_window_state(db: &Database, state: &WindowState) -> Result<()> {
 pub fn load_window_state(db: &Database) -> Result<Option<WindowState>> {
     let mut stmt = db
         .conn()
-        .prepare_cached(
-            "SELECT x, y, width, height, is_maximized FROM window_state WHERE id = 1",
-        )
+        .prepare_cached("SELECT x, y, width, height, is_maximized FROM window_state WHERE id = 1")
         .context("prepare load window state")?;
 
     let result = stmt

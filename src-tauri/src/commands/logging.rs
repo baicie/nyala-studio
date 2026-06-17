@@ -31,7 +31,7 @@ impl LoggerState {
         if self.filepath.exists() {
             let metadata = fs::metadata(&self.filepath)
                 .map_err(|e| format!("Failed to get log file metadata: {e}"))?;
-            
+
             if metadata.len() >= self.max_size {
                 self.rotate_logs()?;
             }
@@ -41,7 +41,9 @@ impl LoggerState {
 
     fn rotate_logs(&self) -> Result<(), String> {
         // Remove oldest log if we've hit the limit
-        let oldest_log = self.filepath.with_extension(&format!("log.{}", self.max_files));
+        let oldest_log = self
+            .filepath
+            .with_extension(format!("log.{}", self.max_files));
         if oldest_log.exists() {
             fs::remove_file(&oldest_log)
                 .map_err(|e| format!("Failed to remove oldest log: {e}"))?;
@@ -49,8 +51,8 @@ impl LoggerState {
 
         // Rotate existing logs: log.4 -> log.5, log.3 -> log.4, etc.
         for i in (1..self.max_files).rev() {
-            let current = self.filepath.with_extension(&format!("log.{i}"));
-            let next = self.filepath.with_extension(&format!("log.{}", i + 1));
+            let current = self.filepath.with_extension(format!("log.{i}"));
+            let next = self.filepath.with_extension(format!("log.{}", i + 1));
             if current.exists() {
                 fs::rename(&current, &next)
                     .map_err(|e| format!("Failed to rotate log {i}: {e}"))?;
@@ -81,7 +83,7 @@ impl LoggerState {
             4 => "ERROR",
             _ => "UNKNOWN",
         };
-        format!("[{} {}] {}", timestamp, level_str, message)
+        format!("[{timestamp} {level_str}] {message}")
     }
 }
 
@@ -184,14 +186,14 @@ pub fn log_flush(
 ) -> Result<(), String> {
     let loggers = state.loggers.lock().map_err(|e| e.to_string())?;
     let logger = loggers.get(&logger_id).ok_or("logger not found")?;
-    
+
     if logger.filepath.exists() {
         let file = File::open(&logger.filepath)
             .map_err(|e| format!("Failed to open log file for flushing: {e}"))?;
         file.sync_all()
             .map_err(|e| format!("Failed to flush log file: {e}"))?;
     }
-    
+
     Ok(())
 }
 
@@ -215,7 +217,7 @@ pub fn log_get_size(
 ) -> Result<u64, String> {
     let loggers = state.loggers.lock().map_err(|e| e.to_string())?;
     let logger = loggers.get(&logger_id).ok_or("logger not found")?;
-    
+
     if logger.filepath.exists() {
         let metadata = fs::metadata(&logger.filepath)
             .map_err(|e| format!("Failed to get log file size: {e}"))?;
@@ -234,11 +236,10 @@ pub fn log_clear(
 ) -> Result<(), String> {
     let loggers = state.loggers.lock().map_err(|e| e.to_string())?;
     let logger = loggers.get(&logger_id).ok_or("logger not found")?;
-    
+
     if logger.filepath.exists() {
-        fs::write(&logger.filepath, "")
-            .map_err(|e| format!("Failed to clear log file: {e}"))?;
+        fs::write(&logger.filepath, "").map_err(|e| format!("Failed to clear log file: {e}"))?;
     }
-    
+
     Ok(())
 }

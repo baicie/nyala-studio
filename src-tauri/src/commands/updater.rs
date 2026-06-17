@@ -1,8 +1,7 @@
 //! Tauri command bindings for the native update manager.
 //!
-//! The TypeScript `IUpdateService` on the frontend invokes these commands
-//! and listens to the `sidex://update/state-change` event to mirror
-//! `onStateChange`.
+//! The TypeScript update service invokes these commands and listens to the
+//! product-scoped update state event.
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -10,8 +9,10 @@ use std::sync::{Arc, OnceLock};
 use sidex_update::{State, UpdateConfig, UpdateManager, UpdateObserver, UpdateResult, UpdateType};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::product;
+
 /// Tauri event name carrying the latest [`State`] payload.
-pub const STATE_EVENT: &str = "sidex://update/state-change";
+pub const STATE_EVENT: &str = product::UPDATE_STATE_EVENT;
 
 /// App-state wrapper so Tauri can hold a single [`UpdateManager`] instance.
 pub struct UpdateManagerState {
@@ -55,7 +56,8 @@ impl UpdateObserver for EventEmitter {
 /// Initializes the [`UpdateManager`] during Tauri setup.
 ///
 /// Pulls feed endpoints and the Minisign public key from the bundled
-/// `tauri.conf.json` so existing release infrastructure keeps working.
+/// `tauri.conf.json`. SQL Studio Next currently ships without an updater
+/// endpoint, so this can safely initialize into a disabled/no-endpoint state.
 pub fn initialize(app: &AppHandle) -> UpdateResult<()> {
     let config = read_config(app);
     let manager = UpdateManager::new(config)?;
@@ -95,10 +97,9 @@ fn read_config(app: &AppHandle) -> UpdateConfig {
         current_version: app.package_info().version.to_string(),
         cache_dir: cache_dir(app),
         update_type: default_update_type(),
-        user_agent: format!(
-            "sidex/{} ({})",
-            app.package_info().version,
-            std::env::consts::OS
+        user_agent: product::update_user_agent(
+            &app.package_info().version.to_string(),
+            std::env::consts::OS,
         ),
     }
 }
@@ -130,10 +131,12 @@ pub async fn update_check(
     explicit: bool,
 ) -> Result<State, String> {
     let manager = require_manager(&state)?.clone();
+
     manager
         .check_for_updates(explicit)
         .await
         .map_err(|e| e.to_string())?;
+
     Ok(manager.state())
 }
 
@@ -143,23 +146,28 @@ pub async fn update_download(
     explicit: bool,
 ) -> Result<State, String> {
     let manager = require_manager(&state)?.clone();
+
     manager
         .download_update(explicit)
         .await
         .map_err(|e| e.to_string())?;
+
     Ok(manager.state())
 }
 
 #[tauri::command]
 pub async fn update_apply(state: tauri::State<'_, UpdateManagerState>) -> Result<State, String> {
     let manager = require_manager(&state)?.clone();
+
     manager.apply_update().await.map_err(|e| e.to_string())?;
+
     Ok(manager.state())
 }
 
 #[tauri::command]
 pub async fn update_cancel(state: tauri::State<'_, UpdateManagerState>) -> Result<(), String> {
     require_manager(&state)?.cancel();
+
     Ok(())
 }
 
@@ -172,6 +180,7 @@ pub fn update_state(state: tauri::State<'_, UpdateManagerState>) -> Result<State
 #[tauri::command]
 pub async fn update_cleanup(state: tauri::State<'_, UpdateManagerState>) -> Result<(), String> {
     let manager = require_manager(&state)?.clone();
+
     manager.cleanup_cache().await.map_err(|e| e.to_string())
 }
 
@@ -179,7 +188,10 @@ pub async fn update_cleanup(state: tauri::State<'_, UpdateManagerState>) -> Resu
 #[allow(clippy::needless_pass_by_value)]
 pub fn update_quit_and_install(app: AppHandle) -> Result<(), String> {
     let install_root = std::env::current_exe().map_err(|e| e.to_string())?;
+
     sidex_update::install::relaunch(&install_root).map_err(|e| e.to_string())?;
+
     app.exit(0);
+
     Ok(())
 }

@@ -6,7 +6,7 @@ use crate::commands::extension_platform::{
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -218,6 +218,41 @@ fn spawn_host_process(
     app: &AppHandle,
     workspace_folders: &[String],
 ) -> Result<StartedSession, String> {
+    let inputs = prepare_session_inputs(app, workspace_folders)?;
+    let (child, stdout, stderr_buf) = spawn_child_process(&inputs)?;
+    let (child, port) = read_port_from_child(&inputs, child, stdout, &stderr_buf)?;
+
+    log::info!(
+        "extension host started on port {port} (session={})",
+        inputs.session_id
+    );
+
+    Ok(StartedSession {
+        port,
+        session_id: inputs.session_id,
+        init_data: inputs.init_data,
+        manifests: inputs.manifests,
+        child,
+    })
+}
+
+struct SessionInputs {
+    runtime_path: String,
+    server_js: PathBuf,
+    user_ext_dir: PathBuf,
+    builtin_ext_dir: PathBuf,
+    global_store_dir: PathBuf,
+    search_paths_json: String,
+    init_data_file: PathBuf,
+    session_id: String,
+    init_data: ExtensionHostInitData,
+    manifests: Vec<ExtensionManifest>,
+}
+
+fn prepare_session_inputs(
+    app: &AppHandle,
+    workspace_folders: &[String],
+) -> Result<SessionInputs, String> {
     let runtime = resolve_node_runtime(app)?;
     let server_js = normalize_for_node(resolve_server_script(app));
 
@@ -261,20 +296,39 @@ fn spawn_host_process(
     )
     .map_err(|e| format!("failed to encode search paths: {e}"))?;
 
-    let init_data_file = std::env::temp_dir().join(format!("sidex-init-{}.json", &session_id));
+    let init_data_file = std::env::temp_dir().join(format!("sidex-init-{session_id}.json"));
     std::fs::write(&init_data_file, &init_data_json)
         .map_err(|e| format!("failed to write init data file: {e}"))?;
 
-    let mut child_cmd = Command::new(&runtime.path);
+    Ok(SessionInputs {
+        runtime_path: runtime.path,
+        server_js,
+        user_ext_dir,
+        builtin_ext_dir,
+        global_store_dir,
+        search_paths_json,
+        init_data_file,
+        session_id,
+        init_data,
+        manifests,
+    })
+}
+
+type StderrBuffer = Arc<Mutex<Vec<String>>>;
+
+fn spawn_child_process(
+    inputs: &SessionInputs,
+) -> Result<(Child, ChildStdout, StderrBuffer), String> {
+    let mut child_cmd = Command::new(&inputs.runtime_path);
     child_cmd
         .arg("--max-old-space-size=3072")
-        .arg(&server_js)
-        .env("SIDEX_EXTENSIONS_DIR", &user_ext_dir)
-        .env("SIDEX_BUILTIN_EXTENSIONS_DIR", &builtin_ext_dir)
-        .env("SIDEX_GLOBAL_STORAGE_DIR", &global_store_dir)
-        .env("SIDEX_EXTENSION_SEARCH_PATHS", &search_paths_json)
-        .env("SIDEX_INIT_DATA_FILE", &init_data_file)
-        .env("SIDEX_SESSION_ID", &session_id)
+        .arg(&inputs.server_js)
+        .env("SIDEX_EXTENSIONS_DIR", &inputs.user_ext_dir)
+        .env("SIDEX_BUILTIN_EXTENSIONS_DIR", &inputs.builtin_ext_dir)
+        .env("SIDEX_GLOBAL_STORAGE_DIR", &inputs.global_store_dir)
+        .env("SIDEX_EXTENSION_SEARCH_PATHS", &inputs.search_paths_json)
+        .env("SIDEX_INIT_DATA_FILE", &inputs.init_data_file)
+        .env("SIDEX_SESSION_ID", &inputs.session_id)
         .env("NODE_ENV", "production")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -294,7 +348,7 @@ fn spawn_host_process(
         .take()
         .ok_or("failed to capture extension host stdout")?;
 
-    let stderr_buf: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let stderr_buf: StderrBuffer = Arc::new(Mutex::new(Vec::new()));
     if let Some(stderr) = child.stderr.take() {
         let buf = Arc::clone(&stderr_buf);
         thread::spawn(move || {
@@ -310,6 +364,15 @@ fn spawn_host_process(
         });
     }
 
+    Ok((child, stdout, stderr_buf))
+}
+
+fn read_port_from_child(
+    inputs: &SessionInputs,
+    mut child: Child,
+    stdout: ChildStdout,
+    stderr_buf: &StderrBuffer,
+) -> Result<(Child, u16), String> {
     let recent_stderr = || -> String {
         thread::sleep(Duration::from_millis(150));
         match stderr_buf.lock() {
@@ -318,40 +381,28 @@ fn spawn_host_process(
         }
     };
 
-    let port = {
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        let bytes_read = reader.read_line(&mut line).map_err(|e| {
-            format!("failed to read extension host port: {e}{}", recent_stderr())
-        })?;
-        if bytes_read == 0 {
-            let _ = child.kill();
-            return Err(format!(
-                "extension host exited before sending port message (init_data_file={}).{}",
-                init_data_file.display(),
-                recent_stderr()
-            ));
-        }
-        let trimmed = line.trim();
-        let msg: PortMessage = serde_json::from_str(trimmed).map_err(|e| {
-            format!(
-                "bad port message: {e} (got {:?}).{}",
-                trimmed,
-                recent_stderr()
-            )
-        })?;
-        msg.port
-    };
-
-    log::info!("extension host started on port {port} (session={session_id})");
-
-    Ok(StartedSession {
-        port,
-        session_id,
-        init_data,
-        manifests,
-        child,
-    })
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let bytes_read = reader
+        .read_line(&mut line)
+        .map_err(|e| format!("failed to read extension host port: {e}{}", recent_stderr()))?;
+    if bytes_read == 0 {
+        let _ = child.kill();
+        return Err(format!(
+            "extension host exited before sending port message (init_data_file={}).{}",
+            inputs.init_data_file.display(),
+            recent_stderr()
+        ));
+    }
+    let trimmed = line.trim();
+    let msg: PortMessage = serde_json::from_str(trimmed).map_err(|e| {
+        format!(
+            "bad port message: {e} (got {:?}).{}",
+            trimmed,
+            recent_stderr()
+        )
+    })?;
+    Ok((child, msg.port))
 }
 
 #[allow(dead_code)]

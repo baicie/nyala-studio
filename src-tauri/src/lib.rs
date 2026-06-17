@@ -1,4 +1,5 @@
 mod commands;
+pub(crate) mod product;
 
 use commands::db_state::SidexDbState;
 use commands::debug::{DapClientStore, DebugAdapterStore};
@@ -27,7 +28,7 @@ use tauri::Manager;
 fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let file_menu = SubmenuBuilder::with_id(app, "file_menu", "File")
         .item(
-            &MenuItemBuilder::with_id("new_file", "New File")
+            &MenuItemBuilder::with_id("new_file", "New SQL Query")
                 .accelerator("CmdOrCtrl+N")
                 .build(app)?,
         )
@@ -38,11 +39,11 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         )
         .separator()
         .item(
-            &MenuItemBuilder::with_id("open_file", "Open File...")
+            &MenuItemBuilder::with_id("open_file", "Open Database File...")
                 .accelerator("CmdOrCtrl+O")
                 .build(app)?,
         )
-        .item(&MenuItemBuilder::with_id("open_folder", "Open Folder...").build(app)?)
+        .item(&MenuItemBuilder::with_id("open_folder", "Open Workspace Folder...").build(app)?)
         .item(&MenuItemBuilder::with_id("open_recent", "Open Recent").build(app)?)
         .separator()
         .item(
@@ -179,11 +180,6 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 .build(app)?,
         )
         .item(
-            &MenuItemBuilder::with_id("debug", "Run and Debug")
-                .accelerator("CmdOrCtrl+Shift+D")
-                .build(app)?,
-        )
-        .item(
             &MenuItemBuilder::with_id("extensions", "Extensions")
                 .accelerator("CmdOrCtrl+Shift+X")
                 .build(app)?,
@@ -202,11 +198,6 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(
             &MenuItemBuilder::with_id("terminal", "Terminal")
                 .accelerator("CmdOrCtrl+`")
-                .build(app)?,
-        )
-        .item(
-            &MenuItemBuilder::with_id("debug_console", "Debug Console")
-                .accelerator("CmdOrCtrl+Shift+Y")
                 .build(app)?,
         )
         .separator()
@@ -272,35 +263,6 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         )
         .build()?;
 
-    let run_menu = SubmenuBuilder::with_id(app, "run_menu", "Run")
-        .item(
-            &MenuItemBuilder::with_id("start_debugging", "Start Debugging")
-                .accelerator("F5")
-                .build(app)?,
-        )
-        .item(
-            &MenuItemBuilder::with_id("run_without_debugging", "Run Without Debugging")
-                .accelerator("CmdOrCtrl+F5")
-                .build(app)?,
-        )
-        .item(
-            &MenuItemBuilder::with_id("stop_debugging", "Stop Debugging")
-                .accelerator("Shift+F5")
-                .build(app)?,
-        )
-        .item(
-            &MenuItemBuilder::with_id("restart_debugging", "Restart Debugging")
-                .accelerator("CmdOrCtrl+Shift+F5")
-                .build(app)?,
-        )
-        .separator()
-        .item(
-            &MenuItemBuilder::with_id("toggle_breakpoint", "Toggle Breakpoint")
-                .accelerator("F9")
-                .build(app)?,
-        )
-        .build()?;
-
     let terminal_menu = SubmenuBuilder::with_id(app, "terminal_menu", "Terminal")
         .item(
             &MenuItemBuilder::with_id("new_terminal", "New Terminal")
@@ -336,8 +298,12 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .separator()
         .build()?;
 
-    let sidex_menu = SubmenuBuilder::with_id(app, "sidex_menu", "SideX")
-        .item(&PredefinedMenuItem::about(app, Some("About SideX"), None)?)
+    let app_menu = SubmenuBuilder::with_id(app, product::APP_MENU_ID, product::APP_MENU_LABEL)
+        .item(&PredefinedMenuItem::about(
+            app,
+            Some(product::ABOUT_MENU_LABEL),
+            None,
+        )?)
         .separator()
         .item(&PredefinedMenuItem::services(app, None)?)
         .separator()
@@ -351,13 +317,12 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::with_items(
         app,
         &[
-            &sidex_menu,
+            &app_menu,
             &file_menu,
             &edit_menu,
             &selection_menu,
             &view_menu,
             &go_menu,
-            &run_menu,
             &terminal_menu,
             &window_menu,
             &help_menu,
@@ -446,7 +411,7 @@ pub fn run() {
                 .app_data_dir()
                 .expect("failed to resolve app data dir");
             std::fs::create_dir_all(&app_data).ok();
-            let db_path = app_data.join("sidex_storage.db");
+            let db_path = app_data.join(product::STORAGE_DB_FILE_NAME);
             let db = StorageDb::new(db_path.to_str().unwrap())
                 .expect("failed to initialize storage database");
 
@@ -467,10 +432,10 @@ pub fn run() {
                 }
             }
 
-            let sidex_db_path = app_data.join("sidex_state.db");
-            let sidex_db = sidex_db::Database::open(&sidex_db_path)
-                .expect("failed to initialize sidex-db state database");
-            app.manage(Arc::new(SidexDbState::new(sidex_db)));
+            let state_db_path = app_data.join(product::STATE_DB_FILE_NAME);
+            let state_db = sidex_db::Database::open(&state_db_path)
+                .expect("failed to initialize SQL Studio state database");
+            app.manage(Arc::new(SidexDbState::new(state_db)));
 
             let process_store = app.state::<Arc<ProcessStore>>();
             process_store.set_app_handle(app.handle().clone());
@@ -511,10 +476,15 @@ pub fn run() {
         })
         .on_menu_event(|app, event| {
             let id = event.id().0.as_str();
+
             if let Some(window) = app.get_webview_window("main") {
                 let escaped = id.replace('\\', "\\\\").replace('\'', "\\'");
+
                 let _ = window.eval(format!(
-                    "window.dispatchEvent(new CustomEvent('sidex-native-menu', {{ detail: '{escaped}' }}))"
+                    "window.dispatchEvent(new CustomEvent('{}', {{ detail: '{escaped}' }}));\
+                     window.dispatchEvent(new CustomEvent('{}', {{ detail: '{escaped}' }}));",
+                    product::NATIVE_MENU_EVENT,
+                    product::LEGACY_NATIVE_MENU_EVENT
                 ));
             }
         })
@@ -626,7 +596,7 @@ pub fn run() {
             commands::textmate_load_grammar,
             commands::textmate_update_theme,
             commands::textmate_tokenize_line,
-		commands::textmate_tokenize_line_binary,
+            commands::textmate_tokenize_line_binary,
             commands::textmate_tokenize_document,
             commands::textmate_release_stack,
             commands::get_os_info,
@@ -837,7 +807,7 @@ pub fn run() {
             commands::editor_compute_bracket_pairs,
             commands::editor_compute_folding_ranges,
             // Remote development
-		commands::remote_list_ssh_hosts,
+            commands::remote_list_ssh_hosts,
             commands::remote_list_wsl_distros,
             commands::remote_list_containers,
             commands::remote_connect_ssh,

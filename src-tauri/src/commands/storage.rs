@@ -10,7 +10,7 @@ const MAX_VALUE_LENGTH: usize = 1_048_576;
 
 /// Escape `%`, `_`, and `\` for SQL `LIKE ? ESCAPE '\'` prefix patterns.
 ///
-/// SQLite `LIKE` is case-sensitive for ASCII by default; storage scopes use
+/// `SQLite` `LIKE` is case-sensitive for ASCII by default; storage scopes use
 /// distinct literal prefixes (e.g. `app/`, `profile:`) so cross-scope leakage
 /// is not expected. Example: `escape_like_prefix("a_b")` → `a\_b%`.
 fn escape_like_prefix(prefix: &str) -> String {
