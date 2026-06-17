@@ -50,6 +50,14 @@ impl SqlConnectionStore {
     #[allow(clippy::needless_pass_by_value)]
     pub fn open_connection(&self, input: SqlConnectionInput) -> Result<SqlConnection, String> {
         let connection = normalize_connection_input(&input)?;
+
+        {
+            let connections = self.connections()?;
+            if connections.contains_key(&connection.id) {
+                return Err(format!("connection id '{}' already exists", connection.id));
+            }
+        }
+
         let conn = open_sqlite_connection(&input)?;
         let interrupt = conn.get_interrupt_handle();
 
@@ -346,12 +354,10 @@ fn validate_sqlite_path(database_path: &str, create_if_missing: bool) -> Result<
         return Err(format!("database file does not exist: {}", path.display()));
     }
 
-    let Some(parent) = path.parent() else {
-        return Err(format!(
-            "databasePath has no parent directory: {}",
-            path.display()
-        ));
-    };
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
 
     if !parent.exists() {
         return Err(format!(
@@ -873,5 +879,23 @@ mod tests {
             quote_sqlite_identifier("weird\"name").unwrap(),
             "\"weird\"\"name\""
         );
+    }
+
+    #[test]
+    fn validate_sqlite_path_allows_relative_file_in_current_dir() {
+        assert!(validate_sqlite_path("relative-phase2-test.db", true).is_ok());
+    }
+
+    #[test]
+    fn open_connection_rejects_duplicate_id_before_reopening_database() {
+        let store = SqlConnectionStore::new();
+        let db = TempDb::new("duplicate-id-before-open");
+
+        store.open_connection(db.input("local")).unwrap();
+
+        let err = store.open_connection(db.input("local")).unwrap_err();
+
+        assert!(err.contains("already exists"));
+        assert_eq!(store.list_connections().unwrap().len(), 1);
     }
 }

@@ -332,7 +332,7 @@ impl UpdateManager {
             .as_deref()
             .and_then(|u| u.rsplit('/').next())
             .filter(|name| !name.is_empty() && !name.contains(['?', '#']))
-            .unwrap_or("sidex-update.bin");
+            .unwrap_or("sql-studio-update.bin");
         self.inner
             .config
             .cache_dir

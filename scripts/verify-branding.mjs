@@ -20,6 +20,7 @@ const srcTauriCargo = await readFile('src-tauri/Cargo.toml', 'utf8');
 const terminalRs = await readFile('src-tauri/src/commands/terminal.rs', 'utf8');
 const productRs = await readFile('src-tauri/src/product.rs', 'utf8');
 const libRs = await readFile('src-tauri/src/lib.rs', 'utf8');
+const updateManagerRs = await readFile('crates/sidex-update/src/manager.rs', 'utf8');
 
 assert(packageJson.name === 'sql-studio-next', `package.json name must be sql-studio-next, got ${packageJson.name}`);
 
@@ -132,6 +133,14 @@ assert(
 assert(
 	libRs.includes('resolve_product_data_file'),
 	'lib.rs must use resolve_product_data_file for DB file migration'
+);
+
+// ── Updater branding check ────────────────────────────────────────────────────
+
+assertStringDoesNotContain(
+	updateManagerRs,
+	'sidex-update.bin',
+	'update manager fallback artifact name must not expose legacy SideX branding'
 );
 
 console.log('Branding verification passed.');
