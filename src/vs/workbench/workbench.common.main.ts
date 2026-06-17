@@ -133,6 +133,7 @@ import './services/editor/browser/editorPaneService.js';
 import './services/editor/common/customEditorLabelService.js';
 import './services/dataChannel/browser/dataChannelService.js';
 import './services/log/common/defaultLogLevels.js';
+import './services/sql/browser/sqlService.contribution.js';
 
 import { InstantiationType, registerSingleton } from '../platform/instantiation/common/extensions.js';
 import { GlobalExtensionEnablementService } from '../platform/extensionManagement/common/extensionEnablementService.js';
