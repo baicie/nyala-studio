@@ -58,7 +58,7 @@ ehthumbs.db
 .env
 .env.*
 !.env.example
-/docs
+# /docs
 
 # ── Tauri generated ──────────────────────────────────────────────────────────
 src-tauri/gen/
