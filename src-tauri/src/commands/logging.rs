@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 const DEFAULT_MAX_LOG_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
@@ -207,6 +207,7 @@ pub fn log_drop(
 }
 
 #[allow(clippy::needless_pass_by_value)]
+#[allow(dead_code)]
 #[tauri::command]
 pub fn log_get_size(
     state: tauri::State<'_, std::sync::Arc<LoggerStore>>,
@@ -225,6 +226,7 @@ pub fn log_get_size(
 }
 
 #[allow(clippy::needless_pass_by_value)]
+#[allow(dead_code)]
 #[tauri::command]
 pub fn log_clear(
     state: tauri::State<'_, std::sync::Arc<LoggerStore>>,

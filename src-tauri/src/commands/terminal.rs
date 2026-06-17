@@ -115,6 +115,7 @@ pub fn terminal_spawn(
         })
         .map_err(|e| format!("Failed to open PTY: {e}"))?;
 
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
     let mut shell_path = shell.unwrap_or_else(|| {
         if cfg!(target_os = "windows") {
             resolve_windows_shell()
@@ -482,6 +483,7 @@ pub fn get_available_shells() -> Vec<ShellInfo> {
         let mut seen = std::collections::HashSet::new();
         let mut shells = Vec::new();
 
+        #[cfg(target_os = "windows")]
         if let Some(resolved_path) = resolve_git_bash() {
             seen.insert("Git Bash".to_string());
             shells.push(ShellInfo {
