@@ -5,6 +5,8 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::product;
+
 pub struct PtyHandle {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
@@ -187,7 +189,7 @@ pub fn terminal_spawn(
 
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
-    cmd.env("TERM_PROGRAM", "SideX");
+    cmd.env("TERM_PROGRAM", product::TERMINAL_PROGRAM_NAME);
 
     if let Ok(home) = std::env::var("HOME") {
         cmd.env("HOME", &home);
@@ -612,7 +614,7 @@ pub fn setup_zsh_dotdir(app: tauri::AppHandle) -> Result<String, String> {
     let scripts_dir = resource_dir.join("shell-integration");
 
     let zshrc_content = format!(
-        r#"# SideX Shell Integration - Auto-generated
+        r#"# SQL Studio Shell Integration - Auto-generated
 VSCODE_SHELL_INTEGRATION=1
 VSCODE_INJECTION=1
 if [[ -f "{scripts}/shellIntegration-rc.zsh" ]]; then
@@ -628,7 +630,7 @@ fi
         .map_err(|e| format!("Failed to write .zshrc: {e}"))?;
 
     let zshenv_content = format!(
-        r#"# SideX Shell Integration - Auto-generated
+        r#"# SQL Studio Shell Integration - Auto-generated
 USER_ZDOTDIR="${{ZDOTDIR:-$HOME}}"
 if [[ -f "{scripts}/shellIntegration-env.zsh" ]]; then
     . "{scripts}/shellIntegration-env.zsh"
@@ -642,7 +644,7 @@ fi
         .map_err(|e| format!("Failed to write .zshenv: {e}"))?;
 
     let zprofile_content = format!(
-        r#"# SideX Shell Integration - Auto-generated
+        r#"# SQL Studio Shell Integration - Auto-generated
 if [[ -f "{scripts}/shellIntegration-profile.zsh" ]]; then
     . "{scripts}/shellIntegration-profile.zsh"
 fi
@@ -655,7 +657,7 @@ fi
         .map_err(|e| format!("Failed to write .zprofile: {e}"))?;
 
     let zlogin_content = format!(
-        r#"# SideX Shell Integration - Auto-generated
+        r#"# SQL Studio Shell Integration - Auto-generated
 if [[ -f "{scripts}/shellIntegration-login.zsh" ]]; then
     . "{scripts}/shellIntegration-login.zsh"
 fi

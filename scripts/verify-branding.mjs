@@ -17,6 +17,9 @@ async function readJson(path) {
 const packageJson = await readJson('package.json');
 const tauriConfig = await readJson('src-tauri/tauri.conf.json');
 const srcTauriCargo = await readFile('src-tauri/Cargo.toml', 'utf8');
+const terminalRs = await readFile('src-tauri/src/commands/terminal.rs', 'utf8');
+const productRs = await readFile('src-tauri/src/product.rs', 'utf8');
+const libRs = await readFile('src-tauri/src/lib.rs', 'utf8');
 
 assert(packageJson.name === 'sql-studio-next', `package.json name must be sql-studio-next, got ${packageJson.name}`);
 
@@ -83,6 +86,52 @@ assert(
 assert(
 	srcTauriCargo.includes('name = "sql-studio-next"'),
 	'src-tauri/Cargo.toml bin name must include sql-studio-next'
+);
+
+// ── Runtime branding checks (Problem 1) ──────────────────────────────────────
+
+// Terminal TERM_PROGRAM must not hardcode "SideX"
+assertStringDoesNotContain(
+	terminalRs,
+	'SideX',
+	'terminal.rs must not expose SideX branding in TERM_PROGRAM or shell integration comments'
+);
+
+// product.rs must define TERMINAL_PROGRAM_NAME
+assert(
+	productRs.includes('TERMINAL_PROGRAM_NAME'),
+	'product.rs must define TERMINAL_PROGRAM_NAME'
+);
+
+// product.rs must reference SQL Studio in the module doc
+assert(
+	productRs.includes('SQL Studio'),
+	'product.rs must contain SQL Studio product branding'
+);
+
+// lib.rs app menu must not expose "About SideX"
+assertStringDoesNotContain(
+	libRs,
+	'About SideX',
+	'macOS app menu must not expose "About SideX"'
+);
+
+// ── Legacy migration constants (Problem 3) ───────────────────────────────────
+
+assert(
+	productRs.includes('LEGACY_STORAGE_DB_FILE_NAME'),
+	'product.rs must define LEGACY_STORAGE_DB_FILE_NAME for one-shot migration'
+);
+
+assert(
+	productRs.includes('LEGACY_STATE_DB_FILE_NAME'),
+	'product.rs must define LEGACY_STATE_DB_FILE_NAME for one-shot migration'
+);
+
+// lib.rs must use resolve_product_data_file for both DB files
+assert(
+	libRs.includes('resolve_product_data_file'),
+	'lib.rs must use resolve_product_data_file for DB file migration'
 );
 
 console.log('Branding verification passed.');

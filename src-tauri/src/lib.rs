@@ -18,6 +18,7 @@ use commands::terminal::TerminalStore;
 use commands::updater::UpdateManagerState;
 use commands::watch::WatchStore;
 use commands::window::restore_and_show;
+use std::path::Path;
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
@@ -332,6 +333,36 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Ok(menu)
 }
 
+/// Resolves the current product data file path, migrating from a legacy name if needed.
+///
+/// If the current-name file already exists, returns its path unchanged.
+/// If only the legacy-name file exists, renames it to the current name (logging a
+/// warning on failure) and returns the current-path.
+fn resolve_product_data_file(
+    app_data: &Path,
+    current_name: &str,
+    legacy_name: &str,
+) -> std::path::PathBuf {
+    let current_path = app_data.join(current_name);
+
+    if current_path.exists() {
+        return current_path;
+    }
+
+    let legacy_path = app_data.join(legacy_name);
+    if legacy_path.exists() {
+        if let Err(err) = std::fs::rename(&legacy_path, &current_path) {
+            log::warn!(
+                "failed to migrate legacy data file {} -> {}: {err}",
+                legacy_path.display(),
+                current_path.display()
+            );
+        }
+    }
+
+    current_path
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[allow(clippy::too_many_lines)]
 pub fn run() {
@@ -411,7 +442,11 @@ pub fn run() {
                 .app_data_dir()
                 .expect("failed to resolve app data dir");
             std::fs::create_dir_all(&app_data).ok();
-            let db_path = app_data.join(product::STORAGE_DB_FILE_NAME);
+            let db_path = resolve_product_data_file(
+                &app_data,
+                product::STORAGE_DB_FILE_NAME,
+                product::LEGACY_STORAGE_DB_FILE_NAME,
+            );
             let db = StorageDb::new(db_path.to_str().unwrap())
                 .expect("failed to initialize storage database");
 
@@ -432,7 +467,11 @@ pub fn run() {
                 }
             }
 
-            let state_db_path = app_data.join(product::STATE_DB_FILE_NAME);
+            let state_db_path = resolve_product_data_file(
+                &app_data,
+                product::STATE_DB_FILE_NAME,
+                product::LEGACY_STATE_DB_FILE_NAME,
+            );
             let state_db = sidex_db::Database::open(&state_db_path)
                 .expect("failed to initialize SQL Studio state database");
             app.manage(Arc::new(SidexDbState::new(state_db)));

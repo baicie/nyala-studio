@@ -13,7 +13,7 @@ use crate::download::{self, DownloadJob, DownloadObserver};
 use crate::manifest::{self, Platform, UpdateInfo};
 use crate::{
     install, signature,
-    state::{State, UpdateType},
+    state::{DisablementReason, State, UpdateType},
     UpdateError, UpdateResult,
 };
 
@@ -73,11 +73,19 @@ impl UpdateManager {
             .user_agent(&config.user_agent)
             .build()?;
 
+        let initial_state = if config.endpoints.is_empty() {
+            State::Disabled {
+                reason: DisablementReason::MissingConfiguration,
+            }
+        } else {
+            State::idle(config.update_type)
+        };
+
         Ok(Self {
             inner: Arc::new(Inner {
                 pubkey,
                 client,
-                state: Mutex::new(State::idle(config.update_type)),
+                state: Mutex::new(initial_state),
                 last_artifact: Mutex::new(None),
                 cancel: Mutex::new(None),
                 observer: Mutex::new(None),
@@ -101,6 +109,14 @@ impl UpdateManager {
     /// [`State::AvailableForDownload`] or back to [`State::Idle`].
     pub async fn check_for_updates(&self, explicit: bool) -> UpdateResult<()> {
         let _guard = self.inner.busy.lock().await;
+
+        if self.inner.config.endpoints.is_empty() {
+            self.transition(State::Disabled {
+                reason: DisablementReason::MissingConfiguration,
+            });
+            return Ok(());
+        }
+
         self.transition(State::CheckingForUpdates { explicit });
 
         let Some(platform) = Platform::current() else {
@@ -349,5 +365,57 @@ impl DownloadObserver for ProgressBridge {
             total_bytes: total,
             start_time: Some(self.start_time),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_with_endpoints(endpoints: Vec<String>) -> UpdateConfig {
+        UpdateConfig {
+            endpoints,
+            pubkey: None,
+            current_version: "0.1.0".to_string(),
+            cache_dir: std::env::temp_dir().join("sql-studio-update-test"),
+            update_type: UpdateType::Archive,
+            user_agent: "sql-studio-next-test/0.1.0".to_string(),
+        }
+    }
+
+    #[test]
+    fn manager_is_disabled_without_update_endpoints() {
+        let manager = UpdateManager::new(config_with_endpoints(vec![])).unwrap();
+
+        assert!(matches!(
+            manager.state(),
+            State::Disabled {
+                reason: DisablementReason::MissingConfiguration
+            }
+        ));
+    }
+
+    #[test]
+    fn manager_is_idle_when_update_endpoints_exist() {
+        let manager = UpdateManager::new(config_with_endpoints(vec![
+            "https://example.com/update.json".to_string(),
+        ]))
+        .unwrap();
+
+        assert!(matches!(manager.state(), State::Idle { .. }));
+    }
+
+    #[tokio::test]
+    async fn check_for_updates_without_endpoints_keeps_disabled_state() {
+        let manager = UpdateManager::new(config_with_endpoints(vec![])).unwrap();
+
+        manager.check_for_updates(true).await.unwrap();
+
+        assert!(matches!(
+            manager.state(),
+            State::Disabled {
+                reason: DisablementReason::MissingConfiguration
+            }
+        ));
     }
 }

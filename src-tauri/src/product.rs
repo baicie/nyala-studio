@@ -18,6 +18,19 @@ pub(crate) const ABOUT_MENU_LABEL: &str = "About SQL Studio";
 pub(crate) const STORAGE_DB_FILE_NAME: &str = "sql_studio_storage.db";
 pub(crate) const STATE_DB_FILE_NAME: &str = "sql_studio_state.db";
 
+/// Legacy file names left by the upstream SideX fork.
+///
+/// Used by the one-shot migration in [`crate::resolve_product_data_file`].
+/// Keep them around until all pre-Phase-1 user data has rolled forward.
+pub(crate) const LEGACY_STORAGE_DB_FILE_NAME: &str = "sidex_storage.db";
+pub(crate) const LEGACY_STATE_DB_FILE_NAME: &str = "sidex_state.db";
+
+/// Value exposed to child shells via the `TERM_PROGRAM` env var.
+///
+/// Mirrors [`APP_TITLE`] so terminal-aware tooling (e.g. shell prompts,
+/// `iterm2`/`tmux` integrations) shows the SQL Studio brand.
+pub(crate) const TERMINAL_PROGRAM_NAME: &str = APP_TITLE;
+
 pub(crate) const NATIVE_MENU_EVENT: &str = "sql-studio-native-menu";
 
 /// Transitional compatibility event for existing frontend listeners.
@@ -60,6 +73,7 @@ mod tests {
             ("APP_MENU_ID", APP_MENU_ID),
             ("APP_MENU_LABEL", APP_MENU_LABEL),
             ("ABOUT_MENU_LABEL", ABOUT_MENU_LABEL),
+            ("TERMINAL_PROGRAM_NAME", TERMINAL_PROGRAM_NAME),
             ("STORAGE_DB_FILE_NAME", STORAGE_DB_FILE_NAME),
             ("STATE_DB_FILE_NAME", STATE_DB_FILE_NAME),
             ("NATIVE_MENU_EVENT", NATIVE_MENU_EVENT),
@@ -76,6 +90,18 @@ mod tests {
     fn database_file_names_are_product_scoped() {
         assert_eq!(STORAGE_DB_FILE_NAME, "sql_studio_storage.db");
         assert_eq!(STATE_DB_FILE_NAME, "sql_studio_state.db");
+    }
+
+    #[test]
+    fn legacy_database_file_names_are_marked_for_migration() {
+        assert_eq!(LEGACY_STORAGE_DB_FILE_NAME, "sidex_storage.db");
+        assert_eq!(LEGACY_STATE_DB_FILE_NAME, "sidex_state.db");
+    }
+
+    #[test]
+    fn terminal_program_name_mirrors_app_title() {
+        assert_eq!(TERMINAL_PROGRAM_NAME, APP_TITLE);
+        assert!(TERMINAL_PROGRAM_NAME.contains("SQL Studio"));
     }
 
     #[test]
