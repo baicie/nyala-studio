@@ -21,6 +21,7 @@ const terminalRs = await readFile('src-tauri/src/commands/terminal.rs', 'utf8');
 const productRs = await readFile('src-tauri/src/product.rs', 'utf8');
 const libRs = await readFile('src-tauri/src/lib.rs', 'utf8');
 const updateManagerRs = await readFile('crates/sidex-update/src/manager.rs', 'utf8');
+const sidexBridgeTs = await readFile('src/vs/sidex-bridge.ts', 'utf8');
 
 assert(packageJson.name === 'sql-studio-next', `package.json name must be sql-studio-next, got ${packageJson.name}`);
 
@@ -141,6 +142,18 @@ assertStringDoesNotContain(
 	updateManagerRs,
 	'sidex-update.bin',
 	'update manager fallback artifact name must not expose legacy SideX branding'
+);
+
+assertStringDoesNotContain(
+	sidexBridgeTs,
+	'[SideX]',
+	'sidex-bridge runtime logs must not expose legacy SideX branding'
+);
+
+assertStringDoesNotContain(
+	sidexBridgeTs,
+	'SideX —',
+	'sidex-bridge header must not expose legacy SideX branding'
 );
 
 console.log('Branding verification passed.');

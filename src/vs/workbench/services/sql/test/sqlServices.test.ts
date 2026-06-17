@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { SqlConnectionService } from '../browser/sqlConnectionService.js';
-import { ISqlCommandExecutor, SqlCommandName, SqlServiceError } from '../browser/sqlCommandExecutor.js';
+import {
+	ISqlCommandExecutor,
+	SqlCommandName,
+	SqlServiceError,
+	TauriSqlCommandExecutor
+} from '../browser/sqlCommandExecutor.js';
 import { SqlMetadataService } from '../browser/sqlMetadataService.js';
 import { SqlQueryService } from '../browser/sqlQueryService.js';
 import { SqlCellKind, SqlConnectionKind, SqlTableType } from '../common/sqlTypes.js';
@@ -310,4 +315,73 @@ test('SqlQueryService wraps backend errors into SqlServiceError', async () => {
 			return true;
 		}
 	);
+});
+
+test('TauriSqlCommandExecutor throws SqlServiceError when Tauri runtime is unavailable', async () => {
+	const previousWindow = (globalThis as typeof globalThis & { window?: unknown }).window;
+
+	try {
+		delete (globalThis as typeof globalThis & { window?: unknown }).window;
+
+		const executor = new TauriSqlCommandExecutor();
+
+		await assert.rejects(
+			() => executor.execute('sql_list_connections'),
+			error => {
+				assert.ok(error instanceof SqlServiceError);
+				assert.equal(error.command, 'sql_list_connections');
+				assert.match(error.message, /Tauri runtime is not available/);
+				return true;
+			}
+		);
+	} finally {
+		if (previousWindow !== undefined) {
+			(globalThis as typeof globalThis & { window?: unknown }).window = previousWindow;
+		}
+	}
+});
+
+test('TauriSqlCommandExecutor forwards command to window.__TAURI__.core.invoke', async () => {
+	const previousWindow = (globalThis as typeof globalThis & { window?: unknown }).window;
+
+	try {
+		(globalThis as typeof globalThis & { window?: unknown }).window = {
+			__TAURI__: {
+				core: {
+					invoke: async (cmd: string, args?: Record<string, unknown>) => ({
+						cmd,
+						args
+					})
+				}
+			}
+		};
+
+		const executor = new TauriSqlCommandExecutor();
+
+		const result = await executor.execute<{ cmd: string; args?: Record<string, unknown> }>(
+			'sql_execute_query',
+			{
+				request: {
+					connectionId: 'local',
+					sql: 'SELECT 1'
+				}
+			}
+		);
+
+		assert.deepEqual(result, {
+			cmd: 'sql_execute_query',
+			args: {
+				request: {
+					connectionId: 'local',
+					sql: 'SELECT 1'
+				}
+			}
+		});
+	} finally {
+		if (previousWindow === undefined) {
+			delete (globalThis as typeof globalThis & { window?: unknown }).window;
+		} else {
+			(globalThis as typeof globalThis & { window?: unknown }).window = previousWindow;
+		}
+	}
 });

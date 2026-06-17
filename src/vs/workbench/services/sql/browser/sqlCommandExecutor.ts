@@ -2,7 +2,7 @@
  * SQL Studio Next - SQL Tauri command executor.
  *--------------------------------------------------------------------------------------------*/
 
-import { invoke } from '../../../../sidex-bridge.js';
+import { invoke, isTauri } from '../../../../sidex-bridge.js';
 
 export type SqlCommandName =
 	| 'sql_test_connection'
@@ -31,8 +31,24 @@ export class SqlServiceError extends Error {
 
 export class TauriSqlCommandExecutor implements ISqlCommandExecutor {
 	async execute<T>(command: SqlCommandName, args: Record<string, unknown> = {}): Promise<T> {
+		if (!isTauri()) {
+			throw new SqlServiceError(
+				`Tauri runtime is not available for SQL command '${command}'`,
+				command
+			);
+		}
+
 		try {
-			return await invoke<T>(command, args);
+			const result = await invoke<T | null>(command, args);
+
+			if (result === null || result === undefined) {
+				throw new SqlServiceError(
+					`SQL command '${command}' returned no result`,
+					command
+				);
+			}
+
+			return result;
 		} catch (error) {
 			throw toSqlServiceError(command, error);
 		}
