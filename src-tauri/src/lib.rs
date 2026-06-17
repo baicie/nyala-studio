@@ -12,6 +12,7 @@ use commands::lsp::LspState;
 use commands::process::ProcessStore;
 use commands::remote::RemoteManagerStore;
 use commands::settings::SettingsStore;
+use commands::sql::SqlConnectionStore;
 use commands::storage::StorageDb;
 use commands::tasks::TaskProcessStore;
 use commands::terminal::TerminalStore;
@@ -384,6 +385,7 @@ pub fn run() {
         .manage(ExtensionPlatformSupervisor::new())
         .manage(ExtensionDiagnosticsStore::new())
         .manage(Arc::new(SettingsStore::new()))
+        .manage(Arc::new(SqlConnectionStore::new()))
         .manage(Arc::new(sidex_extension_api::CommandRegistry::new()))
         .manage(Arc::new(RemoteManagerStore::new()))
         .manage(Arc::new(
@@ -647,6 +649,15 @@ pub fn run() {
             commands::storage_set,
             commands::storage_delete,
             commands::storage_list,
+            // SQL Studio database bridge
+            commands::sql_test_connection,
+            commands::sql_open_connection,
+            commands::sql_close_connection,
+            commands::sql_list_connections,
+            commands::sql_list_tables,
+            commands::sql_list_columns,
+            commands::sql_execute_query,
+            commands::sql_cancel_query,
             // sidex-db state persistence
             commands::db_get_recent_files,
             commands::db_get_recent_workspaces,
