@@ -1,0 +1,144 @@
+.sql-result-panel {
+	min-height: 0;
+}
+
+.sql-result-view {
+	box-sizing: border-box;
+	height: 100%;
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-editor-foreground);
+}
+
+.sql-result-toolbar {
+	box-sizing: border-box;
+	min-height: 32px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 8px;
+	border-bottom: 1px solid var(--vscode-editorGroup-border);
+	background: var(--vscode-sideBar-background);
+}
+
+.sql-result-summary {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	opacity: 0.9;
+}
+
+.sql-result-button {
+	height: 24px;
+	padding: 0 10px;
+	border: 1px solid var(--vscode-button-border);
+	color: var(--vscode-button-secondaryForeground);
+	background: var(--vscode-button-secondaryBackground);
+	cursor: pointer;
+}
+
+.sql-result-button:hover:not(:disabled) {
+	background: var(--vscode-button-hoverBackground);
+}
+
+.sql-result-button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.sql-result-content {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	outline: none;
+}
+
+.sql-result-empty,
+.sql-result-message {
+	padding: 12px;
+	font-size: 12px;
+	opacity: 0.9;
+}
+
+.sql-result-message.error {
+	color: var(--vscode-errorForeground);
+}
+
+.sql-result-message.running {
+	color: var(--vscode-descriptionForeground);
+}
+
+.sql-result-error-title {
+	font-weight: 600;
+	margin-bottom: 8px;
+}
+
+.sql-result-sql {
+	box-sizing: border-box;
+	margin: 8px 0 0;
+	padding: 8px;
+	white-space: pre-wrap;
+	color: var(--vscode-textPreformat-foreground);
+	background: var(--vscode-textCodeBlock-background);
+	border-radius: 3px;
+	overflow: auto;
+}
+
+.sql-result-table-wrapper {
+	min-height: 0;
+	overflow: auto;
+	outline: none;
+}
+
+.sql-result-table {
+	width: max-content;
+	min-width: 100%;
+	border-collapse: collapse;
+	font-size: 12px;
+}
+
+.sql-result-table th,
+.sql-result-table td {
+	box-sizing: border-box;
+	max-width: 360px;
+	padding: 4px 8px;
+	border-right: 1px solid var(--vscode-editorGroup-border);
+	border-bottom: 1px solid var(--vscode-editorGroup-border);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	text-align: left;
+}
+
+.sql-result-table th {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	font-weight: 600;
+	background: var(--vscode-sideBar-background);
+}
+
+.sql-result-table tbody tr:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.sql-result-row-number {
+	width: 52px;
+	max-width: 52px;
+	text-align: right;
+	color: var(--vscode-descriptionForeground);
+	background: var(--vscode-sideBar-background);
+}
+
+.sql-result-truncated {
+	padding: 8px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	border-top: 1px solid var(--vscode-editorGroup-border);
+}

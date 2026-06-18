@@ -208,6 +208,7 @@ import './contrib/files/browser/files.contribution.js';
 // SQL Studio
 import './contrib/sqlConnections/browser/sqlConnections.contribution.js';
 import './contrib/sqlEditor/browser/sqlEditor.contribution.js';
+import './contrib/sqlResult/browser/sqlResult.contribution.js';
 
 // Bulk Edit
 import './contrib/bulkEdit/browser/bulkEditService.js';
