@@ -35,6 +35,67 @@ pub struct SqlConnection {
     pub read_only: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SqlSavedConnection {
+    pub id: String,
+    pub name: String,
+    pub kind: SqlConnectionKind,
+    pub database_path: String,
+    pub read_only: bool,
+    pub create_if_missing: bool,
+    pub auto_connect: bool,
+}
+
+impl SqlSavedConnection {
+    pub fn to_input(&self) -> SqlConnectionInput {
+        SqlConnectionInput {
+            id: Some(self.id.clone()),
+            name: Some(self.name.clone()),
+            kind: self.kind.clone(),
+            database_path: self.database_path.clone(),
+            read_only: self.read_only,
+            create_if_missing: self.create_if_missing,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SqlSaveConnectionRequest {
+    pub input: SqlConnectionInput,
+
+    #[serde(default)]
+    pub auto_connect: bool,
+
+    #[serde(default)]
+    pub open_now: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SqlRemoveSavedConnectionRequest {
+    pub connection_id: String,
+
+    #[serde(default)]
+    pub close_if_open: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SqlRestoreSavedConnectionError {
+    pub connection_id: String,
+    pub name: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SqlRestoreSavedConnectionsResult {
+    pub opened: Vec<SqlConnection>,
+    pub errors: Vec<SqlRestoreSavedConnectionError>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SqlConnectionTestResult {

@@ -1,19 +1,23 @@
+use super::persistence::{load_saved_connections, save_saved_connections};
 use super::types::{
     SqlCancelQueryRequest, SqlCancelQueryResult, SqlCellValue, SqlColumn, SqlConnection,
     SqlConnectionInput, SqlConnectionKind, SqlConnectionTestResult, SqlExecuteQueryRequest,
-    SqlListColumnsRequest, SqlQueryResult, SqlResultColumn, SqlTable, SqlTableType,
+    SqlListColumnsRequest, SqlQueryResult, SqlRemoveSavedConnectionRequest,
+    SqlRestoreSavedConnectionError, SqlRestoreSavedConnectionsResult, SqlResultColumn,
+    SqlSaveConnectionRequest, SqlSavedConnection, SqlTable, SqlTableType,
     DEFAULT_QUERY_ROW_LIMIT, MAX_QUERY_ROW_LIMIT, MAX_SQL_BYTES,
 };
 use base64::{engine::general_purpose, Engine as _};
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, InterruptHandle, OpenFlags};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 use uuid::Uuid;
 
 type ConnectionMap = HashMap<String, Arc<SqlConnectionHandle>>;
+type SavedConnectionMap = HashMap<String, SqlSavedConnection>;
 
 struct SqlConnectionHandle {
     info: SqlConnection,
@@ -23,13 +27,40 @@ struct SqlConnectionHandle {
 
 pub struct SqlConnectionStore {
     connections: Mutex<ConnectionMap>,
+    saved_connections: Mutex<SavedConnectionMap>,
+    persistence_path: Mutex<Option<PathBuf>>,
 }
 
 impl SqlConnectionStore {
     pub fn new() -> Self {
         Self {
             connections: Mutex::new(HashMap::new()),
+            saved_connections: Mutex::new(HashMap::new()),
+            persistence_path: Mutex::new(None),
         }
+    }
+
+    pub fn initialize_persistence(&self, path: PathBuf) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| {
+                format!(
+                    "failed to create SQL connection persistence directory {}: {err}",
+                    parent.display()
+                )
+            })?;
+        }
+
+        let saved = load_saved_connections(&path)?;
+        let mut saved_map = self.saved_connections()?;
+        saved_map.clear();
+
+        for connection in saved {
+            saved_map.insert(connection.id.clone(), connection);
+        }
+
+        *self.persistence_path()? = Some(path);
+
+        Ok(())
     }
 
     #[allow(clippy::unused_self, clippy::needless_pass_by_value)]
@@ -97,6 +128,135 @@ impl SqlConnectionStore {
         connections.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
 
         Ok(connections)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn save_connection(
+        &self,
+        request: SqlSaveConnectionRequest,
+    ) -> Result<SqlSavedConnection, String> {
+        let connection = normalize_connection_input(&request.input)?;
+
+        let saved = SqlSavedConnection {
+            id: connection.id.clone(),
+            name: connection.name.clone(),
+            kind: connection.kind.clone(),
+            database_path: connection.database_path.clone(),
+            read_only: connection.read_only,
+            create_if_missing: request.input.create_if_missing,
+            auto_connect: request.auto_connect,
+        };
+
+        {
+            let mut saved_connections = self.saved_connections()?;
+            saved_connections.insert(saved.id.clone(), saved.clone());
+        }
+
+        self.flush_saved_connections()?;
+
+        if request.open_now {
+            let already_open = {
+                let connections = self.connections()?;
+                connections.contains_key(&saved.id)
+            };
+
+            if !already_open {
+                self.open_connection(saved.to_input())?;
+            }
+        }
+
+        Ok(saved)
+    }
+
+    pub fn list_saved_connections(&self) -> Result<Vec<SqlSavedConnection>, String> {
+        let mut saved = self
+            .saved_connections()?
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        saved.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+
+        Ok(saved)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn remove_saved_connection(
+        &self,
+        request: SqlRemoveSavedConnectionRequest,
+    ) -> Result<(), String> {
+        let connection_id = request.connection_id.trim();
+
+        if connection_id.is_empty() {
+            return Err("connectionId must not be empty".to_string());
+        }
+
+        {
+            let mut saved_connections = self.saved_connections()?;
+            if saved_connections.remove(connection_id).is_none() {
+                return Err(format!("saved connection '{connection_id}' does not exist"));
+            }
+        }
+
+        self.flush_saved_connections()?;
+
+        if request.close_if_open {
+            let is_open = {
+                let connections = self.connections()?;
+                connections.contains_key(connection_id)
+            };
+
+            if is_open {
+                self.close_connection(connection_id)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn restore_saved_connections(&self) -> Result<SqlRestoreSavedConnectionsResult, String> {
+        let saved_connections = self.list_saved_connections()?;
+
+        let mut opened = Vec::new();
+        let mut errors = Vec::new();
+
+        for saved in saved_connections
+            .into_iter()
+            .filter(|connection| connection.auto_connect)
+        {
+            let already_open = {
+                let connections = self.connections()?;
+                connections.contains_key(&saved.id)
+            };
+
+            if already_open {
+                if let Ok(connection) = self.connection(&saved.id) {
+                    opened.push(connection.info.clone());
+                }
+                continue;
+            }
+
+            match self.open_connection(saved.to_input()) {
+                Ok(connection) => opened.push(connection),
+                Err(error) => errors.push(SqlRestoreSavedConnectionError {
+                    connection_id: saved.id,
+                    name: saved.name,
+                    error,
+                }),
+            }
+        }
+
+        Ok(SqlRestoreSavedConnectionsResult { opened, errors })
+    }
+
+    fn flush_saved_connections(&self) -> Result<(), String> {
+        let path = self
+            .persistence_path()?
+            .clone()
+            .ok_or_else(|| "SQL connection persistence has not been initialized".to_string())?;
+
+        let saved = self.list_saved_connections()?;
+        save_saved_connections(&path, &saved)
     }
 
     pub fn list_tables(&self, connection_id: &str) -> Result<Vec<SqlTable>, String> {
@@ -280,6 +440,14 @@ impl SqlConnectionStore {
 
     fn connections(&self) -> Result<MutexGuard<'_, ConnectionMap>, String> {
         self.connections.lock().map_err(|err| err.to_string())
+    }
+
+    fn saved_connections(&self) -> Result<MutexGuard<'_, SavedConnectionMap>, String> {
+        self.saved_connections.lock().map_err(|err| err.to_string())
+    }
+
+    fn persistence_path(&self) -> Result<MutexGuard<'_, Option<PathBuf>>, String> {
+        self.persistence_path.lock().map_err(|err| err.to_string())
     }
 
     fn connection(&self, connection_id: &str) -> Result<Arc<SqlConnectionHandle>, String> {
@@ -897,5 +1065,179 @@ mod tests {
 
         assert!(err.contains("already exists"));
         assert_eq!(store.list_connections().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn save_connection_persists_and_lists_saved_connections() {
+        let store = SqlConnectionStore::new();
+        let path = temp_json_file("save-list");
+
+        store.initialize_persistence(path.clone()).unwrap();
+
+        let db = TempDb::new("save-list-db");
+
+        let saved = store
+            .save_connection(SqlSaveConnectionRequest {
+                input: db.input("local"),
+                auto_connect: true,
+                open_now: false,
+            })
+            .unwrap();
+
+        assert_eq!(saved.id, "local");
+        assert!(saved.auto_connect);
+
+        let saved_connections = store.list_saved_connections().unwrap();
+        assert_eq!(saved_connections.len(), 1);
+        assert_eq!(saved_connections[0].id, "local");
+
+        let reloaded = SqlConnectionStore::new();
+        reloaded.initialize_persistence(path.clone()).unwrap();
+
+        let saved_connections = reloaded.list_saved_connections().unwrap();
+        assert_eq!(saved_connections.len(), 1);
+        assert_eq!(saved_connections[0].id, "local");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn save_connection_can_open_connection_immediately() {
+        let store = SqlConnectionStore::new();
+        let path = temp_json_file("save-open-now");
+
+        store.initialize_persistence(path.clone()).unwrap();
+
+        let db = TempDb::new("save-open-now-db");
+
+        store
+            .save_connection(SqlSaveConnectionRequest {
+                input: db.input("local"),
+                auto_connect: true,
+                open_now: true,
+            })
+            .unwrap();
+
+        let opened = store.list_connections().unwrap();
+        assert_eq!(opened.len(), 1);
+        assert_eq!(opened[0].id, "local");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn remove_saved_connection_deletes_saved_entry_and_optionally_closes_open_connection() {
+        let store = SqlConnectionStore::new();
+        let path = temp_json_file("remove");
+
+        store.initialize_persistence(path.clone()).unwrap();
+
+        let db = TempDb::new("remove-db");
+
+        store
+            .save_connection(SqlSaveConnectionRequest {
+                input: db.input("local"),
+                auto_connect: true,
+                open_now: true,
+            })
+            .unwrap();
+
+        store
+            .remove_saved_connection(SqlRemoveSavedConnectionRequest {
+                connection_id: "local".to_string(),
+                close_if_open: true,
+            })
+            .unwrap();
+
+        assert_eq!(store.list_saved_connections().unwrap().len(), 0);
+        assert_eq!(store.list_connections().unwrap().len(), 0);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn restore_saved_connections_opens_auto_connect_connections() {
+        let path = temp_json_file("restore");
+
+        let store = SqlConnectionStore::new();
+        store.initialize_persistence(path.clone()).unwrap();
+
+        let db = TempDb::new("restore-db");
+
+        store
+            .save_connection(SqlSaveConnectionRequest {
+                input: db.input("local"),
+                auto_connect: true,
+                open_now: false,
+            })
+            .unwrap();
+
+        let restored = SqlConnectionStore::new();
+        restored.initialize_persistence(path.clone()).unwrap();
+
+        let result = restored.restore_saved_connections().unwrap();
+
+        assert_eq!(result.opened.len(), 1);
+        assert_eq!(result.errors.len(), 0);
+        assert_eq!(result.opened[0].id, "local");
+        assert_eq!(restored.list_connections().unwrap().len(), 1);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn restore_saved_connections_reports_failed_auto_connect() {
+        let path = temp_json_file("restore-error");
+
+        let store = SqlConnectionStore::new();
+        store.initialize_persistence(path.clone()).unwrap();
+
+        // A non-existent file under a writable parent. At save time,
+        // validate_sqlite_path passes (create_if_missing: true) even
+        // though no file is written. On restore, the read-only flag
+        // forces SQLITE_OPEN_READ_ONLY against a missing file, which
+        // fails at the SQLite open step.
+        let missing_dir = std::env::temp_dir().join(format!("sql-studio-next-restore-missing-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&missing_dir).unwrap();
+        let missing_path = missing_dir.join("never-created.sqlite");
+        let missing_path_str = missing_path.to_string_lossy().to_string();
+
+        store
+            .save_connection(SqlSaveConnectionRequest {
+                input: SqlConnectionInput {
+                    id: Some("missing".to_string()),
+                    name: Some("Missing".to_string()),
+                    kind: SqlConnectionKind::Sqlite,
+                    database_path: missing_path_str,
+                    read_only: true,
+                    create_if_missing: true,
+                },
+                auto_connect: true,
+                open_now: false,
+            })
+            .unwrap();
+
+        let restored = SqlConnectionStore::new();
+        restored.initialize_persistence(path.clone()).unwrap();
+
+        let result = restored.restore_saved_connections().unwrap();
+
+        assert_eq!(result.opened.len(), 0);
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.errors[0].connection_id, "missing");
+
+        let _ = std::fs::remove_dir_all(&missing_dir);
+        let _ = std::fs::remove_file(path);
+    }
+
+    fn temp_json_file(name: &str) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+
+        std::env::temp_dir().join(format!("sql-studio-next-{name}-{now}.json"))
     }
 }

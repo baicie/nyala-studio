@@ -7,7 +7,9 @@ import {
 	SqlConnectionInput,
 	SqlConnectionKind,
 	SqlExecuteQueryRequest,
-	SqlListColumnsRequest
+	SqlListColumnsRequest,
+	SqlRemoveSavedConnectionRequest,
+	SqlSaveConnectionRequest
 } from './sqlTypes.js';
 
 export const SQL_DEFAULT_QUERY_LIMIT = 1_000;
@@ -123,4 +125,29 @@ export function normalizeSqlCancelQueryRequest(request: SqlCancelQueryRequest): 
 	}
 
 	return normalized;
+}
+
+export function normalizeSqlSaveConnectionRequest(request: SqlSaveConnectionRequest): SqlSaveConnectionRequest {
+	if (!request || typeof request !== 'object') {
+		throw new Error('save connection request must be an object');
+	}
+
+	return {
+		input: normalizeSqlConnectionInput(request.input),
+		autoConnect: request.autoConnect === true,
+		openNow: request.openNow === true
+	};
+}
+
+export function normalizeSqlRemoveSavedConnectionRequest(
+	request: SqlRemoveSavedConnectionRequest
+): SqlRemoveSavedConnectionRequest {
+	if (!request || typeof request !== 'object') {
+		throw new Error('remove saved connection request must be an object');
+	}
+
+	return {
+		connectionId: normalizeConnectionId(request.connectionId),
+		closeIfOpen: request.closeIfOpen === true
+	};
 }

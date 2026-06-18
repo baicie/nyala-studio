@@ -110,3 +110,35 @@ export interface SqlQueryResult {
 	elapsedMs: number;
 	truncated: boolean;
 }
+
+export interface SqlSavedConnection {
+	id: string;
+	name: string;
+	kind: SqlConnectionKind;
+	databasePath: string;
+	readOnly: boolean;
+	createIfMissing: boolean;
+	autoConnect: boolean;
+}
+
+export interface SqlSaveConnectionRequest {
+	input: SqlConnectionInput;
+	autoConnect?: boolean;
+	openNow?: boolean;
+}
+
+export interface SqlRemoveSavedConnectionRequest {
+	connectionId: string;
+	closeIfOpen?: boolean;
+}
+
+export interface SqlRestoreSavedConnectionError {
+	connectionId: string;
+	name: string;
+	error: string;
+}
+
+export interface SqlRestoreSavedConnectionsResult {
+	opened: SqlConnection[];
+	errors: SqlRestoreSavedConnectionError[];
+}

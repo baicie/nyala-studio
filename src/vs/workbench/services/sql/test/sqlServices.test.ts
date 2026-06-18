@@ -385,3 +385,100 @@ test('TauriSqlCommandExecutor forwards command to window.__TAURI__.core.invoke',
 		}
 	}
 });
+
+test('SqlConnectionService.saveConnection invokes sql_save_connection with normalized request', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	executor.responses.set('sql_save_connection', {
+		id: 'local',
+		name: 'Local SQLite',
+		kind: SqlConnectionKind.Sqlite,
+		databasePath: '/tmp/app.db',
+		readOnly: false,
+		createIfMissing: true,
+		autoConnect: true
+	});
+
+	const service = new SqlConnectionService(executor);
+
+	const saved = await service.saveConnection({
+		input: {
+			id: ' local ',
+			name: ' Local SQLite ',
+			kind: SqlConnectionKind.Sqlite,
+			databasePath: ' /tmp/app.db ',
+			createIfMissing: true
+		},
+		autoConnect: true,
+		openNow: true
+	});
+
+	assert.equal(saved.id, 'local');
+
+	assert.deepEqual(executor.lastCall(), {
+		command: 'sql_save_connection',
+		args: {
+			request: {
+				input: {
+					id: 'local',
+					name: 'Local SQLite',
+					kind: SqlConnectionKind.Sqlite,
+					databasePath: '/tmp/app.db',
+					readOnly: false,
+					createIfMissing: true
+				},
+				autoConnect: true,
+				openNow: true
+			}
+		}
+	});
+});
+
+test('SqlConnectionService.listSavedConnections returns empty array for non-array backend value', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	executor.responses.set('sql_list_saved_connections', null);
+
+	const service = new SqlConnectionService(executor);
+
+	assert.deepEqual(await service.listSavedConnections(), []);
+});
+
+test('SqlConnectionService.removeSavedConnection invokes sql_remove_saved_connection', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	const service = new SqlConnectionService(executor);
+
+	await service.removeSavedConnection({
+		connectionId: ' local ',
+		closeIfOpen: true
+	});
+
+	assert.deepEqual(executor.lastCall(), {
+		command: 'sql_remove_saved_connection',
+		args: {
+			request: {
+				connectionId: 'local',
+				closeIfOpen: true
+			}
+		}
+	});
+});
+
+test('SqlConnectionService.restoreSavedConnections invokes sql_restore_saved_connections', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	executor.responses.set('sql_restore_saved_connections', {
+		opened: [],
+		errors: []
+	});
+
+	const service = new SqlConnectionService(executor);
+	const result = await service.restoreSavedConnections();
+
+	assert.deepEqual(result, {
+		opened: [],
+		errors: []
+	});
+
+	assert.deepEqual(executor.lastCall(), {
+		command: 'sql_restore_saved_connections',
+		args: {}
+	});
+});

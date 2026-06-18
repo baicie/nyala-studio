@@ -20,7 +20,13 @@ import { IViewDescriptorService } from '../../../common/views.js';
 import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
 import { ISqlConnectionService } from '../../../services/sql/common/sqlConnection.js';
 import { ISqlMetadataService } from '../../../services/sql/common/sqlMetadata.js';
-import { SqlColumn, SqlConnection, SqlConnectionKind, SqlTable } from '../../../services/sql/common/sqlTypes.js';
+import {
+	SqlColumn,
+	SqlConnection,
+	SqlConnectionKind,
+	SqlSavedConnection,
+	SqlTable
+} from '../../../services/sql/common/sqlTypes.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
 import {
 	buildSqlConnectionTree,
@@ -44,6 +50,7 @@ export class SqlConnectionsView extends ViewPane {
 
 	private readonly formDisposables = this._register(new DisposableStore());
 	private readonly treeRenderDisposables = this._register(new DisposableStore());
+	private readonly savedRenderDisposables = this._register(new DisposableStore());
 
 	private body!: HTMLElement;
 	private form!: HTMLFormElement;
@@ -51,8 +58,11 @@ export class SqlConnectionsView extends ViewPane {
 	private databasePathInput!: HTMLInputElement;
 	private readOnlyInput!: HTMLInputElement;
 	private createIfMissingInput!: HTMLInputElement;
+	private saveConnectionInput!: HTMLInputElement;
+	private autoConnectInput!: HTMLInputElement;
 	private messageElement!: HTMLElement;
 	private treeElement!: HTMLElement;
+	private savedConnectionsElement!: HTMLElement;
 
 	private readonly collapsedNodes = new Set<string>();
 
@@ -62,6 +72,9 @@ export class SqlConnectionsView extends ViewPane {
 		columnsByTableId: Object.create(null),
 		errorsByConnectionId: Object.create(null)
 	};
+
+	private savedConnections: SqlSavedConnection[] = [];
+	private didRestoreSavedConnections = false;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -95,11 +108,14 @@ export class SqlConnectionsView extends ViewPane {
 	protected override renderBody(container: HTMLElement): void {
 		this.body = append(container, $('.sql-connections-view'));
 		this.renderConnectionForm(this.body);
+		this.savedConnectionsElement = append(this.body, $('.sql-saved-connections'));
 		this.messageElement = append(this.body, $('.sql-connections-message'));
 		this.treeElement = append(this.body, $('.sql-connections-tree', { role: 'tree', tabIndex: 0 }));
 
 		this.databasePathInput.value = ':memory:';
 		this.createIfMissingInput.checked = true;
+		this.saveConnectionInput.checked = true;
+		this.autoConnectInput.checked = true;
 
 		this.refresh().catch(error => this.showError(error));
 	}
@@ -113,12 +129,25 @@ export class SqlConnectionsView extends ViewPane {
 		this.showInfo('Loading connections...');
 
 		try {
-			const connections = await this.sqlConnectionService.listConnections();
+			if (!this.didRestoreSavedConnections) {
+				this.didRestoreSavedConnections = true;
+				try {
+					await this.sqlConnectionService.restoreSavedConnections();
+				} catch (error) {
+					this.showError(error);
+				}
+			}
+
+			const [connections, saved] = await Promise.all([
+				this.sqlConnectionService.listConnections(),
+				this.sqlConnectionService.listSavedConnections()
+			]);
 
 			this.state.connections = connections;
 			this.state.tablesByConnectionId = Object.create(null);
 			this.state.columnsByTableId = Object.create(null);
 			this.state.errorsByConnectionId = Object.create(null);
+			this.savedConnections = saved;
 
 			for (const connection of connections) {
 				await this.loadConnectionMetadata(connection);
@@ -126,12 +155,15 @@ export class SqlConnectionsView extends ViewPane {
 
 			this.showInfo(connections.length === 0 ? 'No connections yet.' : '');
 			this.renderTree();
+			this.renderSavedConnections();
 		} catch (error) {
 			this.state.connections = [];
 			this.state.tablesByConnectionId = Object.create(null);
 			this.state.columnsByTableId = Object.create(null);
 			this.state.errorsByConnectionId = Object.create(null);
+			this.savedConnections = [];
 			this.renderTree();
+			this.renderSavedConnections();
 			this.showError(error);
 		}
 	}
@@ -149,20 +181,34 @@ export class SqlConnectionsView extends ViewPane {
 		this.showInfo('Opening SQLite connection...');
 
 		try {
-			const connection = await this.sqlConnectionService.openConnection({
+			const input = {
 				name: name || undefined,
 				kind: SqlConnectionKind.Sqlite,
 				databasePath,
 				readOnly: this.readOnlyInput.checked,
 				createIfMissing: this.createIfMissingInput.checked
-			});
+			};
 
-			this.collapsedNodes.delete(getConnectionNodeId(connection.id));
-			this.showInfo(`Connected to ${connection.name}.`);
+			if (this.saveConnectionInput.checked) {
+				await this.sqlConnectionService.saveConnection({
+					input,
+					autoConnect: this.autoConnectInput.checked,
+					openNow: true
+				});
+			} else {
+				await this.sqlConnectionService.openConnection(input);
+			}
+
+			this.collapsedNodes.delete(getConnectionNodeId(this.resolveConnectionId(name, databasePath)));
+			this.showInfo(`Connected to ${name || databasePath}.`);
 			await this.refresh();
 		} catch (error) {
 			this.showError(error);
 		}
+	}
+
+	private resolveConnectionId(name: string, databasePath: string): string {
+		return name || databasePath;
 	}
 
 	private renderConnectionForm(container: HTMLElement): void {
@@ -197,6 +243,14 @@ export class SqlConnectionsView extends ViewPane {
 		const createLabel = append(options, $('label.sql-connections-checkbox'));
 		this.createIfMissingInput = append(createLabel, $('input', { type: 'checkbox' })) as HTMLInputElement;
 		append(createLabel, $('span', undefined, 'Create if missing'));
+
+		const saveLabel = append(options, $('label.sql-connections-checkbox'));
+		this.saveConnectionInput = append(saveLabel, $('input', { type: 'checkbox' })) as HTMLInputElement;
+		append(saveLabel, $('span', undefined, 'Save'));
+
+		const autoConnectLabel = append(options, $('label.sql-connections-checkbox'));
+		this.autoConnectInput = append(autoConnectLabel, $('input', { type: 'checkbox' })) as HTMLInputElement;
+		append(autoConnectLabel, $('span', undefined, 'Auto connect'));
 
 		const actions = append(this.form, $('.sql-connections-actions'));
 		append(actions, $('button.sql-connections-button.primary', { type: 'submit' }, 'Connect'));
@@ -270,7 +324,7 @@ export class SqlConnectionsView extends ViewPane {
 			})
 		) as HTMLButtonElement;
 
-		twisty.textContent = hasChildren ? (isExpanded ? '▾' : '▸') : '';
+		twisty.textContent = hasChildren ? (isExpanded ? '\u25be' : '\u25b8') : '';
 
 		if (hasChildren) {
 			this.treeRenderDisposables.add(
@@ -353,6 +407,50 @@ export class SqlConnectionsView extends ViewPane {
 		}
 	}
 
+	private renderSavedConnections(): void {
+		this.savedRenderDisposables.clear();
+		clearNode(this.savedConnectionsElement);
+
+		if (this.savedConnections.length === 0) {
+			return;
+		}
+
+		const title = append(this.savedConnectionsElement, $('.sql-saved-connections-title'));
+		title.textContent = 'Saved Connections';
+
+		for (const saved of this.savedConnections) {
+			const row = append(this.savedConnectionsElement, $('.sql-saved-connection-row'));
+
+			append(row, $('span.sql-saved-connection-name', undefined, saved.name));
+
+			const openButton = append(
+				row,
+				$('button.sql-saved-connection-action', { type: 'button' }, 'Open')
+			) as HTMLButtonElement;
+
+			const removeButton = append(
+				row,
+				$('button.sql-saved-connection-action.danger', { type: 'button' }, 'Remove')
+			) as HTMLButtonElement;
+
+			this.savedRenderDisposables.add(
+				addDisposableListener(openButton, EventType.CLICK, event => {
+					event.preventDefault();
+					event.stopPropagation();
+					this.openSavedConnection(saved).catch(error => this.showError(error));
+				})
+			);
+
+			this.savedRenderDisposables.add(
+				addDisposableListener(removeButton, EventType.CLICK, event => {
+					event.preventDefault();
+					event.stopPropagation();
+					this.removeSavedConnection(saved.id).catch(error => this.showError(error));
+				})
+			);
+		}
+	}
+
 	private async openQueryForNode(node: SqlConnectionTreeNode): Promise<void> {
 		const draft = createSqlEditorDraftFromTreeNode(node, {
 			connectionName: node.connectionId ? this.getConnectionName(node.connectionId) : undefined
@@ -363,6 +461,30 @@ export class SqlConnectionsView extends ViewPane {
 
 	private getConnectionName(connectionId: string): string | undefined {
 		return this.state.connections.find(connection => connection.id === connectionId)?.name;
+	}
+
+	private async openSavedConnection(saved: SqlSavedConnection): Promise<void> {
+		await this.sqlConnectionService.openConnection({
+			id: saved.id,
+			name: saved.name,
+			kind: saved.kind,
+			databasePath: saved.databasePath,
+			readOnly: saved.readOnly,
+			createIfMissing: saved.createIfMissing
+		});
+
+		this.showInfo(`Connected to ${saved.name}.`);
+		await this.refresh();
+	}
+
+	private async removeSavedConnection(connectionId: string): Promise<void> {
+		await this.sqlConnectionService.removeSavedConnection({
+			connectionId,
+			closeIfOpen: false
+		});
+
+		this.showInfo('Saved connection removed.');
+		await this.refresh();
 	}
 
 	private async closeConnection(connectionId: string): Promise<void> {

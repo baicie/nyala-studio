@@ -457,6 +457,15 @@ pub fn run() {
             app.manage(Arc::new(db));
 
             {
+                let sql_store = app.state::<Arc<SqlConnectionStore>>();
+                let sql_connections_path = app_data.join("sql-connections.json");
+
+                if let Err(err) = sql_store.initialize_persistence(sql_connections_path) {
+                    log::warn!("SQL connection persistence disabled: {err}");
+                }
+            }
+
+            {
                 let settings_store = app.state::<Arc<SettingsStore>>();
                 let user_settings_path = commands::os::resolve_user_data_dir(app.handle())
                     .expect("failed to resolve user data dir")
@@ -654,6 +663,10 @@ pub fn run() {
             commands::sql_open_connection,
             commands::sql_close_connection,
             commands::sql_list_connections,
+            commands::sql_save_connection,
+            commands::sql_list_saved_connections,
+            commands::sql_remove_saved_connection,
+            commands::sql_restore_saved_connections,
             commands::sql_list_tables,
             commands::sql_list_columns,
             commands::sql_execute_query,

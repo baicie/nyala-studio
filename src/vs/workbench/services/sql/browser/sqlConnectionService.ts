@@ -3,8 +3,21 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ISqlConnectionService } from '../common/sqlConnection.js';
-import { SqlConnection, SqlConnectionInput, SqlConnectionTestResult } from '../common/sqlTypes.js';
-import { normalizeConnectionId, normalizeSqlConnectionInput } from '../common/sqlValidation.js';
+import {
+	SqlConnection,
+	SqlConnectionInput,
+	SqlConnectionTestResult,
+	SqlRemoveSavedConnectionRequest,
+	SqlRestoreSavedConnectionsResult,
+	SqlSaveConnectionRequest,
+	SqlSavedConnection
+} from '../common/sqlTypes.js';
+import {
+	normalizeConnectionId,
+	normalizeSqlConnectionInput,
+	normalizeSqlRemoveSavedConnectionRequest,
+	normalizeSqlSaveConnectionRequest
+} from '../common/sqlValidation.js';
 import { ISqlCommandExecutor, TauriSqlCommandExecutor, toSqlServiceError } from './sqlCommandExecutor.js';
 
 export class SqlConnectionService implements ISqlConnectionService {
@@ -54,6 +67,47 @@ export class SqlConnectionService implements ISqlConnectionService {
 			return Array.isArray(connections) ? connections : [];
 		} catch (error) {
 			throw toSqlServiceError('sql_list_connections', error);
+		}
+	}
+
+	async saveConnection(request: SqlSaveConnectionRequest): Promise<SqlSavedConnection> {
+		const normalized = normalizeSqlSaveConnectionRequest(request);
+
+		try {
+			return await this.executor.execute<SqlSavedConnection>('sql_save_connection', {
+				request: normalized
+			});
+		} catch (error) {
+			throw toSqlServiceError('sql_save_connection', error);
+		}
+	}
+
+	async listSavedConnections(): Promise<SqlSavedConnection[]> {
+		try {
+			const connections = await this.executor.execute<SqlSavedConnection[]>('sql_list_saved_connections');
+			return Array.isArray(connections) ? connections : [];
+		} catch (error) {
+			throw toSqlServiceError('sql_list_saved_connections', error);
+		}
+	}
+
+	async removeSavedConnection(request: SqlRemoveSavedConnectionRequest): Promise<void> {
+		const normalized = normalizeSqlRemoveSavedConnectionRequest(request);
+
+		try {
+			await this.executor.execute<void>('sql_remove_saved_connection', {
+				request: normalized
+			});
+		} catch (error) {
+			throw toSqlServiceError('sql_remove_saved_connection', error);
+		}
+	}
+
+	async restoreSavedConnections(): Promise<SqlRestoreSavedConnectionsResult> {
+		try {
+			return await this.executor.execute<SqlRestoreSavedConnectionsResult>('sql_restore_saved_connections');
+		} catch (error) {
+			throw toSqlServiceError('sql_restore_saved_connections', error);
 		}
 	}
 }
