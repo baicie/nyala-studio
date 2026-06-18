@@ -122,10 +122,7 @@ viewsRegistry.registerViews(
 			ctorDescriptor: new SyncDescriptor(SqlResultView),
 			order: 0,
 			canMoveView: false,
-			canToggleVisibility: false,
-			focusCommand: {
-				id: SQL_RESULT_FOCUS_COMMAND_ID
-			}
+			canToggleVisibility: false
 		}
 	],
 	SQL_RESULT_VIEW_CONTAINER
