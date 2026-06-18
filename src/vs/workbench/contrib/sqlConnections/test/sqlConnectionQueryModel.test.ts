@@ -10,6 +10,7 @@ import {
 	SQL_CONNECTION_TABLE_PREVIEW_LIMIT
 } from '../common/sqlConnectionQueryModel.js';
 import { SqlConnectionTreeNodeType } from '../common/sqlConnectionTreeModel.js';
+import { SqlDialect } from '../../../services/sql/common/sqlDialect.js';
 import { SqlTableType } from '../../../services/sql/common/sqlTypes.js';
 
 test('quoteSqliteIdentifier quotes simple identifier', () => {
@@ -204,4 +205,52 @@ test('createSqlEditorDraftFromTreeNode rejects node without connection id', () =
 
 test('SqlTableType is reachable from sqlTypes module', () => {
 	assert.equal(SqlTableType.Table, 'table');
+});
+
+test('createTablePreviewDraft can generate postgres SQL through dialect option', () => {
+	const draft = createTablePreviewDraft(
+		{
+			type: SqlConnectionTreeNodeType.Table,
+			connectionId: 'local',
+			schema: 'public',
+			tableName: 'users',
+			label: 'users'
+		},
+		{
+			dialect: SqlDialect.Postgres,
+			limit: 25
+		}
+	);
+
+	assert.equal(
+		draft.initialSql,
+		`SELECT *
+FROM "public"."users"
+LIMIT 25;
+`
+	);
+});
+
+test('createTablePreviewDraft can generate mysql SQL through dialect option', () => {
+	const draft = createTablePreviewDraft(
+		{
+			type: SqlConnectionTreeNodeType.Table,
+			connectionId: 'local',
+			schema: 'app',
+			tableName: 'users',
+			label: 'users'
+		},
+		{
+			dialect: SqlDialect.MySql,
+			limit: 25
+		}
+	);
+
+	assert.equal(
+		draft.initialSql,
+		`SELECT *
+FROM \`app\`.\`users\`
+LIMIT 25;
+`
+	);
 });

@@ -1,4 +1,5 @@
 mod connection;
+pub mod dialect;
 mod metadata;
 mod persistence;
 mod query;

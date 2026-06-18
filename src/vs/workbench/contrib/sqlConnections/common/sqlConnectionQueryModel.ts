@@ -2,9 +2,15 @@
  * SQL Studio Next - SQL query draft helpers for connection tree nodes.
  *--------------------------------------------------------------------------------------------*/
 
+import {
+	createTablePreviewSql,
+	SqlDialect,
+	SQL_DEFAULT_TABLE_PREVIEW_LIMIT,
+	SQL_MAX_TABLE_PREVIEW_LIMIT
+} from '../../../services/sql/common/sqlDialect.js';
 import { SqlConnectionTreeNode, SqlConnectionTreeNodeType } from './sqlConnectionTreeModel.js';
 
-export const SQL_CONNECTION_TABLE_PREVIEW_LIMIT = 100;
+export const SQL_CONNECTION_TABLE_PREVIEW_LIMIT = SQL_DEFAULT_TABLE_PREVIEW_LIMIT;
 
 export interface SqlEditorDraft {
 	connectionId: string;
@@ -14,6 +20,7 @@ export interface SqlEditorDraft {
 
 export interface SqlEditorDraftOptions {
 	connectionName?: string;
+	dialect?: SqlDialect;
 	limit?: number;
 }
 
@@ -58,19 +65,31 @@ export function createTablePreviewDraft(
 ): SqlEditorDraft {
 	const connectionId = normalizeRequiredString(node.connectionId, 'connectionId');
 	const tableName = normalizeRequiredString(node.tableName ?? node.label, 'tableName');
-	const schema = normalizeOptionalString(node.schema);
-	const limit = normalizeLimit(options.limit);
 
 	return {
 		connectionId,
 		connectionName: normalizeOptionalString(options.connectionName),
-		initialSql: `SELECT *
-FROM ${formatSqliteQualifiedName(schema, tableName)}
-LIMIT ${limit};
-`
+		initialSql: createTablePreviewSql({
+			dialect: options.dialect ?? SqlDialect.Sqlite,
+			schema: normalizeOptionalString(node.schema),
+			tableName,
+			limit: options.limit
+		})
 	};
 }
 
+/**
+ * Backward-compatible export for Phase 4.5 tests/callers.
+ * New code should use quoteSqlIdentifier(SqlDialect.Sqlite, value).
+ */
+export function quoteSqliteIdentifier(value: string): string {
+	return `"${normalizeRequiredString(value, 'identifier').replaceAll('"', '""')}"`;
+}
+
+/**
+ * Backward-compatible export for Phase 4.5 tests/callers.
+ * New code should use formatQualifiedName(SqlDialect.Sqlite, ...).
+ */
 export function formatSqliteQualifiedName(schema: string | undefined, name: string): string {
 	const normalizedName = normalizeRequiredString(name, 'name');
 	const normalizedSchema = normalizeOptionalString(schema);
@@ -82,33 +101,15 @@ export function formatSqliteQualifiedName(schema: string | undefined, name: stri
 	return `${quoteSqliteIdentifier(normalizedSchema)}.${quoteSqliteIdentifier(normalizedName)}`;
 }
 
-export function quoteSqliteIdentifier(value: string): string {
-	const normalized = normalizeRequiredString(value, 'identifier');
-
-	if (normalized.includes('\0')) {
-		throw new Error('identifier must not contain NUL bytes');
-	}
-
-	return `"${normalized.replaceAll('"', '""')}"`;
-}
-
-function normalizeLimit(limit: number | undefined): number {
-	if (limit === undefined) {
-		return SQL_CONNECTION_TABLE_PREVIEW_LIMIT;
-	}
-
-	if (!Number.isInteger(limit) || limit <= 0) {
-		throw new Error('limit must be a positive integer');
-	}
-
-	return Math.min(limit, 10_000);
-}
-
 function normalizeRequiredString(value: string | undefined, fieldName: string): string {
 	const normalized = normalizeOptionalString(value);
 
 	if (!normalized) {
 		throw new Error(`${fieldName} must not be empty`);
+	}
+
+	if (normalized.includes('\0')) {
+		throw new Error(`${fieldName} must not contain NUL bytes`);
 	}
 
 	return normalized;
@@ -118,3 +119,5 @@ function normalizeOptionalString(value: string | undefined): string | undefined 
 	const normalized = value?.trim();
 	return normalized ? normalized : undefined;
 }
+
+export { SQL_MAX_TABLE_PREVIEW_LIMIT };
