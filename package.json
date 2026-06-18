@@ -24,7 +24,7 @@
     "test:branding": "node scripts/verify-branding.mjs",
     "test:rust": "cd src-tauri && cargo test --lib",
     "test:sql-services": "node --test --import tsx src/vs/workbench/services/sql/test/sqlServices.test.ts",
-    "test:sql-connections": "node --test --import tsx src/vs/workbench/contrib/sqlConnections/test/sqlConnectionTreeModel.test.ts",
+    "test:sql-connections": "node --test --import tsx src/vs/workbench/contrib/sqlConnections/test/sqlConnectionTreeModel.test.ts src/vs/workbench/contrib/sqlConnections/test/sqlConnectionQueryModel.test.ts",
     "test:sql-editor": "node --test --import tsx src/vs/workbench/contrib/sqlEditor/test/sqlEditor.test.ts",
     "test": "pnpm run test:branding && pnpm run test:rust && pnpm run test:sql-services && pnpm run test:sql-connections && pnpm run test:sql-editor"
   },

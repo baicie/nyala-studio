@@ -142,20 +142,43 @@
 	text-overflow: ellipsis;
 }
 
-.sql-connection-node-action {
+.sql-connection-node-actions {
 	margin-left: auto;
-	width: 20px;
-	height: 20px;
-	padding: 0;
-	border: 0;
-	color: inherit;
-	background: transparent;
-	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
 	opacity: 0;
 }
 
-.sql-connection-node:hover .sql-connection-node-action {
-	opacity: 0.8;
+.sql-connection-node:hover .sql-connection-node-actions,
+.sql-connection-node:focus-within .sql-connection-node-actions {
+	opacity: 1;
+}
+
+.sql-connection-node-action {
+	height: 20px;
+	min-width: 22px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 2px;
+	color: inherit;
+	background: transparent;
+	cursor: pointer;
+	font-size: 11px;
+	line-height: 20px;
+}
+
+.sql-connection-node-action:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.sql-connection-node-action.danger {
+	font-size: 14px;
+	padding: 0 5px;
+}
+
+.sql-connection-node-action.danger:hover {
+	color: var(--vscode-errorForeground);
 }
 
 .sql-connection-node.type-error .sql-connection-node-label,

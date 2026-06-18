@@ -1,3 +1,197 @@
+# Phase 4.5：Connection Tree -> SQL Editor 打通
+
+当前 Phase 4/5 的缺口是：
+
+```txt id="e761o0"
+SQL Connections View 已经能展示连接、表、字段
+SQL Editor 已经有 sql.newQuery 命令
+但 Connection Tree 还不能直接打开 SQL Editor
+```
+
+当前 `SqlConnectionsView` 只做了连接、刷新、关闭连接；表/视图节点没有生成 SQL 的入口。
+当前树模型已经有 `connectionId / schema / tableName / columnName` 等字段，足够从 table/view 节点生成 SQL。
+当前 SQL Editor 已经定义了 `SQL_NEW_QUERY_COMMAND_ID = 'sql.newQuery'`，`NewSqlQueryAction` 也支持传入 `connectionId / connectionName / initialSql`。
+
+---
+
+# Phase 4.5 目标
+
+```txt id="65m1sa"
+Connection 节点
+  -> Open Query
+  -> 打开空 SQL Editor，并绑定 connectionId
+
+Table 节点
+  -> SELECT
+  -> 打开 SQL Editor，生成 SELECT * FROM table LIMIT 100;
+
+View 节点
+  -> SELECT
+  -> 打开 SQL Editor，生成 SELECT * FROM view LIMIT 100;
+```
+
+本阶段不做：
+
+```txt id="83q6ys"
+- Result Panel
+- 右键菜单系统
+- Browse Table 数据展示
+- SQL formatter
+- Query History
+- 多数据库
+```
+
+---
+
+# 文件变化
+
+新增：
+
+```txt id="y4g4ke"
+src/vs/workbench/contrib/sqlConnections/common/sqlConnectionQueryModel.ts
+src/vs/workbench/contrib/sqlConnections/test/sqlConnectionQueryModel.test.ts
+```
+
+修改：
+
+```txt id="k8k3nn"
+src/vs/workbench/contrib/sqlConnections/browser/sqlConnectionsView.ts
+src/vs/workbench/contrib/sqlConnections/browser/media/sqlConnections.css
+package.json
+```
+
+---
+
+# 1. 新增 `src/vs/workbench/contrib/sqlConnections/common/sqlConnectionQueryModel.ts`
+
+```ts id="7ayxao"
+/*---------------------------------------------------------------------------------------------
+ * SQL Studio Next - SQL query draft helpers for connection tree nodes.
+ *--------------------------------------------------------------------------------------------*/
+
+import { SqlConnectionTreeNode, SqlConnectionTreeNodeType } from './sqlConnectionTreeModel.js';
+
+export const SQL_CONNECTION_TABLE_PREVIEW_LIMIT = 100;
+
+export interface SqlEditorDraft {
+	connectionId: string;
+	connectionName?: string;
+	initialSql: string;
+}
+
+export interface SqlEditorDraftOptions {
+	connectionName?: string;
+	limit?: number;
+}
+
+export function createSqlEditorDraftFromTreeNode(
+	node: SqlConnectionTreeNode,
+	options: SqlEditorDraftOptions = {}
+): SqlEditorDraft {
+	if (!node.connectionId) {
+		throw new Error('Cannot open SQL query because the tree node has no connection id.');
+	}
+
+	switch (node.type) {
+		case SqlConnectionTreeNodeType.Connection:
+			return createConnectionQueryDraft(node.connectionId, options.connectionName ?? node.label);
+
+		case SqlConnectionTreeNodeType.Table:
+		case SqlConnectionTreeNodeType.View:
+			return createTablePreviewDraft(node, options);
+
+		default:
+			throw new Error(`Cannot open SQL query from node type: ${node.type}`);
+	}
+}
+
+export function createConnectionQueryDraft(connectionId: string, connectionName?: string): SqlEditorDraft {
+	const normalizedConnectionId = normalizeRequiredString(connectionId, 'connectionId');
+
+	return {
+		connectionId: normalizedConnectionId,
+		connectionName: normalizeOptionalString(connectionName),
+		initialSql: `-- SQL Studio Query
+-- Connection: ${normalizeOptionalString(connectionName) ?? normalizedConnectionId}
+
+SELECT 1 AS value;
+`
+	};
+}
+
+export function createTablePreviewDraft(
+	node: Pick<SqlConnectionTreeNode, 'connectionId' | 'schema' | 'tableName' | 'label' | 'type'>,
+	options: SqlEditorDraftOptions = {}
+): SqlEditorDraft {
+	const connectionId = normalizeRequiredString(node.connectionId, 'connectionId');
+	const tableName = normalizeRequiredString(node.tableName ?? node.label, 'tableName');
+	const schema = normalizeOptionalString(node.schema);
+	const limit = normalizeLimit(options.limit);
+
+	return {
+		connectionId,
+		connectionName: normalizeOptionalString(options.connectionName),
+		initialSql: `SELECT *
+FROM ${formatSqliteQualifiedName(schema, tableName)}
+LIMIT ${limit};
+`
+	};
+}
+
+export function formatSqliteQualifiedName(schema: string | undefined, name: string): string {
+	const normalizedName = normalizeRequiredString(name, 'name');
+	const normalizedSchema = normalizeOptionalString(schema);
+
+	if (!normalizedSchema || normalizedSchema === 'main') {
+		return quoteSqliteIdentifier(normalizedName);
+	}
+
+	return `${quoteSqliteIdentifier(normalizedSchema)}.${quoteSqliteIdentifier(normalizedName)}`;
+}
+
+export function quoteSqliteIdentifier(value: string): string {
+	const normalized = normalizeRequiredString(value, 'identifier');
+
+	if (normalized.includes('\0')) {
+		throw new Error('identifier must not contain NUL bytes');
+	}
+
+	return `"${normalized.replaceAll('"', '""')}"`;
+}
+
+function normalizeLimit(limit: number | undefined): number {
+	if (limit === undefined) {
+		return SQL_CONNECTION_TABLE_PREVIEW_LIMIT;
+	}
+
+	if (!Number.isInteger(limit) || limit <= 0) {
+		throw new Error('limit must be a positive integer');
+	}
+
+	return Math.min(limit, 10_000);
+}
+
+function normalizeRequiredString(value: string | undefined, fieldName: string): string {
+	const normalized = normalizeOptionalString(value);
+
+	if (!normalized) {
+		throw new Error(`${fieldName} must not be empty`);
+	}
+
+	return normalized;
+}
+
+function normalizeOptionalString(value: string | undefined): string | undefined {
+	const normalized = value?.trim();
+	return normalized ? normalized : undefined;
+}
+```
+
+---
+
+# 2. 替换 `src/vs/workbench/contrib/sqlConnections/browser/sqlConnectionsView.ts`
+
+```ts id="pim7ak"
 /*---------------------------------------------------------------------------------------------
  * SQL Studio Next - SQL Connections View.
  *--------------------------------------------------------------------------------------------*/
@@ -341,7 +535,7 @@ export class SqlConnectionsView extends ViewPane {
 				})
 			) as HTMLButtonElement;
 
-			closeButton.textContent = '\u00d7';
+			closeButton.textContent = '×';
 
 			this.treeRenderDisposables.add(
 				addDisposableListener(closeButton, EventType.CLICK, event => {
@@ -420,19 +614,361 @@ function isQueryOpenableNode(node: SqlConnectionTreeNode): boolean {
 function getNodeIcon(node: SqlConnectionTreeNode): string {
 	switch (node.type) {
 		case SqlConnectionTreeNodeType.Connection:
-			return '\u25c9';
+			return '◉';
 		case SqlConnectionTreeNodeType.Group:
-			return '\u25a3';
+			return '▣';
 		case SqlConnectionTreeNodeType.Table:
-			return '\u25a6';
+			return '▦';
 		case SqlConnectionTreeNodeType.View:
-			return '\u25eb';
+			return '◫';
 		case SqlConnectionTreeNodeType.Column:
-			return '\u2022';
+			return '•';
 		case SqlConnectionTreeNodeType.Error:
 			return '!';
 		case SqlConnectionTreeNodeType.Empty:
 		default:
-			return '\u00b7';
+			return '·';
 	}
 }
+```
+
+---
+
+# 3. 修改 `src/vs/workbench/contrib/sqlConnections/browser/media/sqlConnections.css`
+
+把现有 `.sql-connection-node-action` 相关样式替换为下面这一组：
+
+```css id="5xqebh"
+.sql-connection-node-actions {
+	margin-left: auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	opacity: 0;
+}
+
+.sql-connection-node:hover .sql-connection-node-actions,
+.sql-connection-node:focus-within .sql-connection-node-actions {
+	opacity: 1;
+}
+
+.sql-connection-node-action {
+	height: 20px;
+	min-width: 22px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 2px;
+	color: inherit;
+	background: transparent;
+	cursor: pointer;
+	font-size: 11px;
+	line-height: 20px;
+}
+
+.sql-connection-node-action:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.sql-connection-node-action.danger {
+	font-size: 14px;
+	padding: 0 5px;
+}
+
+.sql-connection-node-action.danger:hover {
+	color: var(--vscode-errorForeground);
+}
+```
+
+如果文件里原来还有旧版：
+
+```css id="zgeecv"
+.sql-connection-node-action {
+	margin-left: auto;
+	width: 20px;
+	...
+}
+```
+
+需要删除，避免冲突。
+
+---
+
+# 4. 新增测试 `src/vs/workbench/contrib/sqlConnections/test/sqlConnectionQueryModel.test.ts`
+
+```ts id="g6uqle"
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+	createConnectionQueryDraft,
+	createSqlEditorDraftFromTreeNode,
+	createTablePreviewDraft,
+	formatSqliteQualifiedName,
+	quoteSqliteIdentifier,
+	SQL_CONNECTION_TABLE_PREVIEW_LIMIT
+} from '../common/sqlConnectionQueryModel.js';
+import { SqlConnectionTreeNodeType } from '../common/sqlConnectionTreeModel.js';
+import { SqlTableType } from '../../../services/sql/common/sqlTypes.js';
+
+test('quoteSqliteIdentifier quotes simple identifier', () => {
+	assert.equal(quoteSqliteIdentifier('users'), '"users"');
+});
+
+test('quoteSqliteIdentifier escapes double quotes', () => {
+	assert.equal(quoteSqliteIdentifier('weird"name'), '"weird""name"');
+});
+
+test('quoteSqliteIdentifier rejects empty identifier', () => {
+	assert.throws(() => quoteSqliteIdentifier('  '), /identifier must not be empty/);
+});
+
+test('quoteSqliteIdentifier rejects NUL bytes', () => {
+	assert.throws(() => quoteSqliteIdentifier('bad\0name'), /NUL/);
+});
+
+test('formatSqliteQualifiedName omits main schema', () => {
+	assert.equal(formatSqliteQualifiedName('main', 'users'), '"users"');
+});
+
+test('formatSqliteQualifiedName includes non-main schema', () => {
+	assert.equal(formatSqliteQualifiedName('analytics', 'events'), '"analytics"."events"');
+});
+
+test('createConnectionQueryDraft creates default query bound to connection', () => {
+	const draft = createConnectionQueryDraft(' local ', ' Local SQLite ');
+
+	assert.equal(draft.connectionId, 'local');
+	assert.equal(draft.connectionName, 'Local SQLite');
+	assert.match(draft.initialSql, /Connection: Local SQLite/);
+	assert.match(draft.initialSql, /SELECT 1 AS value;/);
+});
+
+test('createTablePreviewDraft creates select top SQL for table node', () => {
+	const draft = createTablePreviewDraft(
+		{
+			type: SqlConnectionTreeNodeType.Table,
+			connectionId: 'local',
+			schema: 'main',
+			tableName: 'users',
+			label: 'users'
+		},
+		{
+			connectionName: 'Local SQLite'
+		}
+	);
+
+	assert.equal(draft.connectionId, 'local');
+	assert.equal(draft.connectionName, 'Local SQLite');
+	assert.equal(
+		draft.initialSql,
+		`SELECT *
+FROM "users"
+LIMIT ${SQL_CONNECTION_TABLE_PREVIEW_LIMIT};
+`
+	);
+});
+
+test('createTablePreviewDraft creates select top SQL for attached schema', () => {
+	const draft = createTablePreviewDraft(
+		{
+			type: SqlConnectionTreeNodeType.Table,
+			connectionId: 'local',
+			schema: 'analytics',
+			tableName: 'events',
+			label: 'events'
+		},
+		{
+			limit: 50
+		}
+	);
+
+	assert.equal(
+		draft.initialSql,
+		`SELECT *
+FROM "analytics"."events"
+LIMIT 50;
+`
+	);
+});
+
+test('createTablePreviewDraft clamps large limit', () => {
+	const draft = createTablePreviewDraft(
+		{
+			type: SqlConnectionTreeNodeType.Table,
+			connectionId: 'local',
+			schema: 'main',
+			tableName: 'users',
+			label: 'users'
+		},
+		{
+			limit: 20_000
+		}
+	);
+
+	assert.match(draft.initialSql, /LIMIT 10000;/);
+});
+
+test('createTablePreviewDraft rejects invalid limit', () => {
+	assert.throws(
+		() =>
+			createTablePreviewDraft(
+				{
+					type: SqlConnectionTreeNodeType.Table,
+					connectionId: 'local',
+					schema: 'main',
+					tableName: 'users',
+					label: 'users'
+				},
+				{
+					limit: 0
+				}
+			),
+		/limit must be a positive integer/
+	);
+});
+
+test('createSqlEditorDraftFromTreeNode supports connection node', () => {
+	const draft = createSqlEditorDraftFromTreeNode(
+		{
+			id: 'sql/connection/local',
+			type: SqlConnectionTreeNodeType.Connection,
+			label: 'Local SQLite',
+			connectionId: 'local'
+		},
+		{
+			connectionName: 'Local SQLite'
+		}
+	);
+
+	assert.equal(draft.connectionId, 'local');
+	assert.equal(draft.connectionName, 'Local SQLite');
+	assert.match(draft.initialSql, /SELECT 1 AS value;/);
+});
+
+test('createSqlEditorDraftFromTreeNode supports table node', () => {
+	const draft = createSqlEditorDraftFromTreeNode({
+		id: 'sql/connection/local/table/main/users',
+		type: SqlConnectionTreeNodeType.Table,
+		label: 'users',
+		connectionId: 'local',
+		schema: 'main',
+		tableName: 'users'
+	});
+
+	assert.equal(draft.connectionId, 'local');
+	assert.match(draft.initialSql, /FROM "users"/);
+});
+
+test('createSqlEditorDraftFromTreeNode supports view node', () => {
+	const draft = createSqlEditorDraftFromTreeNode({
+		id: 'sql/connection/local/view/main/active_users',
+		type: SqlConnectionTreeNodeType.View,
+		label: 'active_users',
+		connectionId: 'local',
+		schema: 'main',
+		tableName: 'active_users'
+	});
+
+	assert.equal(draft.connectionId, 'local');
+	assert.match(draft.initialSql, /FROM "active_users"/);
+});
+
+test('createSqlEditorDraftFromTreeNode rejects column node', () => {
+	assert.throws(
+		() =>
+			createSqlEditorDraftFromTreeNode({
+				id: 'column',
+				type: SqlConnectionTreeNodeType.Column,
+				label: 'id',
+				connectionId: 'local',
+				tableName: 'users',
+				columnName: 'id'
+			}),
+		/Cannot open SQL query from node type/
+	);
+});
+
+test('createSqlEditorDraftFromTreeNode rejects node without connection id', () => {
+	assert.throws(
+		() =>
+			createSqlEditorDraftFromTreeNode({
+				id: 'empty',
+				type: SqlConnectionTreeNodeType.Empty,
+				label: 'Empty'
+			}),
+		/no connection id/
+	);
+});
+```
+
+---
+
+# 5. 修改 `package.json`
+
+当前已经有 `test:sql-connections` 和 `test:sql-editor`，总测试也已经串起来了。
+
+把：
+
+```json id="zo23cu"
+"test:sql-connections": "node --test --import tsx src/vs/workbench/contrib/sqlConnections/test/sqlConnectionTreeModel.test.ts"
+```
+
+改成：
+
+```json id="stzpg2"
+"test:sql-connections": "node --test --import tsx src/vs/workbench/contrib/sqlConnections/test/sqlConnectionTreeModel.test.ts src/vs/workbench/contrib/sqlConnections/test/sqlConnectionQueryModel.test.ts"
+```
+
+总测试不需要改，因为它已经引用了 `test:sql-connections`。
+
+---
+
+# 6. 验收方式
+
+```bash id="nk56qz"
+pnpm run test:sql-connections
+pnpm run test
+pnpm run lint
+pnpm run build
+```
+
+手动验收：
+
+```txt id="530okg"
+1. pnpm tauri dev
+2. 添加 SQLite 连接
+3. 展开 SQL Connections
+4. 点击 Connection 行的 SQL
+   -> 打开 SQL Query editor
+   -> 绑定当前 connectionId
+5. 点击 table 行的 SELECT
+   -> 打开 SQL Query editor
+   -> 自动生成 SELECT * FROM "table" LIMIT 100;
+6. 点击 view 行的 SELECT
+   -> 自动生成 SELECT * FROM "view" LIMIT 100;
+```
+
+---
+
+# 7. Phase 4.5 完成后的状态
+
+完成后产品流就变成：
+
+```txt id="ujekph"
+SQL Connections
+  -> SQLite connection
+    -> SQL
+       -> SQL Editor
+    -> Tables
+       -> users
+          -> SELECT
+             -> SQL Editor with SELECT * FROM "users" LIMIT 100;
+```
+
+下一步就应该做：
+
+```txt id="x98tdr"
+Phase 6：Query Result Panel
+```
+
+不要继续补复杂右键菜单，也不要现在做 MySQL/Postgres。Phase 4.5 的唯一目标就是把 **Connection Tree 和 SQL Editor 串起来**。
