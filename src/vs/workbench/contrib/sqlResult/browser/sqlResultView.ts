@@ -83,7 +83,7 @@ export class SqlResultView extends ViewPane {
 			$('button.sql-result-button', { type: 'button', title: 'Clear result' }, 'Clear')
 		) as HTMLButtonElement;
 
-		this.contentElement = append(this.container, $('.sql-result-content'));
+		this.contentElement = append(this.container, $('.sql-result-content', { tabIndex: 0 }));
 
 		this._register(
 			addDisposableListener(this.clearButton, EventType.CLICK, () => {

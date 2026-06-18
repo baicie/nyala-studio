@@ -14,6 +14,7 @@ import {
 	sqlResultToCsv,
 	SqlResultStateKind
 } from '../common/sqlResultModel.js';
+import { SqlResultService } from '../common/sqlResultService.js';
 
 const sampleResult: SqlQueryResult = {
 	columns: [
@@ -176,4 +177,43 @@ test('sqlResultToCsv escapes CSV cells', () => {
 	};
 
 	assert.equal(sqlResultToCsv(result), 'id,text\n1,"hello, ""world"""');
+});
+
+test('SqlResultService emits state changes for query lifecycle', () => {
+	const service = new SqlResultService();
+	const states: SqlResultStateKind[] = [];
+
+	service.onDidChangeResult(state => {
+		states.push(state.kind);
+	});
+
+	service.setRunning({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1',
+		startedAt: 1
+	});
+
+	service.setSuccess({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1',
+		startedAt: 1,
+		completedAt: 2,
+		result: {
+			columns: [{ name: 'value', ordinal: 0 }],
+			rows: [[{ kind: SqlCellKind.Integer, value: 1 }]],
+			rowCount: 1,
+			elapsedMs: 1,
+			truncated: false
+		}
+	});
+
+	service.clear();
+
+	assert.deepEqual(states, [
+		SqlResultStateKind.Running,
+		SqlResultStateKind.Success,
+		SqlResultStateKind.Idle
+	]);
 });
