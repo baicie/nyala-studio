@@ -156,3 +156,19 @@ test('getTableNodeId and getColumnNodeId escape special characters', () => {
 	assert.equal(tableId, 'sql/connection/local%20connection/table/main%20schema/user%2Fprofile');
 	assert.equal(columnId, 'sql/connection/local%20connection/table/main%20schema/user%2Fprofile/column/display%20name');
 });
+
+test('connection node id matches encoded connection id convention', () => {
+	const nodes = buildSqlConnectionTree({
+		connections: [
+			{
+				id: 'local connection',
+				name: 'Local SQLite',
+				kind: SqlConnectionKind.Sqlite,
+				databasePath: '/tmp/app.db',
+				readOnly: false
+			}
+		]
+	});
+
+	assert.equal(nodes[0].id, 'sql/connection/local%20connection');
+});

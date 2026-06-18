@@ -16,8 +16,7 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { IViewDescriptorService } from '../../../common/views.js';
-import { ViewPane } from '../../../browser/parts/views/viewPane.js';
-import { IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
+import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
 import { ISqlConnectionService } from '../../../services/sql/common/sqlConnection.js';
 import { ISqlMetadataService } from '../../../services/sql/common/sqlMetadata.js';
 import { SqlColumn, SqlConnection, SqlConnectionKind, SqlTable } from '../../../services/sql/common/sqlTypes.js';
@@ -40,7 +39,8 @@ export class SqlConnectionsView extends ViewPane {
 	static readonly ID = SQL_CONNECTIONS_VIEW_ID;
 	static readonly NAME = localize('sqlConnectionsViewName', 'Connections');
 
-	private readonly viewDisposables = this._register(new DisposableStore());
+	private readonly formDisposables = this._register(new DisposableStore());
+	private readonly treeRenderDisposables = this._register(new DisposableStore());
 
 	private body!: HTMLElement;
 	private form!: HTMLFormElement;
@@ -51,7 +51,7 @@ export class SqlConnectionsView extends ViewPane {
 	private messageElement!: HTMLElement;
 	private treeElement!: HTMLElement;
 
-	private readonly expandedNodes = new Set<string>();
+	private readonly collapsedNodes = new Set<string>();
 
 	private readonly state: SqlConnectionTreeSnapshotState = {
 		connections: [],
@@ -92,7 +92,7 @@ export class SqlConnectionsView extends ViewPane {
 		this.body = append(container, $('.sql-connections-view'));
 		this.renderConnectionForm(this.body);
 		this.messageElement = append(this.body, $('.sql-connections-message'));
-		this.treeElement = append(this.body, $('.sql-connections-tree', { role: 'tree' }));
+		this.treeElement = append(this.body, $('.sql-connections-tree', { role: 'tree', tabIndex: 0 }));
 
 		this.databasePathInput.value = ':memory:';
 		this.createIfMissingInput.checked = true;
@@ -123,6 +123,11 @@ export class SqlConnectionsView extends ViewPane {
 			this.showInfo(connections.length === 0 ? 'No connections yet.' : '');
 			this.renderTree();
 		} catch (error) {
+			this.state.connections = [];
+			this.state.tablesByConnectionId = Object.create(null);
+			this.state.columnsByTableId = Object.create(null);
+			this.state.errorsByConnectionId = Object.create(null);
+			this.renderTree();
 			this.showError(error);
 		}
 	}
@@ -148,7 +153,7 @@ export class SqlConnectionsView extends ViewPane {
 				createIfMissing: this.createIfMissingInput.checked
 			});
 
-			this.expandedNodes.add(`sql/connection/${encodeURIComponent(connection.id)}`);
+			this.collapsedNodes.delete(getConnectionNodeId(connection.id));
 			this.showInfo(`Connected to ${connection.name}.`);
 			await this.refresh();
 		} catch (error) {
@@ -190,31 +195,23 @@ export class SqlConnectionsView extends ViewPane {
 		append(createLabel, $('span', undefined, 'Create if missing'));
 
 		const actions = append(this.form, $('.sql-connections-actions'));
-		const connectButton = append(
-			actions,
-			$('button.sql-connections-button.primary', { type: 'submit' }, 'Connect')
-		) as HTMLButtonElement;
+		append(actions, $('button.sql-connections-button.primary', { type: 'submit' }, 'Connect'));
+
 		const refreshButton = append(
 			actions,
 			$('button.sql-connections-button', { type: 'button' }, 'Refresh')
 		) as HTMLButtonElement;
 
-		this.viewDisposables.add(
+		this.formDisposables.add(
 			addDisposableListener(this.form, EventType.SUBMIT, event => {
 				event.preventDefault();
 				this.addConnectionFromForm().catch(error => this.showError(error));
 			})
 		);
 
-		this.viewDisposables.add(
+		this.formDisposables.add(
 			addDisposableListener(refreshButton, EventType.CLICK, () => {
 				this.refresh().catch(error => this.showError(error));
-			})
-		);
-
-		this.viewDisposables.add(
-			addDisposableListener(connectButton, EventType.CLICK, () => {
-				// The submit listener performs the actual work. This keeps Enter and click behavior aligned.
 			})
 		);
 	}
@@ -239,6 +236,7 @@ export class SqlConnectionsView extends ViewPane {
 	}
 
 	private renderTree(): void {
+		this.treeRenderDisposables.clear();
 		clearNode(this.treeElement);
 
 		const nodes = buildSqlConnectionTree(this.state);
@@ -263,13 +261,15 @@ export class SqlConnectionsView extends ViewPane {
 			$('button.sql-connection-node-twisty', {
 				type: 'button',
 				tabIndex: hasChildren ? 0 : -1,
-				'aria-label': isExpanded ? 'Collapse' : 'Expand'
+				'aria-label': isExpanded ? 'Collapse' : 'Expand',
+				'aria-expanded': hasChildren ? String(isExpanded) : undefined
 			})
 		) as HTMLButtonElement;
+
 		twisty.textContent = hasChildren ? (isExpanded ? '▾' : '▸') : '';
 
 		if (hasChildren) {
-			this.viewDisposables.add(
+			this.treeRenderDisposables.add(
 				addDisposableListener(twisty, EventType.CLICK, event => {
 					event.preventDefault();
 					event.stopPropagation();
@@ -299,7 +299,7 @@ export class SqlConnectionsView extends ViewPane {
 			) as HTMLButtonElement;
 			closeButton.textContent = '×';
 
-			this.viewDisposables.add(
+			this.treeRenderDisposables.add(
 				addDisposableListener(closeButton, EventType.CLICK, event => {
 					event.preventDefault();
 					event.stopPropagation();
@@ -320,26 +320,23 @@ export class SqlConnectionsView extends ViewPane {
 
 	private async closeConnection(connectionId: string): Promise<void> {
 		await this.sqlConnectionService.closeConnection(connectionId);
+		this.collapsedNodes.delete(getConnectionNodeId(connectionId));
 		this.showInfo('Connection closed.');
 		await this.refresh();
 	}
 
 	private toggleNode(nodeId: string): void {
-		if (this.expandedNodes.has(nodeId)) {
-			this.expandedNodes.delete(nodeId);
+		if (this.collapsedNodes.has(nodeId)) {
+			this.collapsedNodes.delete(nodeId);
 		} else {
-			this.expandedNodes.add(nodeId);
+			this.collapsedNodes.add(nodeId);
 		}
 
 		this.renderTree();
 	}
 
 	private isExpanded(node: SqlConnectionTreeNode): boolean {
-		if (node.type === SqlConnectionTreeNodeType.Connection || node.type === SqlConnectionTreeNodeType.Group) {
-			return !this.expandedNodes.has(node.id) || this.expandedNodes.has(node.id);
-		}
-
-		return this.expandedNodes.has(node.id);
+		return !this.collapsedNodes.has(node.id);
 	}
 
 	private showInfo(message: string): void {
@@ -359,6 +356,10 @@ export class SqlConnectionsView extends ViewPane {
 		this.messageElement.classList.add('error');
 		this.messageElement.textContent = error instanceof Error ? error.message : String(error);
 	}
+}
+
+function getConnectionNodeId(connectionId: string): string {
+	return `sql/connection/${encodeURIComponent(connectionId)}`;
 }
 
 function getNodeIcon(node: SqlConnectionTreeNode): string {
