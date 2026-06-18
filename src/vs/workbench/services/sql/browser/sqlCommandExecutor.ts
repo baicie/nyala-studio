@@ -18,8 +18,16 @@ export type SqlCommandName =
 	| 'sql_execute_query'
 	| 'sql_cancel_query';
 
+export interface SqlCommandExecutorOptions {
+	readonly allowVoid?: boolean;
+}
+
 export interface ISqlCommandExecutor {
-	execute<T>(command: SqlCommandName, args?: Record<string, unknown>): Promise<T>;
+	execute<T>(
+		command: SqlCommandName,
+		args?: Record<string, unknown>,
+		options?: SqlCommandExecutorOptions
+	): Promise<T>;
 }
 
 export class SqlServiceError extends Error {
@@ -34,7 +42,11 @@ export class SqlServiceError extends Error {
 }
 
 export class TauriSqlCommandExecutor implements ISqlCommandExecutor {
-	async execute<T>(command: SqlCommandName, args: Record<string, unknown> = {}): Promise<T> {
+	async execute<T>(
+		command: SqlCommandName,
+		args: Record<string, unknown> = {},
+		options: SqlCommandExecutorOptions = {}
+	): Promise<T> {
 		if (!isTauri()) {
 			throw new SqlServiceError(
 				`Tauri runtime is not available for SQL command '${command}'`,
@@ -43,16 +55,16 @@ export class TauriSqlCommandExecutor implements ISqlCommandExecutor {
 		}
 
 		try {
-			const result = await invoke<T | null>(command, args);
+			const result = await invoke<T | null | undefined>(command, args);
 
-			if (result === null || result === undefined) {
+			if ((result === null || result === undefined) && !options.allowVoid) {
 				throw new SqlServiceError(
 					`SQL command '${command}' returned no result`,
 					command
 				);
 			}
 
-			return result;
+			return result as T;
 		} catch (error) {
 			throw toSqlServiceError(command, error);
 		}

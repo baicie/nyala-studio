@@ -7,7 +7,6 @@ pub mod types;
 
 pub use connection::*;
 pub use metadata::*;
-pub use persistence::*;
 pub use query::*;
 pub use state::SqlConnectionStore;
 #[allow(unused_imports)]

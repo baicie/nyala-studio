@@ -23,6 +23,7 @@ import { ISqlMetadataService } from '../../../services/sql/common/sqlMetadata.js
 import {
 	SqlColumn,
 	SqlConnection,
+	SqlConnectionInput,
 	SqlConnectionKind,
 	SqlSavedConnection,
 	SqlTable
@@ -114,8 +115,9 @@ export class SqlConnectionsView extends ViewPane {
 
 		this.databasePathInput.value = ':memory:';
 		this.createIfMissingInput.checked = true;
-		this.saveConnectionInput.checked = true;
-		this.autoConnectInput.checked = true;
+		this.saveConnectionInput.checked = false;
+		this.autoConnectInput.checked = false;
+		this.autoConnectInput.disabled = true;
 
 		this.refresh().catch(error => this.showError(error));
 	}
@@ -181,7 +183,7 @@ export class SqlConnectionsView extends ViewPane {
 		this.showInfo('Opening SQLite connection...');
 
 		try {
-			const input = {
+			const input: SqlConnectionInput = {
 				name: name || undefined,
 				kind: SqlConnectionKind.Sqlite,
 				databasePath,
@@ -189,26 +191,37 @@ export class SqlConnectionsView extends ViewPane {
 				createIfMissing: this.createIfMissingInput.checked
 			};
 
-			if (this.saveConnectionInput.checked) {
-				await this.sqlConnectionService.saveConnection({
+			let connectionId: string;
+			let connectionName: string;
+
+			const shouldSave = this.saveConnectionInput.checked && isPersistableDatabasePath(databasePath);
+
+			if (this.saveConnectionInput.checked && !shouldSave) {
+				this.showInfo('In-memory SQLite connections are temporary and will not be saved.');
+			}
+
+			if (shouldSave) {
+				const saved = await this.sqlConnectionService.saveConnection({
 					input,
 					autoConnect: this.autoConnectInput.checked,
 					openNow: true
 				});
+
+				connectionId = saved.id;
+				connectionName = saved.name;
 			} else {
-				await this.sqlConnectionService.openConnection(input);
+				const connection = await this.sqlConnectionService.openConnection(input);
+
+				connectionId = connection.id;
+				connectionName = connection.name;
 			}
 
-			this.collapsedNodes.delete(getConnectionNodeId(this.resolveConnectionId(name, databasePath)));
-			this.showInfo(`Connected to ${name || databasePath}.`);
+			this.collapsedNodes.delete(getConnectionNodeId(connectionId));
+			this.showInfo(`Connected to ${connectionName}.`);
 			await this.refresh();
 		} catch (error) {
 			this.showError(error);
 		}
-	}
-
-	private resolveConnectionId(name: string, databasePath: string): string {
-		return name || databasePath;
 	}
 
 	private renderConnectionForm(container: HTMLElement): void {
@@ -270,6 +283,16 @@ export class SqlConnectionsView extends ViewPane {
 		this.formDisposables.add(
 			addDisposableListener(refreshButton, EventType.CLICK, () => {
 				this.refresh().catch(error => this.showError(error));
+			})
+		);
+
+		this.formDisposables.add(
+			addDisposableListener(this.saveConnectionInput, EventType.CHANGE, () => {
+				this.autoConnectInput.disabled = !this.saveConnectionInput.checked;
+
+				if (!this.saveConnectionInput.checked) {
+					this.autoConnectInput.checked = false;
+				}
 			})
 		);
 	}
@@ -464,6 +487,15 @@ export class SqlConnectionsView extends ViewPane {
 	}
 
 	private async openSavedConnection(saved: SqlSavedConnection): Promise<void> {
+		const alreadyOpen = this.state.connections.some(connection => connection.id === saved.id);
+
+		if (alreadyOpen) {
+			this.collapsedNodes.delete(getConnectionNodeId(saved.id));
+			this.showInfo(`${saved.name} is already connected.`);
+			this.renderTree();
+			return;
+		}
+
 		await this.sqlConnectionService.openConnection({
 			id: saved.id,
 			name: saved.name,
@@ -473,6 +505,7 @@ export class SqlConnectionsView extends ViewPane {
 			createIfMissing: saved.createIfMissing
 		});
 
+		this.collapsedNodes.delete(getConnectionNodeId(saved.id));
 		this.showInfo(`Connected to ${saved.name}.`);
 		await this.refresh();
 	}
@@ -557,4 +590,8 @@ function getNodeIcon(node: SqlConnectionTreeNode): string {
 		default:
 			return '\u00b7';
 	}
+}
+
+function isPersistableDatabasePath(databasePath: string): boolean {
+	return databasePath.trim() !== ':memory:';
 }

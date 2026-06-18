@@ -53,9 +53,15 @@ export class SqlConnectionService implements ISqlConnectionService {
 		const normalizedConnectionId = normalizeConnectionId(connectionId);
 
 		try {
-			await this.executor.execute<void>('sql_close_connection', {
-				connectionId: normalizedConnectionId
-			});
+			await this.executor.execute<void>(
+				'sql_close_connection',
+				{
+					connectionId: normalizedConnectionId
+				},
+				{
+					allowVoid: true
+				}
+			);
 		} catch (error) {
 			throw toSqlServiceError('sql_close_connection', error);
 		}
@@ -95,9 +101,15 @@ export class SqlConnectionService implements ISqlConnectionService {
 		const normalized = normalizeSqlRemoveSavedConnectionRequest(request);
 
 		try {
-			await this.executor.execute<void>('sql_remove_saved_connection', {
-				request: normalized
-			});
+			await this.executor.execute<void>(
+				'sql_remove_saved_connection',
+				{
+					request: normalized
+				},
+				{
+					allowVoid: true
+				}
+			);
 		} catch (error) {
 			throw toSqlServiceError('sql_remove_saved_connection', error);
 		}

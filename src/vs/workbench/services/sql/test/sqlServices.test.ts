@@ -17,13 +17,27 @@ import {
 	SQL_MAX_QUERY_LIMIT
 } from '../common/sqlValidation.js';
 
+interface FakeSqlCall {
+	command: SqlCommandName;
+	args: Record<string, unknown>;
+	options?: { allowVoid?: boolean };
+}
+
 class FakeSqlCommandExecutor implements ISqlCommandExecutor {
-	readonly calls: Array<{ command: SqlCommandName; args: Record<string, unknown> }> = [];
+	readonly calls: FakeSqlCall[] = [];
 	responses = new Map<SqlCommandName, unknown>();
 	errors = new Map<SqlCommandName, unknown>();
 
-	async execute<T>(command: SqlCommandName, args: Record<string, unknown> = {}): Promise<T> {
-		this.calls.push({ command, args });
+	async execute<T>(
+		command: SqlCommandName,
+		args: Record<string, unknown> = {},
+		options?: { allowVoid?: boolean }
+	): Promise<T> {
+		const call: FakeSqlCall = { command, args };
+		if (options !== undefined) {
+			call.options = options;
+		}
+		this.calls.push(call);
 
 		if (this.errors.has(command)) {
 			throw this.errors.get(command);
@@ -32,7 +46,7 @@ class FakeSqlCommandExecutor implements ISqlCommandExecutor {
 		return this.responses.get(command) as T;
 	}
 
-	lastCall(): { command: SqlCommandName; args: Record<string, unknown> } {
+	lastCall(): FakeSqlCall {
 		const call = this.calls.at(-1);
 		assert.ok(call, 'expected command executor to be called');
 		return call;
@@ -154,7 +168,7 @@ test('SqlConnectionService.openConnection invokes sql_open_connection', async ()
 	assert.equal(executor.lastCall().command, 'sql_open_connection');
 });
 
-test('SqlConnectionService.closeConnection invokes sql_close_connection with camelCase args', async () => {
+test('SqlConnectionService.closeConnection invokes sql_close_connection with allowVoid option', async () => {
 	const executor = new FakeSqlCommandExecutor();
 	const service = new SqlConnectionService(executor);
 
@@ -164,7 +178,8 @@ test('SqlConnectionService.closeConnection invokes sql_close_connection with cam
 		command: 'sql_close_connection',
 		args: {
 			connectionId: 'local'
-		}
+		},
+		options: { allowVoid: true }
 	});
 });
 
@@ -386,6 +401,34 @@ test('TauriSqlCommandExecutor forwards command to window.__TAURI__.core.invoke',
 	}
 });
 
+test('TauriSqlCommandExecutor allowVoid does not throw when backend returns null', async () => {
+	const previousWindow = (globalThis as typeof globalThis & { window?: unknown }).window;
+
+	try {
+		(globalThis as typeof globalThis & { window?: unknown }).window = {
+			__TAURI__: {
+				core: {
+					invoke: async () => null
+				}
+			}
+		};
+
+		const executor = new TauriSqlCommandExecutor();
+
+		await executor.execute<void>(
+			'sql_close_connection',
+			{ connectionId: 'local' },
+			{ allowVoid: true }
+		);
+	} finally {
+		if (previousWindow === undefined) {
+			delete (globalThis as typeof globalThis & { window?: unknown }).window;
+		} else {
+			(globalThis as typeof globalThis & { window?: unknown }).window = previousWindow;
+		}
+	}
+});
+
 test('SqlConnectionService.saveConnection invokes sql_save_connection with normalized request', async () => {
 	const executor = new FakeSqlCommandExecutor();
 	executor.responses.set('sql_save_connection', {
@@ -442,7 +485,7 @@ test('SqlConnectionService.listSavedConnections returns empty array for non-arra
 	assert.deepEqual(await service.listSavedConnections(), []);
 });
 
-test('SqlConnectionService.removeSavedConnection invokes sql_remove_saved_connection', async () => {
+test('SqlConnectionService.removeSavedConnection invokes sql_remove_saved_connection with allowVoid option', async () => {
 	const executor = new FakeSqlCommandExecutor();
 	const service = new SqlConnectionService(executor);
 
@@ -458,7 +501,8 @@ test('SqlConnectionService.removeSavedConnection invokes sql_remove_saved_connec
 				connectionId: 'local',
 				closeIfOpen: true
 			}
-		}
+		},
+		options: { allowVoid: true }
 	});
 });
 

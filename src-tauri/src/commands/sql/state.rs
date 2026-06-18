@@ -147,13 +147,6 @@ impl SqlConnectionStore {
             auto_connect: request.auto_connect,
         };
 
-        {
-            let mut saved_connections = self.saved_connections()?;
-            saved_connections.insert(saved.id.clone(), saved.clone());
-        }
-
-        self.flush_saved_connections()?;
-
         if request.open_now {
             let already_open = {
                 let connections = self.connections()?;
@@ -164,6 +157,13 @@ impl SqlConnectionStore {
                 self.open_connection(saved.to_input())?;
             }
         }
+
+        {
+            let mut saved_connections = self.saved_connections()?;
+            saved_connections.insert(saved.id.clone(), saved.clone());
+        }
+
+        self.flush_saved_connections()?;
 
         Ok(saved)
     }
@@ -1225,6 +1225,49 @@ mod tests {
         assert_eq!(result.opened.len(), 0);
         assert_eq!(result.errors.len(), 1);
         assert_eq!(result.errors[0].connection_id, "missing");
+
+        let _ = std::fs::remove_dir_all(&missing_dir);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn save_connection_does_not_persist_when_open_now_fails() {
+        let store = SqlConnectionStore::new();
+        let path = temp_json_file("save-open-fail");
+
+        store.initialize_persistence(path.clone()).unwrap();
+
+        let missing_dir = std::env::temp_dir().join(format!(
+            "sql-studio-next-save-open-fail-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&missing_dir).unwrap();
+
+        let missing_path = missing_dir.join("never-created.sqlite");
+        let missing_path_str = missing_path.to_string_lossy().to_string();
+
+        let err = store
+            .save_connection(SqlSaveConnectionRequest {
+                input: SqlConnectionInput {
+                    id: Some("missing".to_string()),
+                    name: Some("Missing".to_string()),
+                    kind: SqlConnectionKind::Sqlite,
+                    database_path: missing_path_str,
+                    read_only: true,
+                    create_if_missing: true,
+                },
+                auto_connect: true,
+                open_now: true,
+            })
+            .unwrap_err();
+
+        assert!(err.contains("failed to open sqlite database"));
+        assert_eq!(store.list_saved_connections().unwrap().len(), 0);
+        assert_eq!(store.list_connections().unwrap().len(), 0);
+
+        let reloaded = SqlConnectionStore::new();
+        reloaded.initialize_persistence(path.clone()).unwrap();
+        assert_eq!(reloaded.list_saved_connections().unwrap().len(), 0);
 
         let _ = std::fs::remove_dir_all(&missing_dir);
         let _ = std::fs::remove_file(path);
