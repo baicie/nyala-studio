@@ -2,10 +2,13 @@
  * SQL Studio Next - SQL Editor commands.
  *--------------------------------------------------------------------------------------------*/
 
+import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 import { localize2 } from '../../../../nls.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { ISqlConnectionService } from '../../../services/sql/common/sqlConnection.js';
 import {
@@ -39,16 +42,21 @@ export class NewSqlQueryAction extends Action2 {
 		const editorService = accessor.get(IEditorService);
 		const connectionService = accessor.get(ISqlConnectionService);
 
-		let connectionId = args?.connectionId;
-		let connectionName = args?.connectionName;
+		let connectionId = args?.connectionId?.trim() || undefined;
+		let connectionName = args?.connectionName?.trim() || undefined;
 
 		if (!connectionId) {
-			const connections = await connectionService.listConnections();
-			const first = connections[0];
+			try {
+				const connections = await connectionService.listConnections();
+				const first = connections[0];
 
-			if (first) {
-				connectionId = first.id;
-				connectionName = first.name;
+				if (first) {
+					connectionId = first.id;
+					connectionName = first.name;
+				}
+			} catch {
+				connectionId = undefined;
+				connectionName = undefined;
 			}
 		}
 
@@ -69,6 +77,10 @@ export class ExecuteSqlQueryAction extends Action2 {
 			title: localize2('sqlExecuteQuery', 'Execute SQL Query'),
 			category: Categories.View,
 			f1: true,
+			keybinding: {
+				primary: KeyMod.CtrlCmd | KeyCode.Enter,
+				weight: KeybindingWeight.EditorContrib
+			},
 			menu: {
 				id: MenuId.CommandPalette
 			}
@@ -77,11 +89,15 @@ export class ExecuteSqlQueryAction extends Action2 {
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const editorService = accessor.get(IEditorService);
+		const notificationService = accessor.get(INotificationService);
 		const pane = editorService.activeEditorPane;
 
 		if (pane instanceof SqlEditorPane) {
 			await pane.executeQuery(false);
+			return;
 		}
+
+		notificationService.info('Open a SQL Query editor before executing SQL.');
 	}
 }
 
@@ -92,6 +108,10 @@ export class ExecuteSqlSelectionAction extends Action2 {
 			title: localize2('sqlExecuteSelection', 'Execute SQL Selection'),
 			category: Categories.View,
 			f1: true,
+			keybinding: {
+				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.Enter,
+				weight: KeybindingWeight.EditorContrib
+			},
 			menu: {
 				id: MenuId.CommandPalette
 			}
@@ -100,11 +120,15 @@ export class ExecuteSqlSelectionAction extends Action2 {
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const editorService = accessor.get(IEditorService);
+		const notificationService = accessor.get(INotificationService);
 		const pane = editorService.activeEditorPane;
 
 		if (pane instanceof SqlEditorPane) {
 			await pane.executeQuery(true);
+			return;
 		}
+
+		notificationService.info('Open a SQL Query editor before executing selected SQL.');
 	}
 }
 

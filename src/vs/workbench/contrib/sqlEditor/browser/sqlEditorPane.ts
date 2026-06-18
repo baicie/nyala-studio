@@ -23,7 +23,7 @@ import { ISqlQueryService } from '../../../services/sql/common/sqlQuery.js';
 import { SqlConnection } from '../../../services/sql/common/sqlTypes.js';
 import { SqlEditorInput } from '../common/sqlEditorInput.js';
 import { SQL_EDITOR_PANE_ID } from '../common/sqlEditor.js';
-import { createExecutePayload } from '../common/sqlEditorModel.js';
+import { createExecutePayload, SqlEditorExecutePayload } from '../common/sqlEditorModel.js';
 import { ISqlEditorEventService } from '../common/sqlEditorEvents.js';
 
 export class SqlEditorPane extends EditorPane {
@@ -79,7 +79,6 @@ export class SqlEditorPane extends EditorPane {
 		) as HTMLButtonElement;
 
 		this.statusElement = append(this.toolbar, $('span.sql-editor-status'));
-
 		this.editorContainer = append(this.container, $('.sql-editor-container'));
 
 		this.editor = this._register(
@@ -88,7 +87,6 @@ export class SqlEditorPane extends EditorPane {
 				this.editorContainer,
 				{
 					automaticLayout: false,
-					language: 'sql',
 					minimap: { enabled: false },
 					scrollBeyondLastLine: false,
 					fixedOverflowWidgets: true
@@ -150,10 +148,12 @@ export class SqlEditorPane extends EditorPane {
 		}
 
 		const toolbarHeight = this.toolbar?.offsetHeight ?? 34;
-		this.editorContainer.style.height = `${Math.max(0, dimension.height - toolbarHeight)}px`;
+		const editorHeight = Math.max(0, dimension.height - toolbarHeight);
+
+		this.editorContainer.style.height = `${editorHeight}px`;
 		this.editor?.layout({
 			width: dimension.width,
-			height: Math.max(0, dimension.height - toolbarHeight)
+			height: editorHeight
 		});
 	}
 
@@ -168,27 +168,29 @@ export class SqlEditorPane extends EditorPane {
 
 	async executeQuery(selectionOnly: boolean): Promise<void> {
 		const input = this.currentInput;
-
-		if (!input) {
-			throw new Error('No SQL editor input is active.');
-		}
-
-		const connectionId = this.getSelectedConnectionId();
-		const sql = selectionOnly ? this.getSelectedSql() : this.getAllSql();
-		const payload = createExecutePayload(connectionId, sql, selectionOnly ? 'selection' : 'all');
 		const startedAt = Date.now();
-
-		this.status('Running query...');
-		this.setRunning(true);
-
-		this.sqlEditorEventService.fireQueryStarted({
-			editorId: input.id,
-			connectionId: payload.connectionId,
-			sql: payload.sql,
-			startedAt
-		});
+		let payload: SqlEditorExecutePayload | undefined;
 
 		try {
+			if (!input) {
+				throw new Error('No SQL editor input is active.');
+			}
+
+			const connectionId = this.getSelectedConnectionId();
+			const sql = selectionOnly ? this.getSelectedSql() : this.getAllSql();
+
+			payload = createExecutePayload(connectionId, sql, selectionOnly ? 'selection' : 'all');
+
+			this.status('Running query...');
+			this.setRunning(true);
+
+			this.sqlEditorEventService.fireQueryStarted({
+				editorId: input.id,
+				connectionId: payload.connectionId,
+				sql: payload.sql,
+				startedAt
+			});
+
 			const result = await this.sqlQueryService.executeQuery({
 				connectionId: payload.connectionId,
 				sql: payload.sql
@@ -212,14 +214,16 @@ export class SqlEditorPane extends EditorPane {
 			const completedAt = Date.now();
 			const normalizedError = error instanceof Error ? error : new Error(String(error));
 
-			this.sqlEditorEventService.fireQueryFailed({
-				editorId: input.id,
-				connectionId: payload.connectionId,
-				sql: payload.sql,
-				startedAt,
-				completedAt,
-				error: normalizedError
-			});
+			if (input && payload) {
+				this.sqlEditorEventService.fireQueryFailed({
+					editorId: input.id,
+					connectionId: payload.connectionId,
+					sql: payload.sql,
+					startedAt,
+					completedAt,
+					error: normalizedError
+				});
+			}
 
 			this.showError(normalizedError);
 		} finally {
@@ -228,7 +232,12 @@ export class SqlEditorPane extends EditorPane {
 	}
 
 	private async refreshConnections(input: SqlEditorInput): Promise<void> {
-		this.currentConnections = await this.sqlConnectionService.listConnections();
+		try {
+			this.currentConnections = await this.sqlConnectionService.listConnections();
+		} catch (error) {
+			this.currentConnections = [];
+			this.showError(error);
+		}
 
 		clearNode(this.connectionSelect);
 
@@ -251,6 +260,7 @@ export class SqlEditorPane extends EditorPane {
 		}
 
 		const preferredConnectionId = input.connectionId;
+
 		if (preferredConnectionId && this.currentConnections.some(connection => connection.id === preferredConnectionId)) {
 			this.connectionSelect.value = preferredConnectionId;
 		} else {
@@ -280,6 +290,10 @@ export class SqlEditorPane extends EditorPane {
 	}
 
 	private setRunning(running: boolean): void {
+		if (!this.runButton || !this.runSelectionButton || !this.connectionSelect) {
+			return;
+		}
+
 		this.runButton.disabled = running;
 		this.runSelectionButton.disabled = running;
 		this.connectionSelect.disabled = running || this.currentConnections.length === 0;

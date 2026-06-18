@@ -169,3 +169,19 @@ test('SqlEditorEventService emits query lifecycle events', () => {
 
 	assert.deepEqual(events, ['start:query-1:local', 'complete:1', 'fail:syntax error']);
 });
+
+test('createExecutePayload trims connection id and SQL for all execution', () => {
+	assert.deepEqual(createExecutePayload(' local ', ' SELECT 1; ', 'all'), {
+		connectionId: 'local',
+		sql: 'SELECT 1;',
+		source: 'all'
+	});
+});
+
+test('createExecutePayload trims connection id and SQL for selection execution', () => {
+	assert.deepEqual(createExecutePayload(' local ', '\nSELECT 2;\n', 'selection'), {
+		connectionId: 'local',
+		sql: 'SELECT 2;',
+		source: 'selection'
+	});
+});
