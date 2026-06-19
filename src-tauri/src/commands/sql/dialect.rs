@@ -1,12 +1,8 @@
 //! SQL dialect domain helpers.
 //!
-//! Phase 7 only exposes domain metadata. The Rust side intentionally keeps
-//! the API surface dormant until the MySQL/Postgres driver phases wire these
-//! helpers into real commands. The frontend uses its own dialect helpers for
-//! now; both sides will be unified once a Rust-side preview-SQL command is
-//! introduced.
-#![allow(dead_code)]
-
+//! Phase 6.6 intentionally supports SQLite only. The Rust side keeps the API
+//! surface minimal until the MySQL/Postgres driver phases wire these helpers into
+//! real commands.
 use super::types::SqlConnectionKind;
 
 pub const SQL_DEFAULT_TABLE_PREVIEW_LIMIT: usize = 100;
@@ -175,6 +171,14 @@ mod tests {
                 .create_table_preview_sql(Some("main"), "users", None)
                 .unwrap(),
             "SELECT *\nFROM \"users\"\nLIMIT 100;\n"
+        );
+    }
+
+    #[test]
+    fn normalize_preview_limit_uses_default() {
+        assert_eq!(
+            normalize_preview_limit(None).unwrap(),
+            SQL_DEFAULT_TABLE_PREVIEW_LIMIT
         );
     }
 

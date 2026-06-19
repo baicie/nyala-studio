@@ -16,9 +16,14 @@ test('SQLITE_DRIVER describes sqlite capabilities', () => {
 	assert.equal(SQLITE_DRIVER.label, 'SQLite');
 	assert.equal(SQLITE_DRIVER.dialect, SqlDialect.Sqlite);
 	assert.equal(SQLITE_DRIVER.availability, SqlDriverAvailability.Enabled);
+
 	assert.equal(SQLITE_DRIVER.capabilities.fileBased, true);
 	assert.equal(SQLITE_DRIVER.capabilities.remote, false);
+	assert.equal(SQLITE_DRIVER.capabilities.schemas, true);
+	assert.equal(SQLITE_DRIVER.capabilities.readOnly, true);
 	assert.equal(SQLITE_DRIVER.capabilities.createIfMissing, true);
+	assert.equal(SQLITE_DRIVER.capabilities.transactions, true);
+	assert.equal(SQLITE_DRIVER.capabilities.explain, true);
 });
 
 test('getSqlDriverDescriptor returns sqlite descriptor', () => {

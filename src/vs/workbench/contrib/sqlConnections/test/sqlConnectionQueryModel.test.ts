@@ -207,17 +207,17 @@ test('SqlTableType is reachable from sqlTypes module', () => {
 	assert.equal(SqlTableType.Table, 'table');
 });
 
-test('createTablePreviewDraft can generate postgres SQL through dialect option', () => {
+test('createTablePreviewDraft can generate sqlite SQL through dialect option', () => {
 	const draft = createTablePreviewDraft(
 		{
 			type: SqlConnectionTreeNodeType.Table,
 			connectionId: 'local',
-			schema: 'public',
+			schema: 'main',
 			tableName: 'users',
 			label: 'users'
 		},
 		{
-			dialect: SqlDialect.Postgres,
+			dialect: SqlDialect.Sqlite,
 			limit: 25
 		}
 	);
@@ -225,32 +225,31 @@ test('createTablePreviewDraft can generate postgres SQL through dialect option',
 	assert.equal(
 		draft.initialSql,
 		`SELECT *
-FROM "public"."users"
+FROM "users"
 LIMIT 25;
 `
 	);
 });
 
-test('createTablePreviewDraft can generate mysql SQL through dialect option', () => {
+test('createTablePreviewDraft supports attached sqlite schema', () => {
 	const draft = createTablePreviewDraft(
 		{
 			type: SqlConnectionTreeNodeType.Table,
 			connectionId: 'local',
-			schema: 'app',
-			tableName: 'users',
-			label: 'users'
+			schema: 'analytics',
+			tableName: 'events',
+			label: 'events'
 		},
 		{
-			dialect: SqlDialect.MySql,
-			limit: 25
+			limit: 50
 		}
 	);
 
 	assert.equal(
 		draft.initialSql,
 		`SELECT *
-FROM \`app\`.\`users\`
-LIMIT 25;
+FROM "analytics"."events"
+LIMIT 50;
 `
 	);
 });

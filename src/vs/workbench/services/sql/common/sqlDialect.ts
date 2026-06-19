@@ -1,13 +1,12 @@
 /*---------------------------------------------------------------------------------------------
  * SQL Studio Next - SQL dialect domain helpers.
+ * Phase 6.6 intentionally supports SQLite only.
  *--------------------------------------------------------------------------------------------*/
 
 import { SqlConnectionKind } from './sqlTypes.js';
 
 export const enum SqlDialect {
-	Sqlite = 'sqlite',
-	MySql = 'mysql',
-	Postgres = 'postgres'
+	Sqlite = 'sqlite'
 }
 
 export interface SqlQualifiedName {
@@ -35,15 +34,11 @@ export function getDialectForConnectionKind(kind: SqlConnectionKind): SqlDialect
 }
 
 export function quoteSqlIdentifier(dialect: SqlDialect, value: string): string {
-	const normalized = normalizeIdentifier(value);
+	const normalized = normalizeIdentifier(value, 'identifier');
 
 	switch (dialect) {
 		case SqlDialect.Sqlite:
-		case SqlDialect.Postgres:
 			return `"${normalized.replaceAll('"', '""')}"`;
-
-		case SqlDialect.MySql:
-			return `\`${normalized.replaceAll('`', '``')}\``;
 
 		default:
 			return assertNever(dialect);
@@ -51,8 +46,8 @@ export function quoteSqlIdentifier(dialect: SqlDialect, value: string): string {
 }
 
 export function formatQualifiedName(dialect: SqlDialect, qualifiedName: SqlQualifiedName): string {
-	const name = normalizeIdentifier(qualifiedName.name);
-	const schema = normalizeOptionalIdentifier(qualifiedName.schema);
+	const name = normalizeIdentifier(qualifiedName.name, 'name');
+	const schema = normalizeOptionalIdentifier(qualifiedName.schema, 'schema');
 
 	if (!schema || shouldOmitSchema(dialect, schema)) {
 		return quoteSqlIdentifier(dialect, name);
@@ -79,11 +74,13 @@ export function normalizePreviewLimit(limit: number | undefined): number {
 }
 
 function shouldOmitSchema(dialect: SqlDialect, schema: string): boolean {
-	if (dialect === SqlDialect.Sqlite) {
-		return schema === 'main';
-	}
+	switch (dialect) {
+		case SqlDialect.Sqlite:
+			return schema === 'main';
 
-	return false;
+		default:
+			return assertNever(dialect);
+	}
 }
 
 function normalizeLimit(limit: number | undefined): number {
@@ -98,27 +95,31 @@ function normalizeLimit(limit: number | undefined): number {
 	return Math.min(limit, SQL_MAX_TABLE_PREVIEW_LIMIT);
 }
 
-function normalizeIdentifier(value: string): string {
+function normalizeIdentifier(value: string, fieldName: string): string {
 	if (typeof value !== 'string') {
-		throw new Error('identifier must be a string');
+		throw new Error(`${fieldName} must be a string`);
 	}
 
 	const normalized = value.trim();
 
 	if (!normalized) {
-		throw new Error('identifier must not be empty');
+		throw new Error(`${fieldName} must not be empty`);
 	}
 
 	if (normalized.includes('\0')) {
-		throw new Error('identifier must not contain NUL bytes');
+		throw new Error(`${fieldName} must not contain NUL bytes`);
 	}
 
 	return normalized;
 }
 
-function normalizeOptionalIdentifier(value: string | undefined): string | undefined {
+function normalizeOptionalIdentifier(value: string | undefined, fieldName: string): string | undefined {
 	if (value === undefined) {
 		return undefined;
+	}
+
+	if (typeof value !== 'string') {
+		throw new Error(`${fieldName} must be a string`);
 	}
 
 	const normalized = value.trim();
@@ -128,7 +129,7 @@ function normalizeOptionalIdentifier(value: string | undefined): string | undefi
 	}
 
 	if (normalized.includes('\0')) {
-		throw new Error('identifier must not contain NUL bytes');
+		throw new Error(`${fieldName} must not contain NUL bytes`);
 	}
 
 	return normalized;

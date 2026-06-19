@@ -1,14 +1,13 @@
 /*---------------------------------------------------------------------------------------------
  * SQL Studio Next - SQL driver catalog.
- * Phase 7 only exposes domain metadata. Real MySQL/Postgres drivers are not enabled yet.
+ * Phase 6.6 exposes metadata only. SQLite remains the only enabled driver.
  *--------------------------------------------------------------------------------------------*/
 
 import { SqlConnectionKind } from './sqlTypes.js';
 import { SqlDialect } from './sqlDialect.js';
 
 export const enum SqlDriverAvailability {
-	Enabled = 'enabled',
-	Planned = 'planned'
+	Enabled = 'enabled'
 }
 
 export interface SqlDriverCapabilities {
