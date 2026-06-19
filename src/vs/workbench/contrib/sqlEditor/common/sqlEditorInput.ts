@@ -74,7 +74,7 @@ export class SqlEditorInput extends EditorInput {
 			return this.getName();
 		}
 
-		return `${this.getName()} \u2014 ${description}`;
+		return `${this.getName()} — ${description}`;
 	}
 
 	override matches(otherInput: EditorInput | IUntypedEditorInput): boolean {
@@ -87,6 +87,7 @@ export class SqlEditorInput extends EditorInput {
 
 	override copy(): EditorInput {
 		return new SqlEditorInput({
+			id: this.id,
 			connectionId: this.connectionId,
 			connectionName: this.connectionName,
 			initialSql: this.initialSql
