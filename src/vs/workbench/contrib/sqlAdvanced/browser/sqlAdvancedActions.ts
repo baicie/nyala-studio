@@ -20,6 +20,7 @@ import {
 	SQL_OPEN_WORKSPACE_COMMAND_ID
 } from '../common/sqlAdvanced.js';
 import { ISqlAdvancedService } from '../common/sqlAdvancedService.js';
+import { applySnippetVariables } from '../common/sqlAdvancedSnippets.js';
 import { SqlAiTaskKind } from '../common/sqlAdvancedAi.js';
 import { SqlEditorPane } from '../../sqlEditor/browser/sqlEditorPane.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
@@ -66,8 +67,15 @@ class InsertSnippetAction extends Action2 {
 		const commandService = accessor.get(ICommandService);
 		const snippet = advancedService.listSnippets().find(item => item.id === 'builtin.select.all');
 
+		const initialSql = snippet
+			? applySnippetVariables(snippet.body, {
+				table: 'users',
+				limit: '100'
+			})
+			: 'SELECT 1 AS value;';
+
 		await commandService.executeCommand(SQL_NEW_QUERY_COMMAND_ID, {
-			initialSql: snippet?.body ?? 'SELECT 1 AS value;'
+			initialSql
 		});
 	}
 }

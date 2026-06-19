@@ -326,21 +326,25 @@ export class SqlEditorPane extends EditorPane {
 	async explainPlan(): Promise<void> {
 		const input = this.currentInput;
 		const connection = this.getSelectedConnection();
-
-		if (!input || !connection) {
-			this.notificationService.info('Select a SQL connection before explaining SQL.');
-			return;
-		}
-
-		const sql = this.getCurrentStatementSql();
-		const explainSql = createExplainSql({
-			dialect: getDialectForConnectionKind(connection.kind),
-			sql
-		});
-
 		const startedAt = Date.now();
+		let explainSql: string | undefined;
 
 		try {
+			if (!input) {
+				throw new Error('No SQL editor input is active.');
+			}
+
+			if (!connection) {
+				throw new Error('Select a SQL connection before explaining SQL.');
+			}
+
+			const sql = this.getCurrentStatementSql();
+
+			explainSql = createExplainSql({
+				dialect: getDialectForConnectionKind(connection.kind),
+				sql
+			});
+
 			this.status('Running explain plan...');
 			this.setRunning(true);
 
@@ -373,14 +377,16 @@ export class SqlEditorPane extends EditorPane {
 			const completedAt = Date.now();
 			const normalizedError = error instanceof Error ? error : new Error(String(error));
 
-			this.sqlEditorEventService.fireQueryFailed({
-				editorId: input.id,
-				connectionId: connection.id,
-				sql: explainSql,
-				startedAt,
-				completedAt,
-				error: normalizedError
-			});
+			if (input && connection && explainSql) {
+				this.sqlEditorEventService.fireQueryFailed({
+					editorId: input.id,
+					connectionId: connection.id,
+					sql: explainSql,
+					startedAt,
+					completedAt,
+					error: normalizedError
+				});
+			}
 
 			this.showError(normalizedError);
 		} finally {

@@ -31,3 +31,33 @@ test('minifySql compacts whitespace', () => {
 test('formatSqlSelectionOrDocument formats selection first', () => {
 	assert.equal(formatSqlSelectionOrDocument('select 1', 'select 2'), 'SELECT 1;');
 });
+
+test('formatSql keeps line comments unchanged', () => {
+	assert.equal(
+		formatSql(`-- select from should stay lowercase
+select id from users`),
+		`-- select from should stay lowercase
+SELECT id
+FROM users;`
+	);
+});
+
+test('formatSql keeps block comments unchanged', () => {
+	assert.equal(
+		formatSql(`/* select from should stay lowercase */
+select id from users`),
+		`/* select from should stay lowercase */
+SELECT id
+FROM users;`
+	);
+});
+
+test('formatSql keeps quoted identifiers unchanged', () => {
+	assert.equal(
+		formatSql('select "select", `from` from users'),
+		`SELECT
+  "select",
+  \`from\`
+FROM users;`
+	);
+});

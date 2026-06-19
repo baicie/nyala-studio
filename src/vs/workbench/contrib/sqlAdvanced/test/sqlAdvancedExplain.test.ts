@@ -61,3 +61,14 @@ test('parseExplainQueryResult maps result rows', () => {
 	assert.equal(parsed.rows[0].detail, 'SCAN users');
 	assert.equal(parsed.explainSql, 'EXPLAIN QUERY PLAN SELECT * FROM users');
 });
+
+test('createExplainSql rejects empty sql', () => {
+	assert.throws(
+		() =>
+			createExplainSql({
+				dialect: SqlDialect.Sqlite,
+				sql: '   '
+			}),
+		/sql must not be empty/
+	);
+});

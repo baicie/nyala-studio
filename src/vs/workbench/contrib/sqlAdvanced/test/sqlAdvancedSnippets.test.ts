@@ -68,3 +68,19 @@ test('mergeSnippets overrides custom by id', () => {
 	assert.equal(merged[0].name, 'Custom A');
 	assert.equal(merged[0].builtin, false);
 });
+
+test('builtin select snippet can be rendered with defaults', () => {
+	const snippet = listBuiltinSnippets().find(item => item.id === 'builtin.select.all');
+
+	assert.ok(snippet);
+
+	assert.equal(
+		applySnippetVariables(snippet.body, {
+			table: 'users',
+			limit: '100'
+		}),
+		`SELECT *
+FROM users
+LIMIT 100;`
+	);
+});

@@ -77,45 +77,61 @@ export function formatSql(sql: string, options: SqlFormatOptions = {}): string {
 	const keywordCase = options.keywordCase ?? 'upper';
 	const indent = options.indent ?? DEFAULT_INDENT;
 
-	const normalized = protectStringLiterals(trimmed, protectedSql => {
-		let result = protectedSql
-			.replace(/\s+/g, ' ')
-			.replace(/\s*,\s*/g, ', ')
-			.replace(/\s*;\s*/g, ';\n')
-			.trim();
+	const normalized = protectSqlSegments(trimmed, protectedSql => {
+		const lines = protectedSql.split('\n');
+		const resultLines: string[] = [];
 
-		for (const keyword of CLAUSE_KEYWORDS) {
-			result = replaceKeyword(result, keyword, keywordCase);
+		for (const line of lines) {
+			let processed = line
+				.replace(/  +/g, ' ')
+				.replace(/\s*,\s*/g, ', ')
+				.trimEnd();
+
+			for (const keyword of CLAUSE_KEYWORDS) {
+				processed = replaceKeyword(processed, keyword, keywordCase);
+			}
+
+			for (const keyword of SINGLE_KEYWORDS) {
+				processed = replaceKeyword(processed, keyword, keywordCase);
+			}
+
+			processed = breakClauses(processed, keywordCase);
+			processed = indentLogicalOperators(processed, indent, keywordCase);
+			processed = breakCommaLists(processed, indent);
+
+			resultLines.push(processed);
 		}
 
-		for (const keyword of SINGLE_KEYWORDS) {
-			result = replaceKeyword(result, keyword, keywordCase);
-		 }
-
-		result = breakClauses(result, keywordCase);
-		result = indentLogicalOperators(result, indent, keywordCase);
-		result = breakCommaLists(result, indent);
+		const result = resultLines.join('\n').replace(/;(\s*)$/, ';');
 
 		return result;
 	});
 
-	return ensureTrailingSemicolon(normalized);
+	const withSemicolons = addSemicolonsBetweenStatements(normalized);
+
+	return ensureTrailingSemicolon(withSemicolons);
 }
 
 export function minifySql(sql: string): string {
-	return normalizeSql(sql)
-		.replace(/\s+/g, ' ')
-		.replace(/\s*;\s*/g, '; ')
-		.trim();
+	const compacted = normalizeSqlForMinify(sql).replace(/;?\s*;/g, ';').trim();
+	return protectSqlSegments(compacted, s => s.replace(/; *$/g, ';').trim());
 }
 
-export function formatSqlSelectionOrDocument(selection: string | undefined, document: string, options: SqlFormatOptions = {}): string {
+export function formatSqlSelectionOrDocument(
+	selection: string | undefined,
+	document: string,
+	options: SqlFormatOptions = {}
+): string {
 	const source = selection?.trim() ? selection : document;
 	return formatSql(source, options);
 }
 
 function normalizeSql(sql: string): string {
 	return typeof sql === 'string' ? sql.trim() : '';
+}
+
+function normalizeSqlForMinify(sql: string): string {
+	return typeof sql === 'string' ? sql.replace(/\s+/g, ' ').trim() : '';
 }
 
 function ensureTrailingSemicolon(sql: string): string {
@@ -130,6 +146,30 @@ function ensureTrailingSemicolon(sql: string): string {
 	}
 
 	return `${trimmed};`;
+}
+
+function addSemicolonsBetweenStatements(sql: string): string {
+	const lines = sql.split('\n');
+
+	return lines
+		.map((line, index) => {
+			const nextLine = lines[index + 1];
+
+			if (nextLine !== undefined && line.trim() && !line.trim().endsWith(';')) {
+				const nextSignificant = nextLine.trim();
+
+				if (nextSignificant &&
+					!nextSignificant.startsWith('--') &&
+					!nextSignificant.startsWith('/*') &&
+					!nextSignificant.startsWith('AND ') &&
+					!nextSignificant.startsWith('OR ')) {
+					return line.trimEnd();
+				}
+			}
+
+			return line;
+		})
+		.join('\n');
 }
 
 function replaceKeyword(sql: string, keyword: string, keywordCase: 'upper' | 'lower'): string {
@@ -183,19 +223,22 @@ function breakCommaLists(sql: string, indent: string): string {
 		.join('\n');
 }
 
-function protectStringLiterals(sql: string, transform: (sql: string) => string): string {
-	const literals: string[] = [];
-	const placeholderPrefix = '__SQL_STUDIO_LITERAL_';
+function protectSqlSegments(sql: string, transform: (sql: string) => string): string {
+	const segments: string[] = [];
+	const placeholderPrefix = '__SQL_STUDIO_SEGMENT_';
 
-	const protectedSql = sql.replace(/'([^']|'')*'/g, match => {
-		const index = literals.push(match) - 1;
-		return `${placeholderPrefix}${index}__`;
-	});
+	const protectedSql = sql.replace(
+		/(--[^\n\r]*|\/\*[\s\S]*?\*\/|'([^']|'')*'|"([^"]|"")*"|`([^`]|``)*`)/g,
+		match => {
+			const index = segments.push(match) - 1;
+			return `${placeholderPrefix}${index}__`;
+		}
+	);
 
 	const transformed = transform(protectedSql);
 
 	return transformed.replace(new RegExp(`${placeholderPrefix}(\\d+)__`, 'g'), (_match, rawIndex) => {
 		const index = Number(rawIndex);
-		return literals[index] ?? '';
+		return segments[index] ?? '';
 	});
 }
