@@ -45,11 +45,22 @@ export interface SqlConnectionFormPreview {
 	readonly canSave: boolean;
 	readonly message: string;
 	readonly summary: string;
+
+	/**
+	 * Safe input for preview/display usage.
+	 * Password is never exposed from preview.
+	 */
 	readonly input: SqlConnectionInput;
+
+	/**
+	 * Backward-compatible alias for callers/tests that explicitly inspect masking.
+	 */
 	readonly maskedInput: SqlConnectionInput;
 }
 
-export function createDefaultSqlConnectionFormState(kind: SqlConnectionKind = SqlConnectionKind.Sqlite): SqlConnectionFormState {
+export function createDefaultSqlConnectionFormState(
+	kind: SqlConnectionKind = SqlConnectionKind.Sqlite
+): SqlConnectionFormState {
 	switch (kind) {
 		case SqlConnectionKind.Sqlite:
 			return {
@@ -79,15 +90,7 @@ export function createDefaultSqlConnectionFormState(kind: SqlConnectionKind = Sq
 			};
 
 		default:
-			return {
-				kind: SqlConnectionKind.Sqlite,
-				name: undefined,
-				databasePath: ':memory:',
-				readOnly: false,
-				createIfMissing: true,
-				saveConnection: false,
-				autoConnect: false
-			};
+			return createDefaultSqlConnectionFormState(SqlConnectionKind.Sqlite);
 	}
 }
 
@@ -96,10 +99,14 @@ export function normalizeSqlConnectionFormState(input: Partial<SqlConnectionForm
 	const defaults = createDefaultSqlConnectionFormState(kind);
 
 	if (kind === SqlConnectionKind.Sqlite) {
+		const databasePath = input.databasePath === undefined
+			? defaults.databasePath
+			: normalizeOptionalString(input.databasePath) ?? '';
+
 		return {
 			...defaults,
 			name: normalizeOptionalString(input.name),
-			databasePath: normalizeOptionalString(input.databasePath) ?? defaults.databasePath,
+			databasePath,
 			readOnly: input.readOnly === true,
 			createIfMissing: input.createIfMissing !== false,
 			saveConnection: input.saveConnection === true,
@@ -107,14 +114,22 @@ export function normalizeSqlConnectionFormState(input: Partial<SqlConnectionForm
 		};
 	}
 
+	const host = input.host === undefined
+		? defaults.host
+		: normalizeOptionalString(input.host) ?? '';
+
+	const database = input.database === undefined
+		? defaults.database
+		: normalizeOptionalString(input.database) ?? '';
+
 	const port = normalizePort(input.port, defaults.port);
 
 	return {
 		...defaults,
 		name: normalizeOptionalString(input.name),
-		host: normalizeOptionalString(input.host) ?? defaults.host,
+		host,
 		port,
-		database: normalizeOptionalString(input.database) ?? defaults.database,
+		database,
 		username: normalizeOptionalString(input.username),
 		password: normalizeOptionalString(input.password),
 		sslMode: normalizeSslMode(input.sslMode),
@@ -125,6 +140,11 @@ export function normalizeSqlConnectionFormState(input: Partial<SqlConnectionForm
 	};
 }
 
+/**
+ * Creates the raw connection input represented by the form.
+ * For PostgreSQL preview this may contain password in memory only.
+ * It must not be persisted or logged.
+ */
 export function createSqlConnectionInputFromFormState(state: Partial<SqlConnectionFormState>): SqlConnectionInput {
 	const normalized = normalizeSqlConnectionFormState(state);
 
@@ -159,13 +179,12 @@ export function maskSqlConnectionInput(input: SqlConnectionInput): SqlConnection
 
 export function createSqlConnectionFormPreview(state: Partial<SqlConnectionFormState>): SqlConnectionFormPreview {
 	const normalized = normalizeSqlConnectionFormState(state);
-	const input = createSqlConnectionInputFromFormState(normalized);
+	const rawInput = createSqlConnectionInputFromFormState(normalized);
 	const descriptor = getSqlDriverDescriptor(normalized.kind);
-	const maskedInput = maskSqlConnectionInput(input);
+	const maskedInput = maskSqlConnectionInput(rawInput);
 
 	if (normalized.kind === SqlConnectionKind.Sqlite) {
-		const databasePath = normalized.databasePath?.trim();
-
+		const databasePath = normalized.databasePath?.trim() ?? '';
 		const canConnect = Boolean(databasePath);
 		const canSave = canConnect && databasePath !== ':memory:' && normalized.saveConnection;
 
@@ -179,10 +198,28 @@ export function createSqlConnectionFormPreview(state: Partial<SqlConnectionFormS
 				? 'SQLite is ready.'
 				: 'SQLite database path is required.',
 			summary: databasePath ? `SQLite · ${databasePath}` : 'SQLite · missing database path',
-			input,
+			input: maskedInput,
 			maskedInput
 		};
 	}
+
+	const host = normalized.host?.trim() ?? '';
+	const database = normalized.database?.trim() ?? '';
+	const port = normalized.port;
+
+	const missingFields = [
+		host ? undefined : 'host',
+		port ? undefined : 'port',
+		database ? undefined : 'database'
+	].filter((value): value is string => Boolean(value));
+
+	const summary = missingFields.length > 0
+		? `PostgreSQL Preview · missing ${missingFields.join(', ')}`
+		: `PostgreSQL Preview · ${host}:${port}/${database}`;
+
+	const message = missingFields.length > 0
+		? `PostgreSQL Preview is missing ${missingFields.join(', ')}. Runtime connection is not enabled yet.`
+		: 'PostgreSQL is preview-only in Phase 9.1. Runtime connection is not enabled yet.';
 
 	return {
 		kind: normalized.kind,
@@ -190,9 +227,9 @@ export function createSqlConnectionFormPreview(state: Partial<SqlConnectionFormS
 		availability: descriptor.availability,
 		canConnect: false,
 		canSave: false,
-		message: 'PostgreSQL is preview-only in Phase 9.1. Runtime connection is not enabled yet.',
-		summary: `PostgreSQL Preview · ${normalized.host}:${normalized.port}/${normalized.database}`,
-		input,
+		message,
+		summary,
+		input: maskedInput,
 		maskedInput
 	};
 }

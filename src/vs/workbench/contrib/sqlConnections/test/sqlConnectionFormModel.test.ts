@@ -213,6 +213,7 @@ test('createSqlConnectionFormPreview blocks PostgreSQL connect', () => {
 	assert.equal(preview.availability, SqlDriverAvailability.Planned);
 	assert.equal(preview.canConnect, false);
 	assert.equal(preview.canSave, false);
+	assert.equal(preview.input.password, undefined);
 	assert.equal(preview.maskedInput.password, undefined);
 	assert.match(preview.message, /preview-only/);
 });
@@ -257,5 +258,67 @@ test('getSqlConnectionFormStatus returns preview status', () => {
 			database: 'app'
 		}),
 		'PostgreSQL Preview · localhost:5432/app · PostgreSQL is preview-only in Phase 9.1. Runtime connection is not enabled yet.'
+	);
+});
+
+test('blank SQLite database path stays blank instead of falling back to memory database', () => {
+	const state = normalizeSqlConnectionFormState({
+		kind: SqlConnectionKind.Sqlite,
+		databasePath: '   '
+	});
+
+	assert.equal(state.databasePath, '');
+
+	const preview = createSqlConnectionFormPreview(state);
+
+	assert.equal(preview.canConnect, false);
+	assert.equal(preview.canSave, false);
+	assert.equal(preview.summary, 'SQLite · missing database path');
+	assert.equal(preview.message, 'SQLite database path is required.');
+});
+
+test('undefined SQLite database path still uses default memory database', () => {
+	const state = normalizeSqlConnectionFormState({
+		kind: SqlConnectionKind.Sqlite
+	});
+
+	assert.equal(state.databasePath, ':memory:');
+
+	const preview = createSqlConnectionFormPreview(state);
+
+	assert.equal(preview.canConnect, true);
+	assert.equal(preview.canSave, false);
+	assert.equal(preview.summary, 'SQLite · :memory:');
+});
+
+test('PostgreSQL preview input is masked and does not expose password', () => {
+	const preview = createSqlConnectionFormPreview({
+		kind: SqlConnectionKind.PostgreSql,
+		host: 'localhost',
+		port: 5432,
+		database: 'app',
+		username: 'user',
+		password: 'secret'
+	});
+
+	assert.equal(preview.input.password, undefined);
+	assert.equal(preview.maskedInput.password, undefined);
+	assert.deepEqual(preview.input, preview.maskedInput);
+});
+
+test('PostgreSQL preview reports missing host and database', () => {
+	const preview = createSqlConnectionFormPreview({
+		kind: SqlConnectionKind.PostgreSql,
+		host: '   ',
+		database: '   ',
+		port: 5432
+	});
+
+	assert.equal(preview.canConnect, false);
+	assert.equal(preview.canSave, false);
+	assert.equal(preview.summary, 'PostgreSQL Preview · missing host, database');
+	assert.equal(
+		preview.message,
+		'PostgreSQL Preview is missing host, database. Runtime connection is not enabled yet.'
 	);
 });
