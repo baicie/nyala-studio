@@ -21,6 +21,7 @@ import {
 	createFailedQueryHistoryEntry,
 	deserializeHistory,
 	removeHistoryEntry,
+	SerializedSqlQueryHistoryDocument,
 	serializeHistory,
 	SqlQueryHistoryEntry
 } from './sqlQueryHistoryModel.js';
@@ -79,7 +80,7 @@ export class SqlQueryHistoryService extends Disposable implements ISqlQueryHisto
 	}
 
 	private load(): SqlQueryHistoryEntry[] {
-		const raw = this.storageService.getObject<unknown>(
+		const raw = this.storageService.getObject<SerializedSqlQueryHistoryDocument>(
 			SQL_QUERY_HISTORY_STORAGE_KEY,
 			StorageScope.PROFILE,
 			undefined

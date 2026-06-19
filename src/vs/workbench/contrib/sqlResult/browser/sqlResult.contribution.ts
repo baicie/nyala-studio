@@ -37,6 +37,7 @@ import {
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import {
 	SQL_RESULT_FOCUS_COMMAND_ID,
+	SQL_RESULT_OPEN_COMMAND_ID,
 	SQL_RESULT_STORAGE_ID,
 	SQL_RESULT_VIEW_ID,
 	SQL_RESULT_VIEWLET_ID
@@ -107,7 +108,7 @@ export const SQL_RESULT_VIEW_CONTAINER: ViewContainer = viewContainerRegistry.re
 		hideIfEmpty: false,
 		order: 1,
 		openCommandActionDescriptor: {
-			id: SQL_RESULT_FOCUS_COMMAND_ID,
+			id: SQL_RESULT_OPEN_COMMAND_ID,
 			title: localize2('sqlResults', 'SQL Results'),
 			mnemonicTitle: localize({ key: 'miViewSqlResults', comment: ['&& denotes a mnemonic'] }, 'SQL &&Results'),
 			order: 1
@@ -127,7 +128,10 @@ viewsRegistry.registerViews(
 			ctorDescriptor: new SyncDescriptor(SqlResultView),
 			order: 0,
 			canMoveView: false,
-			canToggleVisibility: false
+			canToggleVisibility: false,
+			focusCommand: {
+				id: SQL_RESULT_FOCUS_COMMAND_ID
+			}
 		},
 		{
 			id: SqlQueryHistoryView.ID,

@@ -1,19 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { Event } from '../../../../base/common/event.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
 import {
-	IStorageService,
 	IStorageEntry,
+	IStorageService,
+	IStorageTargetChangeEvent,
+	IStorageValueChangeEvent,
+	IWillSaveStateEvent,
 	StorageScope,
 	StorageTarget,
-	IStorageValueChangeEvent,
-	IStorageTargetChangeEvent,
-	IWillSaveStateEvent
+	WillSaveStateReason
 } from '../../../../platform/storage/common/storage.js';
-import { Event } from '../../../../base/common/event.js';
+import { IAnyWorkspaceIdentifier } from '../../../../platform/workspace/common/workspace.js';
+import { IUserDataProfile } from '../../../../platform/userDataProfile/common/userDataProfile.js';
 import { SqlCellKind } from '../../../services/sql/common/sqlTypes.js';
 import { SQL_QUERY_HISTORY_STORAGE_KEY } from '../common/sqlQueryHistory.js';
+import { SerializedSqlQueryHistoryDocument } from '../common/sqlQueryHistoryModel.js';
 import { SqlQueryHistoryService } from '../common/sqlQueryHistoryService.js';
 
 class InMemoryStorageService implements IStorageService {
@@ -39,12 +43,31 @@ class InMemoryStorageService implements IStorageService {
 
 	getBoolean(key: string, _scope: StorageScope, fallbackValue?: boolean): boolean | undefined {
 		const value = this.values.get(key);
-		return typeof value === 'boolean' ? value : fallbackValue;
+
+		if (typeof value === 'boolean') {
+			return value;
+		}
+
+		if (typeof value === 'string') {
+			return value === 'true';
+		}
+
+		return fallbackValue;
 	}
 
 	getNumber(key: string, _scope: StorageScope, fallbackValue?: number): number | undefined {
 		const value = this.values.get(key);
-		return typeof value === 'number' ? value : fallbackValue;
+
+		if (typeof value === 'number') {
+			return value;
+		}
+
+		if (typeof value === 'string') {
+			const parsed = Number(value);
+			return Number.isFinite(parsed) ? parsed : fallbackValue;
+		}
+
+		return fallbackValue;
 	}
 
 	getObject<T extends object>(key: string, _scope: StorageScope, fallbackValue?: T): T | undefined {
@@ -82,11 +105,19 @@ class InMemoryStorageService implements IStorageService {
 
 	log(): void {}
 
-	hasScope(): boolean {
+	hasScope(_scope: IAnyWorkspaceIdentifier | IUserDataProfile): boolean {
 		return true;
 	}
 
-	async switch(): Promise<void> {}
+	async switch(_to: IAnyWorkspaceIdentifier | IUserDataProfile, _preserveData: boolean): Promise<void> {}
+
+	isNew(_scope: StorageScope): boolean {
+		return false;
+	}
+
+	async optimize(_scope: StorageScope): Promise<void> {}
+
+	async flush(_reason?: WillSaveStateReason): Promise<void> {}
 }
 
 function createCompletedEvent(sql = 'SELECT 1 AS value;') {
@@ -134,8 +165,14 @@ test('SqlQueryHistoryService records completed query', () => {
 	assert.equal(service.entries[0].sql, 'SELECT 1 AS value;');
 	assert.equal(service.entries[0].rowCount, 1);
 
-	const stored = storage.getObject<object>(SQL_QUERY_HISTORY_STORAGE_KEY, StorageScope.PROFILE);
+	const stored = storage.getObject<SerializedSqlQueryHistoryDocument>(
+		SQL_QUERY_HISTORY_STORAGE_KEY,
+		StorageScope.PROFILE
+	);
+
 	assert.ok(stored);
+	assert.equal(stored.version, 1);
+	assert.equal(stored.entries.length, 1);
 
 	service.dispose();
 });
