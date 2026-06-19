@@ -146,17 +146,35 @@ export function normalizeDraftEntries(
 		throw new Error('maxEntries must be a positive integer');
 	}
 
-	return entries
-		.filter((entry): entry is SqlEditorDraftEntry => {
-			const normalized = normalizeDraftEntry(entry);
-			return normalized !== undefined;
-		})
-		.sort((a, b) => b.updatedAt - a.updatedAt)
-		.filter((entry, index, sorted) => {
-			const firstIndex = sorted.findIndex(e => e.id === entry.id);
-			return firstIndex === index;
-		})
-		.slice(0, maxEntries);
+	const normalizedEntries: SqlEditorDraftEntry[] = [];
+
+	for (const entry of entries) {
+		const normalized = normalizeDraftEntry(entry);
+
+		if (normalized) {
+			normalizedEntries.push(normalized);
+		}
+	}
+
+	normalizedEntries.sort((a, b) => b.updatedAt - a.updatedAt);
+
+	const seen = new Set<string>();
+	const result: SqlEditorDraftEntry[] = [];
+
+	for (const entry of normalizedEntries) {
+		if (seen.has(entry.id)) {
+			continue;
+		}
+
+		seen.add(entry.id);
+		result.push(entry);
+
+		if (result.length >= maxEntries) {
+			break;
+		}
+	}
+
+	return result;
 }
 
 export function normalizeDraftEntry(entry: SqlEditorDraftEntry): SqlEditorDraftEntry | undefined {

@@ -209,3 +209,50 @@ test('SqlEditorDraftService loads persisted draft', () => {
 
 	second.dispose();
 });
+
+test('normalizeDraftEntries returns normalized entries', () => {
+	const entries = normalizeDraftEntries([
+		{
+			id: ' query-1 ',
+			connectionId: ' local ',
+			connectionName: ' Local SQLite ',
+			sql: ' SELECT 1; ',
+			updatedAt: 1000.8
+		}
+	]);
+
+	assert.equal(entries.length, 1);
+	assert.deepEqual(entries[0], {
+		id: 'query-1',
+		connectionId: 'local',
+		connectionName: 'Local SQLite',
+		sql: ' SELECT 1; ',
+		updatedAt: 1000
+	});
+});
+
+test('normalizeDraftEntries dedupes normalized entries keeping latest', () => {
+	const entries = normalizeDraftEntries(
+		[
+			{
+				id: ' query-1 ',
+				connectionId: 'local',
+				connectionName: 'Local SQLite',
+				sql: 'SELECT 1;',
+				updatedAt: 1000
+			},
+			{
+				id: 'query-1',
+				connectionId: 'local',
+				connectionName: 'Local SQLite',
+				sql: 'SELECT 2;',
+				updatedAt: 2000
+			}
+		],
+		10
+	);
+
+	assert.equal(entries.length, 1);
+	assert.equal(entries[0].id, 'query-1');
+	assert.equal(entries[0].sql, 'SELECT 2;');
+});

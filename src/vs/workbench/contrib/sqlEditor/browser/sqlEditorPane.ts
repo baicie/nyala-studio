@@ -190,7 +190,6 @@ export class SqlEditorPane extends EditorPane {
 		this.editor?.setModel(model);
 		this.editor?.focus();
 
-		this.saveCurrentDraft();
 		this.updateReadyStatus();
 	}
 
