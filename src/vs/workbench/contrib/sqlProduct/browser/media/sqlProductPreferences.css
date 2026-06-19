@@ -1,0 +1,96 @@
+.sql-product-preferences-view {
+	box-sizing: border-box;
+	height: 100%;
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-editor-foreground);
+}
+
+.sql-product-preferences-content {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	padding: 12px;
+	outline: none;
+}
+
+.sql-product-preferences-title {
+	margin: 0 0 12px;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.sql-product-preference-row {
+	margin-bottom: 12px;
+}
+
+.sql-product-preference-checkbox {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 12px;
+}
+
+.sql-product-preference-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	font-size: 12px;
+}
+
+.sql-product-preference-input {
+	width: 160px;
+	height: 24px;
+	color: var(--vscode-input-foreground);
+	background: var(--vscode-input-background);
+	border: 1px solid var(--vscode-input-border);
+}
+
+.sql-product-preference-textarea {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 120px;
+	resize: vertical;
+	color: var(--vscode-input-foreground);
+	background: var(--vscode-input-background);
+	border: 1px solid var(--vscode-input-border);
+	font-family: var(--vscode-editor-font-family);
+	font-size: 12px;
+	padding: 8px;
+}
+
+.sql-product-preferences-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 16px;
+}
+
+.sql-product-preferences-button {
+	height: 24px;
+	padding: 0 10px;
+	border: 1px solid var(--vscode-button-border);
+	color: var(--vscode-button-secondaryForeground);
+	background: var(--vscode-button-secondaryBackground);
+	cursor: pointer;
+	font-size: 12px;
+}
+
+.sql-product-preferences-button:hover {
+	background: var(--vscode-button-hoverBackground);
+}
+
+.sql-product-preferences-statusbar {
+	box-sizing: border-box;
+	min-height: 24px;
+	padding: 4px 8px;
+	border-top: 1px solid var(--vscode-editorGroup-border);
+	color: var(--vscode-descriptionForeground);
+	background: var(--vscode-sideBar-background);
+	font-size: 12px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}

@@ -19,12 +19,14 @@ import {
 	SQL_PRODUCT_BOOTSTRAPPED_STORAGE_KEY,
 	SQL_PRODUCT_NAME
 } from '../common/sqlProduct.js';
+import { ISqlProductPreferencesService } from '../common/sqlProductPreferencesService.js';
 
 export class SqlProductBootstrapContribution extends Disposable implements IWorkbenchContribution {
 	constructor(
 		@ICommandService private readonly commandService: ICommandService,
 		@IStorageService private readonly storageService: IStorageService,
-		@INotificationService private readonly notificationService: INotificationService
+		@INotificationService private readonly notificationService: INotificationService,
+		@ISqlProductPreferencesService private readonly preferencesService: ISqlProductPreferencesService
 	) {
 		super();
 
@@ -43,8 +45,7 @@ export class SqlProductBootstrapContribution extends Disposable implements IWork
 
 		const plan = createSqlProductStartupPlan({
 			alreadyBootstrapped,
-			restoreSqlLayout: true,
-			openWelcomeQuery: false
+			preferences: this.preferencesService.preferences
 		});
 
 		await this.runPlan(plan);

@@ -5,7 +5,7 @@
 import { SQL_CONNECTIONS_FOCUS_COMMAND_ID } from '../../sqlConnections/common/sqlConnections.js';
 import { SQL_RESULT_OPEN_COMMAND_ID } from '../../sqlResult/common/sqlResult.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
-import { SQL_PRODUCT_DEFAULT_QUERY } from './sqlProduct.js';
+import { DEFAULT_SQL_PRODUCT_PREFERENCES, SqlProductPreferences } from './sqlProductPreferences.js';
 
 export const enum SqlProductStartupCommandKind {
 	FocusConnections = 'focusConnections',
@@ -21,8 +21,7 @@ export interface SqlProductStartupCommand {
 
 export interface SqlProductBootstrapOptions {
 	readonly alreadyBootstrapped: boolean;
-	readonly restoreSqlLayout?: boolean;
-	readonly openWelcomeQuery?: boolean;
+	readonly preferences?: SqlProductPreferences;
 	readonly force?: boolean;
 }
 
@@ -39,12 +38,10 @@ export function createSqlProductStartupPlan(options: SqlProductBootstrapOptions)
 		return [];
 	}
 
-	const restoreSqlLayout = options.restoreSqlLayout !== false;
-	const openWelcomeQuery = options.openWelcomeQuery === true;
-
+	const preferences = options.preferences ?? DEFAULT_SQL_PRODUCT_PREFERENCES;
 	const commands: SqlProductStartupCommand[] = [];
 
-	if (restoreSqlLayout) {
+	if (preferences.restoreSqlLayoutOnStartup) {
 		commands.push({
 			kind: SqlProductStartupCommandKind.FocusConnections,
 			commandId: SQL_CONNECTIONS_FOCUS_COMMAND_ID
@@ -56,13 +53,13 @@ export function createSqlProductStartupPlan(options: SqlProductBootstrapOptions)
 		});
 	}
 
-	if (openWelcomeQuery) {
+	if (preferences.openWelcomeQueryOnFirstLaunch) {
 		commands.push({
 			kind: SqlProductStartupCommandKind.NewQuery,
 			commandId: SQL_NEW_QUERY_COMMAND_ID,
 			args: [
 				{
-					initialSql: SQL_PRODUCT_DEFAULT_QUERY
+					initialSql: preferences.defaultQuery
 				}
 			]
 		});

@@ -4,13 +4,13 @@ import test from 'node:test';
 import { SQL_CONNECTIONS_FOCUS_COMMAND_ID } from '../../sqlConnections/common/sqlConnections.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
 import { SQL_RESULT_OPEN_COMMAND_ID } from '../../sqlResult/common/sqlResult.js';
-import { SQL_PRODUCT_DEFAULT_QUERY } from '../common/sqlProduct.js';
 import {
 	createSqlProductStartupPlan,
 	dedupeStartupCommands,
 	shouldRunSqlProductBootstrap,
 	SqlProductStartupCommandKind
 } from '../common/sqlProductBootstrapModel.js';
+import { DEFAULT_SQL_PRODUCT_PREFERENCES } from '../common/sqlProductPreferences.js';
 
 test('shouldRunSqlProductBootstrap runs on first launch', () => {
 	assert.equal(
@@ -40,9 +40,10 @@ test('shouldRunSqlProductBootstrap respects force', () => {
 	);
 });
 
-test('createSqlProductStartupPlan creates SQL layout plan', () => {
+test('createSqlProductStartupPlan creates SQL layout plan from preferences', () => {
 	const plan = createSqlProductStartupPlan({
-		alreadyBootstrapped: false
+		alreadyBootstrapped: false,
+		preferences: DEFAULT_SQL_PRODUCT_PREFERENCES
 	});
 
 	assert.deepEqual(
@@ -64,26 +65,34 @@ test('createSqlProductStartupPlan creates SQL layout plan', () => {
 
 test('createSqlProductStartupPlan skips when already bootstrapped', () => {
 	const plan = createSqlProductStartupPlan({
-		alreadyBootstrapped: true
+		alreadyBootstrapped: true,
+		preferences: DEFAULT_SQL_PRODUCT_PREFERENCES
 	});
 
 	assert.deepEqual(plan, []);
 });
 
-test('createSqlProductStartupPlan can skip layout restore', () => {
+test('createSqlProductStartupPlan can skip layout restore through preferences', () => {
 	const plan = createSqlProductStartupPlan({
 		alreadyBootstrapped: false,
-		restoreSqlLayout: false
+		preferences: {
+			...DEFAULT_SQL_PRODUCT_PREFERENCES,
+			restoreSqlLayoutOnStartup: false
+		}
 	});
 
 	assert.deepEqual(plan, []);
 });
 
-test('createSqlProductStartupPlan can open welcome query', () => {
+test('createSqlProductStartupPlan can open welcome query through preferences', () => {
 	const plan = createSqlProductStartupPlan({
 		alreadyBootstrapped: false,
-		restoreSqlLayout: false,
-		openWelcomeQuery: true
+		preferences: {
+			...DEFAULT_SQL_PRODUCT_PREFERENCES,
+			restoreSqlLayoutOnStartup: false,
+			openWelcomeQueryOnFirstLaunch: true,
+			defaultQuery: 'SELECT 42;'
+		}
 	});
 
 	assert.equal(plan.length, 1);
@@ -91,7 +100,7 @@ test('createSqlProductStartupPlan can open welcome query', () => {
 	assert.equal(plan[0].commandId, SQL_NEW_QUERY_COMMAND_ID);
 	assert.deepEqual(plan[0].args, [
 		{
-			initialSql: SQL_PRODUCT_DEFAULT_QUERY
+			initialSql: 'SELECT 42;'
 		}
 	]);
 });
