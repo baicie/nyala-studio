@@ -1,998 +1,1397 @@
-# Phase 7：迁移旧 SQL Studio 领域资产第一步 —— SQL Domain Kit
-
-Phase 7 不建议直接做 MySQL/Postgres 真实连接。当前后端和前端的 `SqlConnectionKind` 都仍然只有 `sqlite`，前端校验也明确只允许 SQLite。
-
-所以 Phase 7 最稳的切入点是：
-
-```txt id="59j1cn"
-迁移“领域抽象”
-而不是马上迁移“多数据库驱动”
-```
-
-也就是先做一个 **SQL Domain Kit**：
-
-```txt id="3fzll9"
-SQL Dialect
-SQL Identifier Quoting
-SQL Qualified Name
-Table Preview SQL
-Driver Catalog
-Capability Matrix
-```
-
-当前 `sqlConnectionQueryModel.ts` 里已经有硬编码 SQLite 的 `formatSqliteQualifiedName()` 和 `quoteSqliteIdentifier()`，这就是 Phase 7 应该抽出来的第一块领域资产。
+下面给出 **Phase 7：Result Grid & Query UX Migration** 的最终版设计与完整代码。
+这版只增强 SQL Results，不碰多数据库、不改连接层、不接 AG Grid、不做虚拟滚动。
 
 ---
 
-# Phase 7 目标
+# Phase 7 定位
 
-本阶段做：
+```txt
+Phase 7：Result Grid & Query UX Migration
 
-```txt id="6xr7j6"
-1. 新增前端 SQL Dialect domain
-2. 新增前端 SQL Driver catalog
-3. 新增 Rust SQL dialect domain
-4. 把 Connection Tree 生成 SELECT 的逻辑从 SQLite 专用函数迁移到 Dialect API
-5. 保持当前真实连接能力仍然只支持 SQLite
-6. 单元测试覆盖 SQLite / MySQL / Postgres 的 identifier quoting 和 preview SQL
-```
+目标：
+把 Phase 6 的简单 Result Panel 升级成可日常使用的结果表格体验。
 
-本阶段不做：
-
-```txt id="m08a6k"
-1. 不接 MySQL 驱动
-2. 不接 Postgres 驱动
-3. 不保存数据库密码
-4. 不改 UI 为多数据库连接表单
-5. 不引入 sqlx
-6. 不改 Result Panel
+核心能力：
+1. Result Grid Model
+2. Cell / Row / Column 抽象
+3. 单元格选中
+4. Copy Cell
+5. Copy Row
+6. Copy CSV
+7. Copy TSV
+8. NULL / number / blob / text 展示区分
+9. Result status bar
+10. 继续限制 1000 行渲染，不做虚拟滚动
 ```
 
 ---
 
-# 设计后的结构
+# 文件变更
 
+```txt
 新增：
+src/vs/workbench/contrib/sqlResult/common/sqlResultGridModel.ts
+src/vs/workbench/contrib/sqlResult/test/sqlResultGridModel.test.ts
 
-```txt id="r6np8v"
-src/vs/workbench/services/sql/common/sqlDialect.ts
-src/vs/workbench/services/sql/common/sqlDrivers.ts
-src/vs/workbench/services/sql/test/sqlDialect.test.ts
-src/vs/workbench/services/sql/test/sqlDrivers.test.ts
-
-src-tauri/src/commands/sql/dialect.rs
-```
+替换：
+src/vs/workbench/contrib/sqlResult/browser/sqlResultView.ts
+src/vs/workbench/contrib/sqlResult/browser/media/sqlResult.css
 
 修改：
-
-```txt id="i2k2it"
-src/vs/workbench/contrib/sqlConnections/common/sqlConnectionQueryModel.ts
-src/vs/workbench/contrib/sqlConnections/test/sqlConnectionQueryModel.test.ts
-src-tauri/src/commands/sql/mod.rs
 package.json
 ```
 
 ---
 
-# 一、前端代码
+# 1. 新增 `sqlResultGridModel.ts`
 
-## 1. 新增 `src/vs/workbench/services/sql/common/sqlDialect.ts`
+路径：
 
-```ts id="2ir3yy"
+```txt
+src/vs/workbench/contrib/sqlResult/common/sqlResultGridModel.ts
+```
+
+```ts
 /*---------------------------------------------------------------------------------------------
- * SQL Studio Next - SQL dialect domain helpers.
+ * SQL Studio Next - SQL Result Grid Model.
  *--------------------------------------------------------------------------------------------*/
 
-import { SqlConnectionKind } from './sqlTypes.js';
+import {
+	SqlCellKind,
+	SqlCellValue,
+	SqlQueryResult,
+	SqlResultColumn
+} from '../../../services/sql/common/sqlTypes.js';
+import { SQL_RESULT_MAX_RENDER_ROWS } from './sqlResult.js';
 
-export const enum SqlDialect {
-	Sqlite = 'sqlite',
-	MySql = 'mysql',
-	Postgres = 'postgres'
+export const SQL_RESULT_DEFAULT_COLUMN_WIDTH = 160;
+export const SQL_RESULT_MIN_COLUMN_WIDTH = 80;
+export const SQL_RESULT_MAX_COLUMN_WIDTH = 480;
+
+export interface SqlResultGridColumn {
+	readonly id: string;
+	readonly name: string;
+	readonly ordinal: number;
+	readonly width: number;
 }
 
-export interface SqlQualifiedName {
-	schema?: string;
-	name: string;
+export interface SqlResultGridCell {
+	readonly rowIndex: number;
+	readonly columnIndex: number;
+	readonly kind: SqlCellKind;
+	readonly value: SqlCellValue['value'];
+	readonly text: string;
+	readonly className: string;
+	readonly isNull: boolean;
+	readonly isBlob: boolean;
 }
 
-export interface SqlTablePreviewOptions {
-	dialect: SqlDialect;
-	schema?: string;
-	tableName: string;
-	limit?: number;
+export interface SqlResultGridRow {
+	readonly index: number;
+	readonly cells: SqlResultGridCell[];
 }
 
-export const SQL_DEFAULT_TABLE_PREVIEW_LIMIT = 100;
-export const SQL_MAX_TABLE_PREVIEW_LIMIT = 10_000;
+export interface SqlResultGrid {
+	readonly columns: SqlResultGridColumn[];
+	readonly rows: SqlResultGridRow[];
+	readonly renderedRowCount: number;
+	readonly sourceRowCount: number;
+	readonly totalRowCount: number;
+	readonly truncatedByBackend: boolean;
+	readonly truncatedByPanel: boolean;
+}
 
-export function getDialectForConnectionKind(kind: SqlConnectionKind): SqlDialect {
-	switch (kind) {
-		case SqlConnectionKind.Sqlite:
-			return SqlDialect.Sqlite;
+export interface SqlResultCellAddress {
+	readonly rowIndex: number;
+	readonly columnIndex: number;
+}
+
+export const enum SqlResultCopyMode {
+	Cell = 'cell',
+	Row = 'row',
+	All = 'all'
+}
+
+export const enum SqlResultCopyFormat {
+	Csv = 'csv',
+	Tsv = 'tsv'
+}
+
+export interface SqlResultCopyOptions {
+	readonly mode: SqlResultCopyMode;
+	readonly format: SqlResultCopyFormat;
+	readonly selection?: SqlResultCellAddress;
+	readonly includeHeader?: boolean;
+}
+
+export function buildSqlResultGrid(
+	result: SqlQueryResult,
+	maxRows = SQL_RESULT_MAX_RENDER_ROWS
+): SqlResultGrid {
+	const normalizedMaxRows = normalizeMaxRows(maxRows);
+	const renderedRows = result.rows.slice(0, normalizedMaxRows);
+
+	return {
+		columns: result.columns.map(createGridColumn),
+		rows: renderedRows.map((row, rowIndex) => ({
+			index: rowIndex,
+			cells: row.map((cell, columnIndex) => createGridCell(cell, rowIndex, columnIndex))
+		})),
+		renderedRowCount: renderedRows.length,
+		sourceRowCount: result.rows.length,
+		totalRowCount: result.rowCount,
+		truncatedByBackend: result.truncated,
+		truncatedByPanel: result.rows.length > renderedRows.length
+	};
+}
+
+export function createGridColumn(column: SqlResultColumn): SqlResultGridColumn {
+	const name = column.name || `Column ${column.ordinal + 1}`;
+
+	return {
+		id: `column-${column.ordinal}`,
+		name,
+		ordinal: column.ordinal,
+		width: clampColumnWidth(estimateColumnWidth(name))
+	};
+}
+
+export function createGridCell(
+	cell: SqlCellValue,
+	rowIndex: number,
+	columnIndex: number
+): SqlResultGridCell {
+	const text = formatSqlResultCell(cell);
+	const isNull = cell.kind === SqlCellKind.Null || cell.value === null || cell.value === undefined;
+	const isBlob = cell.kind === SqlCellKind.Blob;
+
+	return {
+		rowIndex,
+		columnIndex,
+		kind: cell.kind,
+		value: cell.value,
+		text,
+		className: getCellClassName(cell),
+		isNull,
+		isBlob
+	};
+}
+
+export function formatSqlResultCell(cell: SqlCellValue): string {
+	if (cell.kind === SqlCellKind.Null || cell.value === null || cell.value === undefined) {
+		return 'NULL';
+	}
+
+	if (cell.kind === SqlCellKind.Blob) {
+		if (isBlobJsonValue(cell.value)) {
+			return `[blob ${cell.value.byteLength} bytes]`;
+		}
+
+		return '[blob]';
+	}
+
+	if (typeof cell.value === 'object') {
+		return JSON.stringify(cell.value);
+	}
+
+	return String(cell.value);
+}
+
+export function getCellClassName(cell: SqlCellValue): string {
+	switch (cell.kind) {
+		case SqlCellKind.Null:
+			return 'kind-null';
+
+		case SqlCellKind.Integer:
+		case SqlCellKind.Real:
+			return 'kind-number';
+
+		case SqlCellKind.Blob:
+			return 'kind-blob';
+
+		case SqlCellKind.Text:
 		default:
-			return assertNever(kind);
+			return 'kind-text';
 	}
 }
 
-export function quoteSqlIdentifier(dialect: SqlDialect, value: string): string {
-	const normalized = normalizeIdentifier(value);
-
-	switch (dialect) {
-		case SqlDialect.Sqlite:
-		case SqlDialect.Postgres:
-			return `"${normalized.replaceAll('"', '""')}"`;
-
-		case SqlDialect.MySql:
-			return `\`${normalized.replaceAll('`', '``')}\``;
-
-		default:
-			return assertNever(dialect);
-	}
-}
-
-export function formatQualifiedName(dialect: SqlDialect, qualifiedName: SqlQualifiedName): string {
-	const name = normalizeIdentifier(qualifiedName.name);
-	const schema = normalizeOptionalIdentifier(qualifiedName.schema);
-
-	if (!schema || shouldOmitSchema(dialect, schema)) {
-		return quoteSqlIdentifier(dialect, name);
-	}
-
-	return `${quoteSqlIdentifier(dialect, schema)}.${quoteSqlIdentifier(dialect, name)}`;
-}
-
-export function createTablePreviewSql(options: SqlTablePreviewOptions): string {
-	const limit = normalizeLimit(options.limit);
-	const tableName = formatQualifiedName(options.dialect, {
-		schema: options.schema,
-		name: options.tableName
-	});
-
-	return `SELECT *
-FROM ${tableName}
-LIMIT ${limit};
-`;
-}
-
-export function normalizePreviewLimit(limit: number | undefined): number {
-	return normalizeLimit(limit);
-}
-
-function shouldOmitSchema(dialect: SqlDialect, schema: string): boolean {
-	if (dialect === SqlDialect.Sqlite) {
-		return schema === 'main';
-	}
-
-	return false;
-}
-
-function normalizeLimit(limit: number | undefined): number {
-	if (limit === undefined) {
-		return SQL_DEFAULT_TABLE_PREVIEW_LIMIT;
-	}
-
-	if (!Number.isInteger(limit) || limit <= 0) {
-		throw new Error('limit must be a positive integer');
-	}
-
-	return Math.min(limit, SQL_MAX_TABLE_PREVIEW_LIMIT);
-}
-
-function normalizeIdentifier(value: string): string {
-	if (typeof value !== 'string') {
-		throw new Error('identifier must be a string');
-	}
-
-	const normalized = value.trim();
-
-	if (!normalized) {
-		throw new Error('identifier must not be empty');
-	}
-
-	if (normalized.includes('\0')) {
-		throw new Error('identifier must not contain NUL bytes');
-	}
-
-	return normalized;
-}
-
-function normalizeOptionalIdentifier(value: string | undefined): string | undefined {
-	if (value === undefined) {
+export function getGridCell(
+	grid: SqlResultGrid,
+	address: SqlResultCellAddress
+): SqlResultGridCell | undefined {
+	if (!isValidCellAddress(address)) {
 		return undefined;
 	}
 
-	const normalized = value.trim();
+	const row = grid.rows[address.rowIndex];
 
-	if (!normalized) {
+	if (!row) {
 		return undefined;
 	}
 
-	if (normalized.includes('\0')) {
-		throw new Error('identifier must not contain NUL bytes');
+	return row.cells[address.columnIndex];
+}
+
+export function copySqlResultGrid(grid: SqlResultGrid, options: SqlResultCopyOptions): string {
+	const includeHeader = options.includeHeader !== false;
+
+	switch (options.mode) {
+		case SqlResultCopyMode.Cell:
+			return copySelectedCell(grid, options.selection);
+
+		case SqlResultCopyMode.Row:
+			return copySelectedRow(grid, options.selection, options.format, includeHeader);
+
+		case SqlResultCopyMode.All:
+			return copyAllRows(grid, options.format, includeHeader);
+
+		default:
+			return assertNever(options.mode);
+	}
+}
+
+export function copySelectedCell(
+	grid: SqlResultGrid,
+	selection: SqlResultCellAddress | undefined
+): string {
+	if (!selection) {
+		return '';
 	}
 
-	return normalized;
+	return getGridCell(grid, selection)?.text ?? '';
+}
+
+export function copySelectedRow(
+	grid: SqlResultGrid,
+	selection: SqlResultCellAddress | undefined,
+	format: SqlResultCopyFormat,
+	includeHeader = true
+): string {
+	if (!selection || !isValidCellAddress(selection)) {
+		return '';
+	}
+
+	return serializeRows(grid, [selection.rowIndex], format, includeHeader);
+}
+
+export function copyAllRows(
+	grid: SqlResultGrid,
+	format: SqlResultCopyFormat,
+	includeHeader = true
+): string {
+	return serializeRows(
+		grid,
+		grid.rows.map(row => row.index),
+		format,
+		includeHeader
+	);
+}
+
+export function serializeRows(
+	grid: SqlResultGrid,
+	rowIndexes: readonly number[],
+	format: SqlResultCopyFormat,
+	includeHeader = true
+): string {
+	const rows: string[][] = [];
+
+	if (includeHeader) {
+		rows.push(grid.columns.map(column => column.name));
+	}
+
+	for (const rowIndex of rowIndexes) {
+		const row = grid.rows[rowIndex];
+
+		if (!row) {
+			continue;
+		}
+
+		rows.push(row.cells.map(cell => cell.text));
+	}
+
+	return serializeTable(rows, format);
+}
+
+export function serializeTable(
+	rows: readonly (readonly string[])[],
+	format: SqlResultCopyFormat
+): string {
+	switch (format) {
+		case SqlResultCopyFormat.Csv:
+			return rows.map(row => row.map(escapeCsvCell).join(',')).join('\n');
+
+		case SqlResultCopyFormat.Tsv:
+			return rows.map(row => row.map(escapeTsvCell).join('\t')).join('\n');
+
+		default:
+			return assertNever(format);
+	}
+}
+
+export function escapeCsvCell(value: string): string {
+	if (!/[",\n\r]/.test(value)) {
+		return value;
+	}
+
+	return `"${value.replaceAll('"', '""')}"`;
+}
+
+export function escapeTsvCell(value: string): string {
+	return value
+		.replaceAll('\t', ' ')
+		.replaceAll('\r\n', '\n')
+		.replaceAll('\r', '\n')
+		.replaceAll('\n', ' ');
+}
+
+export function getSqlResultGridStatus(result: SqlQueryResult, grid: SqlResultGrid): string {
+	if (result.columns.length === 0) {
+		return `${result.affectedRows ?? 0} row(s) affected · ${result.elapsedMs}ms`;
+	}
+
+	const parts = [
+		`${grid.totalRowCount} row(s)`,
+		`${grid.columns.length} column(s)`,
+		`${result.elapsedMs}ms`
+	];
+
+	if (grid.truncatedByPanel) {
+		parts.push(`showing first ${grid.renderedRowCount}`);
+	}
+
+	if (grid.truncatedByBackend) {
+		parts.push('backend truncated');
+	}
+
+	return parts.join(' · ');
+}
+
+export function estimateColumnWidth(columnName: string): number {
+	const normalizedLength = Math.max(0, columnName.length - 12);
+	return SQL_RESULT_DEFAULT_COLUMN_WIDTH + normalizedLength * 8;
+}
+
+export function clampColumnWidth(width: number): number {
+	if (!Number.isFinite(width)) {
+		return SQL_RESULT_DEFAULT_COLUMN_WIDTH;
+	}
+
+	return Math.min(
+		SQL_RESULT_MAX_COLUMN_WIDTH,
+		Math.max(SQL_RESULT_MIN_COLUMN_WIDTH, Math.round(width))
+	);
+}
+
+function normalizeMaxRows(maxRows: number): number {
+	if (!Number.isInteger(maxRows) || maxRows <= 0) {
+		throw new Error('maxRows must be a positive integer');
+	}
+
+	return maxRows;
+}
+
+function isValidCellAddress(address: SqlResultCellAddress): boolean {
+	return Number.isInteger(address.rowIndex)
+		&& Number.isInteger(address.columnIndex)
+		&& address.rowIndex >= 0
+		&& address.columnIndex >= 0;
+}
+
+function isBlobJsonValue(value: SqlCellValue['value']): value is {
+	encoding: 'base64';
+	data: string;
+	byteLength: number;
+} {
+	return typeof value === 'object'
+		&& value !== null
+		&& !Array.isArray(value)
+		&& 'byteLength' in value;
 }
 
 function assertNever(value: never): never {
-	throw new Error(`Unsupported SQL dialect value: ${String(value)}`);
+	throw new Error(`Unexpected SQL result grid value: ${String(value)}`);
 }
 ```
 
 ---
 
-## 2. 新增 `src/vs/workbench/services/sql/common/sqlDrivers.ts`
+# 2. 替换 `sqlResultView.ts`
 
-```ts id="1nmsri"
+路径：
+
+```txt
+src/vs/workbench/contrib/sqlResult/browser/sqlResultView.ts
+```
+
+```ts
 /*---------------------------------------------------------------------------------------------
- * SQL Studio Next - SQL driver catalog.
- * Phase 7 only exposes domain metadata. Real MySQL/Postgres drivers are not enabled yet.
+ * SQL Studio Next - SQL Result Panel View.
  *--------------------------------------------------------------------------------------------*/
 
-import { SqlConnectionKind } from './sqlTypes.js';
-import { SqlDialect } from './sqlDialect.js';
+import './media/sqlResult.css';
 
-export const enum SqlDriverAvailability {
-	Enabled = 'enabled',
-	Planned = 'planned'
-}
+import { $, addDisposableListener, append, clearNode, EventType } from '../../../../base/browser/dom.js';
+import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
+import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
+import { IHoverService } from '../../../../platform/hover/browser/hover.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
+import { IOpenerService } from '../../../../platform/opener/common/opener.js';
+import { IThemeService } from '../../../../platform/theme/common/themeService.js';
+import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
+import { IViewDescriptorService } from '../../../common/views.js';
+import {
+	getSqlResultSummary,
+	SqlResultState,
+	SqlResultStateKind
+} from '../common/sqlResultModel.js';
+import { SQL_RESULT_MAX_RENDER_ROWS, SQL_RESULT_VIEW_ID } from '../common/sqlResult.js';
+import { ISqlResultService } from '../common/sqlResultService.js';
+import {
+	buildSqlResultGrid,
+	copySqlResultGrid,
+	getGridCell,
+	getSqlResultGridStatus,
+	SqlResultCellAddress,
+	SqlResultCopyFormat,
+	SqlResultCopyMode,
+	SqlResultGrid
+} from '../common/sqlResultGridModel.js';
 
-export interface SqlDriverCapabilities {
-	readonly fileBased: boolean;
-	readonly remote: boolean;
-	readonly schemas: boolean;
-	readonly readOnly: boolean;
-	readonly createIfMissing: boolean;
-	readonly transactions: boolean;
-	readonly explain: boolean;
-}
+export class SqlResultView extends ViewPane {
+	static readonly ID = SQL_RESULT_VIEW_ID;
+	static readonly NAME = localize('sqlResultViewName', 'Results');
 
-export interface SqlDriverDescriptor {
-	readonly id: SqlConnectionKind;
-	readonly label: string;
-	readonly dialect: SqlDialect;
-	readonly availability: SqlDriverAvailability;
-	readonly capabilities: SqlDriverCapabilities;
-}
+	private readonly renderDisposables = this._register(new DisposableStore());
 
-export const SQLITE_DRIVER: SqlDriverDescriptor = {
-	id: SqlConnectionKind.Sqlite,
-	label: 'SQLite',
-	dialect: SqlDialect.Sqlite,
-	availability: SqlDriverAvailability.Enabled,
-	capabilities: {
-		fileBased: true,
-		remote: false,
-		schemas: true,
-		readOnly: true,
-		createIfMissing: true,
-		transactions: true,
-		explain: true
+	private container!: HTMLElement;
+	private toolbar!: HTMLElement;
+	private summaryElement!: HTMLElement;
+	private contentElement!: HTMLElement;
+	private statusElement!: HTMLElement;
+
+	private copyCellButton!: HTMLButtonElement;
+	private copyRowButton!: HTMLButtonElement;
+	private copyCsvButton!: HTMLButtonElement;
+	private copyTsvButton!: HTMLButtonElement;
+	private clearButton!: HTMLButtonElement;
+
+	private currentGrid: SqlResultGrid | undefined;
+	private selectedCell: SqlResultCellAddress | undefined;
+	private selectedCellElement: HTMLElement | undefined;
+
+	constructor(
+		options: IViewPaneOptions,
+		@IKeybindingService keybindingService: IKeybindingService,
+		@IContextMenuService contextMenuService: IContextMenuService,
+		@IConfigurationService configurationService: IConfigurationService,
+		@IContextKeyService contextKeyService: IContextKeyService,
+		@IViewDescriptorService viewDescriptorService: IViewDescriptorService,
+		@IInstantiationService instantiationService: IInstantiationService,
+		@IOpenerService openerService: IOpenerService,
+		@IThemeService themeService: IThemeService,
+		@IHoverService hoverService: IHoverService,
+		@ISqlResultService private readonly sqlResultService: ISqlResultService
+	) {
+		super(
+			options,
+			keybindingService,
+			contextMenuService,
+			configurationService,
+			contextKeyService,
+			viewDescriptorService,
+			instantiationService,
+			openerService,
+			themeService,
+			hoverService
+		);
 	}
+
+	protected override renderBody(container: HTMLElement): void {
+		this.container = append(container, $('.sql-result-view'));
+		this.toolbar = append(this.container, $('.sql-result-toolbar'));
+
+		this.summaryElement = append(this.toolbar, $('span.sql-result-summary'));
+
+		this.copyCellButton = append(
+			this.toolbar,
+			$('button.sql-result-button', { type: 'button', title: 'Copy selected cell' }, 'Copy Cell')
+		) as HTMLButtonElement;
+
+		this.copyRowButton = append(
+			this.toolbar,
+			$('button.sql-result-button', { type: 'button', title: 'Copy selected row as TSV' }, 'Copy Row')
+		) as HTMLButtonElement;
+
+		this.copyCsvButton = append(
+			this.toolbar,
+			$('button.sql-result-button', { type: 'button', title: 'Copy all rows as CSV' }, 'Copy CSV')
+		) as HTMLButtonElement;
+
+		this.copyTsvButton = append(
+			this.toolbar,
+			$('button.sql-result-button', { type: 'button', title: 'Copy all rows as TSV' }, 'Copy TSV')
+		) as HTMLButtonElement;
+
+		this.clearButton = append(
+			this.toolbar,
+			$('button.sql-result-button', { type: 'button', title: 'Clear result' }, 'Clear')
+		) as HTMLButtonElement;
+
+		this.contentElement = append(this.container, $('.sql-result-content', { tabIndex: 0 }));
+		this.statusElement = append(this.container, $('.sql-result-statusbar'));
+
+		this._register(
+			addDisposableListener(this.copyCellButton, EventType.CLICK, () => {
+				this.copySelection(SqlResultCopyMode.Cell, SqlResultCopyFormat.Tsv).catch(error => this.setStatus(String(error)));
+			})
+		);
+
+		this._register(
+			addDisposableListener(this.copyRowButton, EventType.CLICK, () => {
+				this.copySelection(SqlResultCopyMode.Row, SqlResultCopyFormat.Tsv).catch(error => this.setStatus(String(error)));
+			})
+		);
+
+		this._register(
+			addDisposableListener(this.copyCsvButton, EventType.CLICK, () => {
+				this.copySelection(SqlResultCopyMode.All, SqlResultCopyFormat.Csv).catch(error => this.setStatus(String(error)));
+			})
+		);
+
+		this._register(
+			addDisposableListener(this.copyTsvButton, EventType.CLICK, () => {
+				this.copySelection(SqlResultCopyMode.All, SqlResultCopyFormat.Tsv).catch(error => this.setStatus(String(error)));
+			})
+		);
+
+		this._register(
+			addDisposableListener(this.clearButton, EventType.CLICK, () => {
+				this.sqlResultService.clear();
+			})
+		);
+
+		this._register(this.sqlResultService.onDidChangeResult(state => this.renderState(state)));
+		this.renderState(this.sqlResultService.state);
+	}
+
+	override focus(): void {
+		this.contentElement?.focus();
+		super.focus();
+	}
+
+	private renderState(state: SqlResultState): void {
+		this.renderDisposables.clear();
+		clearNode(this.contentElement);
+
+		this.currentGrid = undefined;
+		this.selectedCell = undefined;
+		this.selectedCellElement = undefined;
+
+		this.summaryElement.textContent = getSqlResultSummary(state);
+
+		switch (state.kind) {
+			case SqlResultStateKind.Idle:
+				this.renderEmpty();
+				this.setStatus('No result.');
+				break;
+
+			case SqlResultStateKind.Running:
+				this.renderRunning(state);
+				this.setStatus('Running...');
+				break;
+
+			case SqlResultStateKind.Error:
+				this.renderError(state);
+				this.setStatus('Query failed.');
+				break;
+
+			case SqlResultStateKind.Success:
+				this.renderSuccess(state);
+				break;
+		}
+
+		this.updateToolbarState();
+	}
+
+	private renderEmpty(): void {
+		append(this.contentElement, $('.sql-result-empty', undefined, 'Run a SQL query to see results here.'));
+	}
+
+	private renderRunning(state: Extract<SqlResultState, { kind: SqlResultStateKind.Running }>): void {
+		const wrapper = append(this.contentElement, $('.sql-result-message.running'));
+		append(wrapper, $('div', undefined, 'Running query...'));
+		append(wrapper, $('pre.sql-result-sql', undefined, state.query.sql));
+	}
+
+	private renderError(state: Extract<SqlResultState, { kind: SqlResultStateKind.Error }>): void {
+		const wrapper = append(this.contentElement, $('.sql-result-message.error'));
+		append(wrapper, $('div.sql-result-error-title', undefined, state.errorMessage));
+		append(wrapper, $('pre.sql-result-sql', undefined, state.query.sql));
+	}
+
+	private renderSuccess(state: Extract<SqlResultState, { kind: SqlResultStateKind.Success }>): void {
+		const result = state.result;
+
+		if (result.columns.length === 0) {
+			const affectedRows = result.affectedRows ?? 0;
+			append(
+				this.contentElement,
+				$('.sql-result-empty', undefined, `${affectedRows} row(s) affected in ${result.elapsedMs}ms.`)
+			);
+			this.setStatus(`${affectedRows} row(s) affected · ${result.elapsedMs}ms`);
+			return;
+		}
+
+		const grid = buildSqlResultGrid(result, SQL_RESULT_MAX_RENDER_ROWS);
+		this.currentGrid = grid;
+		this.setStatus(getSqlResultGridStatus(result, grid));
+
+		const wrapper = append(this.contentElement, $('.sql-result-table-wrapper', { tabIndex: 0 }));
+		const table = append(wrapper, $('table.sql-result-table'));
+
+		const thead = append(table, $('thead'));
+		const headerRow = append(thead, $('tr'));
+		append(headerRow, $('th.sql-result-row-number', undefined, '#'));
+
+		for (const column of grid.columns) {
+			const th = append(headerRow, $('th.sql-result-column-header', { title: column.name }, column.name));
+			th.style.width = `${column.width}px`;
+			th.style.maxWidth = `${column.width}px`;
+		}
+
+		const tbody = append(table, $('tbody'));
+
+		for (const row of grid.rows) {
+			const tr = append(tbody, $('tr.sql-result-row'));
+			append(tr, $('td.sql-result-row-number', undefined, String(row.index + 1)));
+
+			for (const cell of row.cells) {
+				const td = append(
+					tr,
+					$('td.sql-result-cell', {
+						title: cell.text,
+						tabIndex: 0,
+						'data-row-index': String(cell.rowIndex),
+						'data-column-index': String(cell.columnIndex)
+					})
+				);
+
+				td.classList.add(cell.className);
+				td.textContent = cell.text;
+			}
+		}
+
+		this.renderDisposables.add(
+			addDisposableListener(wrapper, EventType.CLICK, event => {
+				this.handleGridActivation(event);
+			})
+		);
+
+		this.renderDisposables.add(
+			addDisposableListener(wrapper, EventType.KEY_DOWN, event => {
+				if (event.key === 'Enter' || event.key === ' ') {
+					this.handleGridActivation(event);
+					event.preventDefault();
+				}
+			})
+		);
+
+		if (grid.truncatedByPanel || grid.truncatedByBackend) {
+			const message = grid.truncatedByPanel
+				? `Showing first ${grid.renderedRowCount} of ${grid.sourceRowCount} loaded row(s).`
+				: `Backend truncated result at ${grid.totalRowCount} row(s).`;
+
+			append(this.contentElement, $('.sql-result-truncated', undefined, message));
+		}
+	}
+
+	private handleGridActivation(event: Event): void {
+		const target = event.target;
+
+		if (!(target instanceof HTMLElement)) {
+			return;
+		}
+
+		const cellElement = target.closest('.sql-result-cell');
+
+		if (!(cellElement instanceof HTMLElement)) {
+			return;
+		}
+
+		const rowIndex = Number(cellElement.dataset.rowIndex);
+		const columnIndex = Number(cellElement.dataset.columnIndex);
+
+		if (!Number.isInteger(rowIndex) || !Number.isInteger(columnIndex)) {
+			return;
+		}
+
+		this.selectCell({ rowIndex, columnIndex }, cellElement);
+	}
+
+	private selectCell(address: SqlResultCellAddress, element: HTMLElement): void {
+		this.selectedCellElement?.classList.remove('selected');
+
+		this.selectedCell = address;
+		this.selectedCellElement = element;
+		this.selectedCellElement.classList.add('selected');
+
+		const cell = this.currentGrid ? getGridCell(this.currentGrid, address) : undefined;
+
+		if (cell) {
+			this.setStatus(`Selected row ${address.rowIndex + 1}, column ${address.columnIndex + 1}: ${cell.text}`);
+		}
+
+		this.updateToolbarState();
+	}
+
+	private updateToolbarState(): void {
+		const hasGrid = Boolean(this.currentGrid);
+		const hasSelection = hasGrid && Boolean(this.selectedCell);
+
+		this.copyCellButton.disabled = !hasSelection;
+		this.copyRowButton.disabled = !hasSelection;
+		this.copyCsvButton.disabled = !hasGrid;
+		this.copyTsvButton.disabled = !hasGrid;
+	}
+
+	private async copySelection(mode: SqlResultCopyMode, format: SqlResultCopyFormat): Promise<void> {
+		if (!this.currentGrid) {
+			return;
+		}
+
+		const text = copySqlResultGrid(this.currentGrid, {
+			mode,
+			format,
+			selection: this.selectedCell,
+			includeHeader: mode !== SqlResultCopyMode.Cell
+		});
+
+		if (!text) {
+			return;
+		}
+
+		await writeClipboardText(text);
+		this.setStatus(this.getCopyStatus(mode, format));
+	}
+
+	private getCopyStatus(mode: SqlResultCopyMode, format: SqlResultCopyFormat): string {
+		switch (mode) {
+			case SqlResultCopyMode.Cell:
+				return 'Copied selected cell.';
+
+			case SqlResultCopyMode.Row:
+				return `Copied selected row as ${format.toUpperCase()}.`;
+
+			case SqlResultCopyMode.All:
+				return `Copied result as ${format.toUpperCase()}.`;
+		}
+	}
+
+	private setStatus(message: string): void {
+		this.statusElement.textContent = message;
+	}
+}
+
+async function writeClipboardText(text: string): Promise<void> {
+	if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+		await navigator.clipboard.writeText(text);
+		return;
+	}
+
+	throw new Error('Clipboard API is not available.');
+}
+```
+
+---
+
+# 3. 替换 `sqlResult.css`
+
+路径：
+
+```txt
+src/vs/workbench/contrib/sqlResult/browser/media/sqlResult.css
+```
+
+```css
+.sql-result-panel {
+	min-height: 0;
+}
+
+.sql-result-view {
+	box-sizing: border-box;
+	height: 100%;
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-editor-foreground);
+}
+
+.sql-result-toolbar {
+	box-sizing: border-box;
+	min-height: 32px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 8px;
+	border-bottom: 1px solid var(--vscode-editorGroup-border);
+	background: var(--vscode-sideBar-background);
+}
+
+.sql-result-summary {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	opacity: 0.9;
+}
+
+.sql-result-button {
+	height: 24px;
+	padding: 0 10px;
+	border: 1px solid var(--vscode-button-border);
+	color: var(--vscode-button-secondaryForeground);
+	background: var(--vscode-button-secondaryBackground);
+	cursor: pointer;
+	font-size: 12px;
+}
+
+.sql-result-button:hover:not(:disabled) {
+	background: var(--vscode-button-hoverBackground);
+}
+
+.sql-result-button:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.sql-result-content {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	outline: none;
+}
+
+.sql-result-empty,
+.sql-result-message {
+	padding: 12px;
+	font-size: 12px;
+	opacity: 0.9;
+}
+
+.sql-result-message.error {
+	color: var(--vscode-errorForeground);
+}
+
+.sql-result-message.running {
+	color: var(--vscode-descriptionForeground);
+}
+
+.sql-result-error-title {
+	font-weight: 600;
+	margin-bottom: 8px;
+}
+
+.sql-result-sql {
+	box-sizing: border-box;
+	margin: 8px 0 0;
+	padding: 8px;
+	white-space: pre-wrap;
+	color: var(--vscode-textPreformat-foreground);
+	background: var(--vscode-textCodeBlock-background);
+	border-radius: 3px;
+	overflow: auto;
+}
+
+.sql-result-table-wrapper {
+	min-height: 0;
+	overflow: auto;
+	outline: none;
+}
+
+.sql-result-table {
+	width: max-content;
+	min-width: 100%;
+	border-collapse: collapse;
+	font-size: 12px;
+}
+
+.sql-result-table th,
+.sql-result-table td {
+	box-sizing: border-box;
+	max-width: 480px;
+	padding: 4px 8px;
+	border-right: 1px solid var(--vscode-editorGroup-border);
+	border-bottom: 1px solid var(--vscode-editorGroup-border);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	text-align: left;
+}
+
+.sql-result-table th {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	font-weight: 600;
+	background: var(--vscode-sideBar-background);
+}
+
+.sql-result-column-header {
+	user-select: none;
+}
+
+.sql-result-row:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.sql-result-row-number {
+	width: 52px;
+	max-width: 52px;
+	text-align: right;
+	color: var(--vscode-descriptionForeground);
+	background: var(--vscode-sideBar-background);
+	user-select: none;
+}
+
+.sql-result-cell {
+	cursor: default;
+	outline: none;
+}
+
+.sql-result-cell:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.sql-result-cell.selected {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+	background: var(--vscode-list-activeSelectionBackground);
+	color: var(--vscode-list-activeSelectionForeground);
+}
+
+.sql-result-cell.kind-null {
+	color: var(--vscode-descriptionForeground);
+	font-style: italic;
+}
+
+.sql-result-cell.kind-number {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.sql-result-cell.kind-blob {
+	color: var(--vscode-descriptionForeground);
+	font-family: var(--vscode-editor-font-family);
+}
+
+.sql-result-cell.kind-text {
+	text-align: left;
+}
+
+.sql-result-truncated {
+	padding: 8px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	border-top: 1px solid var(--vscode-editorGroup-border);
+}
+
+.sql-result-statusbar {
+	box-sizing: border-box;
+	min-height: 24px;
+	padding: 4px 8px;
+	border-top: 1px solid var(--vscode-editorGroup-border);
+	color: var(--vscode-descriptionForeground);
+	background: var(--vscode-sideBar-background);
+	font-size: 12px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+```
+
+---
+
+# 4. 新增单元测试 `sqlResultGridModel.test.ts`
+
+路径：
+
+```txt
+src/vs/workbench/contrib/sqlResult/test/sqlResultGridModel.test.ts
+```
+
+```ts
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { SqlCellKind, SqlQueryResult } from '../../../services/sql/common/sqlTypes.js';
+import {
+	buildSqlResultGrid,
+	clampColumnWidth,
+	copyAllRows,
+	copySelectedCell,
+	copySelectedRow,
+	copySqlResultGrid,
+	escapeCsvCell,
+	escapeTsvCell,
+	formatSqlResultCell,
+	getGridCell,
+	getSqlResultGridStatus,
+	serializeTable,
+	SqlResultCopyFormat,
+	SqlResultCopyMode
+} from '../common/sqlResultGridModel.js';
+
+const sampleResult: SqlQueryResult = {
+	columns: [
+		{ name: 'id', ordinal: 0 },
+		{ name: 'name', ordinal: 1 },
+		{ name: 'note', ordinal: 2 }
+	],
+	rows: [
+		[
+			{ kind: SqlCellKind.Integer, value: 1 },
+			{ kind: SqlCellKind.Text, value: 'Alice' },
+			{ kind: SqlCellKind.Text, value: 'hello, "world"' }
+		],
+		[
+			{ kind: SqlCellKind.Integer, value: 2 },
+			{ kind: SqlCellKind.Null, value: null },
+			{ kind: SqlCellKind.Blob, value: { encoding: 'base64', data: 'AQID', byteLength: 3 } }
+		]
+	],
+	rowCount: 2,
+	elapsedMs: 5,
+	truncated: false
 };
 
-export const SQL_DRIVER_CATALOG: readonly SqlDriverDescriptor[] = [SQLITE_DRIVER];
+test('buildSqlResultGrid keeps column and cell metadata', () => {
+	const grid = buildSqlResultGrid(sampleResult);
 
-export function getSqlDriverDescriptor(kind: SqlConnectionKind): SqlDriverDescriptor {
-	const descriptor = SQL_DRIVER_CATALOG.find(driver => driver.id === kind);
+	assert.deepEqual(
+		grid.columns.map(column => column.name),
+		['id', 'name', 'note']
+	);
 
-	if (!descriptor) {
-		throw new Error(`Unsupported SQL driver: ${kind}`);
-	}
+	assert.equal(grid.rows.length, 2);
+	assert.equal(grid.renderedRowCount, 2);
+	assert.equal(grid.sourceRowCount, 2);
+	assert.equal(grid.totalRowCount, 2);
 
-	return descriptor;
-}
+	assert.equal(grid.rows[0].cells[0].text, '1');
+	assert.equal(grid.rows[0].cells[0].className, 'kind-number');
 
-export function isSqlDriverEnabled(kind: SqlConnectionKind): boolean {
-	return getSqlDriverDescriptor(kind).availability === SqlDriverAvailability.Enabled;
-}
+	assert.equal(grid.rows[1].cells[1].text, 'NULL');
+	assert.equal(grid.rows[1].cells[1].isNull, true);
+	assert.equal(grid.rows[1].cells[1].className, 'kind-null');
 
-export function listEnabledSqlDrivers(): SqlDriverDescriptor[] {
-	return SQL_DRIVER_CATALOG.filter(driver => driver.availability === SqlDriverAvailability.Enabled);
-}
-```
+	assert.equal(grid.rows[1].cells[2].text, '[blob 3 bytes]');
+	assert.equal(grid.rows[1].cells[2].isBlob, true);
+	assert.equal(grid.rows[1].cells[2].className, 'kind-blob');
+});
 
-> 这里暂时只把 SQLite 放入 catalog。MySQL/Postgres 的 descriptor 可以下一阶段加，但 **不要现在把它们加进 `SqlConnectionKind`**，否则前端类型显示支持了、后端实际又不支持，会造成产品错觉。
+test('buildSqlResultGrid marks panel truncation', () => {
+	const grid = buildSqlResultGrid(sampleResult, 1);
 
----
+	assert.equal(grid.renderedRowCount, 1);
+	assert.equal(grid.sourceRowCount, 2);
+	assert.equal(grid.totalRowCount, 2);
+	assert.equal(grid.truncatedByPanel, true);
+	assert.equal(grid.truncatedByBackend, false);
+});
 
-## 3. 替换 `src/vs/workbench/contrib/sqlConnections/common/sqlConnectionQueryModel.ts`
+test('buildSqlResultGrid rejects invalid maxRows', () => {
+	assert.throws(() => buildSqlResultGrid(sampleResult, 0), /maxRows must be a positive integer/);
+	assert.throws(() => buildSqlResultGrid(sampleResult, -1), /maxRows must be a positive integer/);
+	assert.throws(() => buildSqlResultGrid(sampleResult, 1.5), /maxRows must be a positive integer/);
+});
 
-```ts id="zz3nke"
-/*---------------------------------------------------------------------------------------------
- * SQL Studio Next - SQL query draft helpers for connection tree nodes.
- *--------------------------------------------------------------------------------------------*/
+test('formatSqlResultCell formats supported cell kinds', () => {
+	assert.equal(formatSqlResultCell({ kind: SqlCellKind.Null, value: null }), 'NULL');
+	assert.equal(formatSqlResultCell({ kind: SqlCellKind.Integer, value: 1 }), '1');
+	assert.equal(formatSqlResultCell({ kind: SqlCellKind.Real, value: 1.25 }), '1.25');
+	assert.equal(formatSqlResultCell({ kind: SqlCellKind.Text, value: 'hello' }), 'hello');
+	assert.equal(
+		formatSqlResultCell({
+			kind: SqlCellKind.Blob,
+			value: { encoding: 'base64', data: 'AQID', byteLength: 3 }
+		}),
+		'[blob 3 bytes]'
+	);
+});
 
-import {
-	createTablePreviewSql,
-	SqlDialect,
-	SQL_DEFAULT_TABLE_PREVIEW_LIMIT,
-	SQL_MAX_TABLE_PREVIEW_LIMIT
-} from '../../../services/sql/common/sqlDialect.js';
-import { SqlConnectionTreeNode, SqlConnectionTreeNodeType } from './sqlConnectionTreeModel.js';
+test('formatSqlResultCell stringifies object fallback', () => {
+	assert.equal(
+		formatSqlResultCell({
+			kind: SqlCellKind.Text,
+			value: { nested: true }
+		}),
+		'{"nested":true}'
+	);
+});
 
-export const SQL_CONNECTION_TABLE_PREVIEW_LIMIT = SQL_DEFAULT_TABLE_PREVIEW_LIMIT;
+test('getGridCell returns selected cell', () => {
+	const grid = buildSqlResultGrid(sampleResult);
 
-export interface SqlEditorDraft {
-	connectionId: string;
-	connectionName?: string;
-	initialSql: string;
-}
+	assert.equal(getGridCell(grid, { rowIndex: 0, columnIndex: 1 })?.text, 'Alice');
+	assert.equal(getGridCell(grid, { rowIndex: 99, columnIndex: 1 }), undefined);
+	assert.equal(getGridCell(grid, { rowIndex: 0, columnIndex: 99 }), undefined);
+	assert.equal(getGridCell(grid, { rowIndex: -1, columnIndex: 0 }), undefined);
+});
 
-export interface SqlEditorDraftOptions {
-	connectionName?: string;
-	dialect?: SqlDialect;
-	limit?: number;
-}
+test('copySelectedCell copies only selected cell text', () => {
+	const grid = buildSqlResultGrid(sampleResult);
 
-export function createSqlEditorDraftFromTreeNode(
-	node: SqlConnectionTreeNode,
-	options: SqlEditorDraftOptions = {}
-): SqlEditorDraft {
-	if (!node.connectionId) {
-		throw new Error('Cannot open SQL query because the tree node has no connection id.');
-	}
+	assert.equal(copySelectedCell(grid, { rowIndex: 0, columnIndex: 1 }), 'Alice');
+	assert.equal(copySelectedCell(grid, undefined), '');
+	assert.equal(copySelectedCell(grid, { rowIndex: 99, columnIndex: 1 }), '');
+});
 
-	switch (node.type) {
-		case SqlConnectionTreeNodeType.Connection:
-			return createConnectionQueryDraft(node.connectionId, options.connectionName ?? node.label);
+test('copySelectedRow copies selected row as TSV with header', () => {
+	const grid = buildSqlResultGrid(sampleResult);
 
-		case SqlConnectionTreeNodeType.Table:
-		case SqlConnectionTreeNodeType.View:
-			return createTablePreviewDraft(node, options);
+	assert.equal(
+		copySelectedRow(
+			grid,
+			{ rowIndex: 0, columnIndex: 1 },
+			SqlResultCopyFormat.Tsv,
+			true
+		),
+		'id\tname\tnote\n1\tAlice\thello, "world"'
+	);
+});
 
-		default:
-			throw new Error(`Cannot open SQL query from node type: ${node.type}`);
-	}
-}
+test('copySelectedRow copies selected row as CSV without header', () => {
+	const grid = buildSqlResultGrid(sampleResult);
 
-export function createConnectionQueryDraft(connectionId: string, connectionName?: string): SqlEditorDraft {
-	const normalizedConnectionId = normalizeRequiredString(connectionId, 'connectionId');
+	assert.equal(
+		copySelectedRow(
+			grid,
+			{ rowIndex: 0, columnIndex: 1 },
+			SqlResultCopyFormat.Csv,
+			false
+		),
+		'1,Alice,"hello, ""world"""'
+	);
+});
 
-	return {
-		connectionId: normalizedConnectionId,
-		connectionName: normalizeOptionalString(connectionName),
-		initialSql: `-- SQL Studio Query
--- Connection: ${normalizeOptionalString(connectionName) ?? normalizedConnectionId}
+test('copySelectedRow returns empty string without selection', () => {
+	const grid = buildSqlResultGrid(sampleResult);
 
-SELECT 1 AS value;
-`
+	assert.equal(copySelectedRow(grid, undefined, SqlResultCopyFormat.Tsv), '');
+});
+
+test('copyAllRows copies all rows as CSV', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(
+		copyAllRows(grid, SqlResultCopyFormat.Csv),
+		'id,name,note\n1,Alice,"hello, ""world"""\n2,NULL,[blob 3 bytes]'
+	);
+});
+
+test('copySqlResultGrid supports cell row and all modes', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(
+		copySqlResultGrid(grid, {
+			mode: SqlResultCopyMode.Cell,
+			format: SqlResultCopyFormat.Tsv,
+			selection: { rowIndex: 0, columnIndex: 2 }
+		}),
+		'hello, "world"'
+	);
+
+	assert.equal(
+		copySqlResultGrid(grid, {
+			mode: SqlResultCopyMode.Row,
+			format: SqlResultCopyFormat.Tsv,
+			selection: { rowIndex: 0, columnIndex: 0 }
+		}),
+		'id\tname\tnote\n1\tAlice\thello, "world"'
+	);
+
+	assert.equal(
+		copySqlResultGrid(grid, {
+			mode: SqlResultCopyMode.All,
+			format: SqlResultCopyFormat.Csv
+		}),
+		'id,name,note\n1,Alice,"hello, ""world"""\n2,NULL,[blob 3 bytes]'
+	);
+});
+
+test('serializeTable supports TSV', () => {
+	assert.equal(
+		serializeTable(
+			[
+				['a', 'b'],
+				['1', 'hello\tworld']
+			],
+			SqlResultCopyFormat.Tsv
+		),
+		'a\tb\n1\thello world'
+	);
+});
+
+test('serializeTable supports CSV', () => {
+	assert.equal(
+		serializeTable(
+			[
+				['a', 'b'],
+				['1', 'hello, world']
+			],
+			SqlResultCopyFormat.Csv
+		),
+		'a,b\n1,"hello, world"'
+	);
+});
+
+test('escapeCsvCell escapes comma quote and newline', () => {
+	assert.equal(escapeCsvCell('hello'), 'hello');
+	assert.equal(escapeCsvCell('hello, world'), '"hello, world"');
+	assert.equal(escapeCsvCell('hello "world"'), '"hello ""world"""');
+	assert.equal(escapeCsvCell('hello\nworld'), '"hello\nworld"');
+});
+
+test('escapeTsvCell removes tabs and normalizes newlines', () => {
+	assert.equal(escapeTsvCell('hello\tworld'), 'hello world');
+	assert.equal(escapeTsvCell('hello\r\nworld'), 'hello world');
+	assert.equal(escapeTsvCell('hello\rworld'), 'hello world');
+	assert.equal(escapeTsvCell('hello\nworld'), 'hello world');
+});
+
+test('getSqlResultGridStatus describes select result', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(getSqlResultGridStatus(sampleResult, grid), '2 row(s) · 3 column(s) · 5ms');
+});
+
+test('getSqlResultGridStatus describes panel truncation', () => {
+	const grid = buildSqlResultGrid(sampleResult, 1);
+
+	assert.equal(
+		getSqlResultGridStatus(sampleResult, grid),
+		'2 row(s) · 3 column(s) · 5ms · showing first 1'
+	);
+});
+
+test('getSqlResultGridStatus describes backend truncation', () => {
+	const result: SqlQueryResult = {
+		...sampleResult,
+		truncated: true
 	};
-}
 
-export function createTablePreviewDraft(
-	node: Pick<SqlConnectionTreeNode, 'connectionId' | 'schema' | 'tableName' | 'label' | 'type'>,
-	options: SqlEditorDraftOptions = {}
-): SqlEditorDraft {
-	const connectionId = normalizeRequiredString(node.connectionId, 'connectionId');
-	const tableName = normalizeRequiredString(node.tableName ?? node.label, 'tableName');
+	const grid = buildSqlResultGrid(result);
 
-	return {
-		connectionId,
-		connectionName: normalizeOptionalString(options.connectionName),
-		initialSql: createTablePreviewSql({
-			dialect: options.dialect ?? SqlDialect.Sqlite,
-			schema: normalizeOptionalString(node.schema),
-			tableName,
-			limit: options.limit
-		})
+	assert.equal(
+		getSqlResultGridStatus(result, grid),
+		'2 row(s) · 3 column(s) · 5ms · backend truncated'
+	);
+});
+
+test('getSqlResultGridStatus describes affected rows result', () => {
+	const result: SqlQueryResult = {
+		columns: [],
+		rows: [],
+		affectedRows: 3,
+		rowCount: 0,
+		elapsedMs: 8,
+		truncated: false
 	};
-}
 
-/**
- * Backward-compatible export for Phase 4.5 tests/callers.
- * New code should use quoteSqlIdentifier(SqlDialect.Sqlite, value).
- */
-export function quoteSqliteIdentifier(value: string): string {
-	return `"${normalizeRequiredString(value, 'identifier').replaceAll('"', '""')}"`;
-}
+	const grid = buildSqlResultGrid(result);
 
-/**
- * Backward-compatible export for Phase 4.5 tests/callers.
- * New code should use formatQualifiedName(SqlDialect.Sqlite, ...).
- */
-export function formatSqliteQualifiedName(schema: string | undefined, name: string): string {
-	const normalizedName = normalizeRequiredString(name, 'name');
-	const normalizedSchema = normalizeOptionalString(schema);
-
-	if (!normalizedSchema || normalizedSchema === 'main') {
-		return quoteSqliteIdentifier(normalizedName);
-	}
-
-	return `${quoteSqliteIdentifier(normalizedSchema)}.${quoteSqliteIdentifier(normalizedName)}`;
-}
-
-function normalizeRequiredString(value: string | undefined, fieldName: string): string {
-	const normalized = normalizeOptionalString(value);
-
-	if (!normalized) {
-		throw new Error(`${fieldName} must not be empty`);
-	}
-
-	if (normalized.includes('\0')) {
-		throw new Error(`${fieldName} must not contain NUL bytes`);
-	}
-
-	return normalized;
-}
-
-function normalizeOptionalString(value: string | undefined): string | undefined {
-	const normalized = value?.trim();
-	return normalized ? normalized : undefined;
-}
-
-export { SQL_MAX_TABLE_PREVIEW_LIMIT };
-```
-
----
-
-# 二、前端单元测试
-
-## 1. 新增 `src/vs/workbench/services/sql/test/sqlDialect.test.ts`
-
-```ts id="iy7j94"
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import {
-	createTablePreviewSql,
-	formatQualifiedName,
-	getDialectForConnectionKind,
-	normalizePreviewLimit,
-	quoteSqlIdentifier,
-	SqlDialect,
-	SQL_DEFAULT_TABLE_PREVIEW_LIMIT,
-	SQL_MAX_TABLE_PREVIEW_LIMIT
-} from '../common/sqlDialect.js';
-import { SqlConnectionKind } from '../common/sqlTypes.js';
-
-test('getDialectForConnectionKind maps sqlite to sqlite dialect', () => {
-	assert.equal(getDialectForConnectionKind(SqlConnectionKind.Sqlite), SqlDialect.Sqlite);
+	assert.equal(getSqlResultGridStatus(result, grid), '3 row(s) affected · 8ms');
 });
 
-test('quoteSqlIdentifier quotes sqlite identifiers with double quotes', () => {
-	assert.equal(quoteSqlIdentifier(SqlDialect.Sqlite, 'users'), '"users"');
-	assert.equal(quoteSqlIdentifier(SqlDialect.Sqlite, 'weird"name'), '"weird""name"');
-});
-
-test('quoteSqlIdentifier quotes postgres identifiers with double quotes', () => {
-	assert.equal(quoteSqlIdentifier(SqlDialect.Postgres, 'public'), '"public"');
-	assert.equal(quoteSqlIdentifier(SqlDialect.Postgres, 'user"name'), '"user""name"');
-});
-
-test('quoteSqlIdentifier quotes mysql identifiers with backticks', () => {
-	assert.equal(quoteSqlIdentifier(SqlDialect.MySql, 'users'), '`users`');
-	assert.equal(quoteSqlIdentifier(SqlDialect.MySql, 'weird`name'), '`weird``name`');
-});
-
-test('quoteSqlIdentifier rejects empty and NUL identifiers', () => {
-	assert.throws(() => quoteSqlIdentifier(SqlDialect.Sqlite, '  '), /identifier must not be empty/);
-	assert.throws(() => quoteSqlIdentifier(SqlDialect.Sqlite, 'bad\0name'), /NUL/);
-});
-
-test('formatQualifiedName omits sqlite main schema', () => {
-	assert.equal(
-		formatQualifiedName(SqlDialect.Sqlite, {
-			schema: 'main',
-			name: 'users'
-		}),
-		'"users"'
-	);
-});
-
-test('formatQualifiedName includes sqlite attached schema', () => {
-	assert.equal(
-		formatQualifiedName(SqlDialect.Sqlite, {
-			schema: 'analytics',
-			name: 'events'
-		}),
-		'"analytics"."events"'
-	);
-});
-
-test('formatQualifiedName includes postgres schema', () => {
-	assert.equal(
-		formatQualifiedName(SqlDialect.Postgres, {
-			schema: 'public',
-			name: 'users'
-		}),
-		'"public"."users"'
-	);
-});
-
-test('formatQualifiedName includes mysql schema', () => {
-	assert.equal(
-		formatQualifiedName(SqlDialect.MySql, {
-			schema: 'app',
-			name: 'users'
-		}),
-		'`app`.`users`'
-	);
-});
-
-test('createTablePreviewSql creates sqlite preview SQL', () => {
-	assert.equal(
-		createTablePreviewSql({
-			dialect: SqlDialect.Sqlite,
-			schema: 'main',
-			tableName: 'users'
-		}),
-		`SELECT *
-FROM "users"
-LIMIT ${SQL_DEFAULT_TABLE_PREVIEW_LIMIT};
-`
-	);
-});
-
-test('createTablePreviewSql creates postgres preview SQL', () => {
-	assert.equal(
-		createTablePreviewSql({
-			dialect: SqlDialect.Postgres,
-			schema: 'public',
-			tableName: 'users',
-			limit: 50
-		}),
-		`SELECT *
-FROM "public"."users"
-LIMIT 50;
-`
-	);
-});
-
-test('createTablePreviewSql creates mysql preview SQL', () => {
-	assert.equal(
-		createTablePreviewSql({
-			dialect: SqlDialect.MySql,
-			schema: 'app',
-			tableName: 'users',
-			limit: 50
-		}),
-		`SELECT *
-FROM \`app\`.\`users\`
-LIMIT 50;
-`
-	);
-});
-
-test('normalizePreviewLimit clamps large limit', () => {
-	assert.equal(normalizePreviewLimit(999_999), SQL_MAX_TABLE_PREVIEW_LIMIT);
-});
-
-test('normalizePreviewLimit rejects invalid limit', () => {
-	assert.throws(() => normalizePreviewLimit(0), /positive integer/);
-	assert.throws(() => normalizePreviewLimit(1.5), /positive integer/);
+test('clampColumnWidth clamps invalid and out-of-range width', () => {
+	assert.equal(clampColumnWidth(Number.NaN), 160);
+	assert.equal(clampColumnWidth(10), 80);
+	assert.equal(clampColumnWidth(999), 480);
+	assert.equal(clampColumnWidth(200), 200);
 });
 ```
 
 ---
 
-## 2. 新增 `src/vs/workbench/services/sql/test/sqlDrivers.test.ts`
+# 5. 修改 `package.json`
 
-```ts id="4htjwq"
-import assert from 'node:assert/strict';
-import test from 'node:test';
+把 `test:sql-result` 改为同时跑两个测试文件：
 
-import {
-	getSqlDriverDescriptor,
-	isSqlDriverEnabled,
-	listEnabledSqlDrivers,
-	SQLITE_DRIVER,
-	SqlDriverAvailability
-} from '../common/sqlDrivers.js';
-import { SqlDialect } from '../common/sqlDialect.js';
-import { SqlConnectionKind } from '../common/sqlTypes.js';
+```json
+{
+  "scripts": {
+    "test:sql-result": "node --test --import tsx src/vs/workbench/contrib/sqlResult/test/sqlResultModel.test.ts src/vs/workbench/contrib/sqlResult/test/sqlResultGridModel.test.ts"
+  }
+}
+```
 
-test('SQLITE_DRIVER describes sqlite capabilities', () => {
-	assert.equal(SQLITE_DRIVER.id, SqlConnectionKind.Sqlite);
-	assert.equal(SQLITE_DRIVER.label, 'SQLite');
-	assert.equal(SQLITE_DRIVER.dialect, SqlDialect.Sqlite);
-	assert.equal(SQLITE_DRIVER.availability, SqlDriverAvailability.Enabled);
-	assert.equal(SQLITE_DRIVER.capabilities.fileBased, true);
-	assert.equal(SQLITE_DRIVER.capabilities.remote, false);
-	assert.equal(SQLITE_DRIVER.capabilities.createIfMissing, true);
-});
+总测试链如果已经包含 `test:sql-result`，不用再改：
 
-test('getSqlDriverDescriptor returns sqlite descriptor', () => {
-	assert.equal(getSqlDriverDescriptor(SqlConnectionKind.Sqlite), SQLITE_DRIVER);
-});
-
-test('isSqlDriverEnabled returns true for sqlite', () => {
-	assert.equal(isSqlDriverEnabled(SqlConnectionKind.Sqlite), true);
-});
-
-test('listEnabledSqlDrivers only includes enabled drivers', () => {
-	assert.deepEqual(listEnabledSqlDrivers(), [SQLITE_DRIVER]);
-});
+```json
+{
+  "scripts": {
+    "test": "pnpm run test:branding && pnpm run test:rust && pnpm run test:sql-services && pnpm run test:sql-domain && pnpm run test:sql-connections && pnpm run test:sql-editor && pnpm run test:sql-result"
+  }
+}
 ```
 
 ---
 
-## 3. 修改 `src/vs/workbench/contrib/sqlConnections/test/sqlConnectionQueryModel.test.ts`
+# 6. 验收命令
 
-保留原测试，同时追加两个测试：
-
-```ts id="fsvjmt"
-import { SqlDialect } from '../../../services/sql/common/sqlDialect.js';
-
-test('createTablePreviewDraft can generate postgres SQL through dialect option', () => {
-	const draft = createTablePreviewDraft(
-		{
-			type: SqlConnectionTreeNodeType.Table,
-			connectionId: 'local',
-			schema: 'public',
-			tableName: 'users',
-			label: 'users'
-		},
-		{
-			dialect: SqlDialect.Postgres,
-			limit: 25
-		}
-	);
-
-	assert.equal(
-		draft.initialSql,
-		`SELECT *
-FROM "public"."users"
-LIMIT 25;
-`
-	);
-});
-
-test('createTablePreviewDraft can generate mysql SQL through dialect option', () => {
-	const draft = createTablePreviewDraft(
-		{
-			type: SqlConnectionTreeNodeType.Table,
-			connectionId: 'local',
-			schema: 'app',
-			tableName: 'users',
-			label: 'users'
-		},
-		{
-			dialect: SqlDialect.MySql,
-			limit: 25
-		}
-	);
-
-	assert.equal(
-		draft.initialSql,
-		`SELECT *
-FROM \`app\`.\`users\`
-LIMIT 25;
-`
-	);
-});
-```
-
----
-
-# 三、Rust 代码
-
-## 1. 新增 `src-tauri/src/commands/sql/dialect.rs`
-
-```rust id="lx9i10"
-use super::types::SqlConnectionKind;
-
-pub const SQL_DEFAULT_TABLE_PREVIEW_LIMIT: usize = 100;
-pub const SQL_MAX_TABLE_PREVIEW_LIMIT: usize = 10_000;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SqlDialect {
-    Sqlite,
-}
-
-impl SqlDialect {
-    pub fn from_connection_kind(kind: &SqlConnectionKind) -> Self {
-        match kind {
-            SqlConnectionKind::Sqlite => Self::Sqlite,
-        }
-    }
-
-    pub fn quote_identifier(self, value: &str) -> Result<String, String> {
-        let normalized = normalize_identifier(value, "identifier")?;
-
-        match self {
-            Self::Sqlite => Ok(format!("\"{}\"", normalized.replace('"', "\"\""))),
-        }
-    }
-
-    pub fn format_qualified_name(
-        self,
-        schema: Option<&str>,
-        name: &str,
-    ) -> Result<String, String> {
-        let normalized_name = normalize_identifier(name, "name")?;
-        let normalized_schema = normalize_optional_identifier(schema, "schema")?;
-
-        if normalized_schema
-            .as_deref()
-            .is_none_or(|schema| self.should_omit_schema(schema))
-        {
-            return self.quote_identifier(&normalized_name);
-        }
-
-        let schema = normalized_schema.expect("schema must exist after is_none_or false");
-
-        Ok(format!(
-            "{}.{}",
-            self.quote_identifier(&schema)?,
-            self.quote_identifier(&normalized_name)?
-        ))
-    }
-
-    pub fn create_table_preview_sql(
-        self,
-        schema: Option<&str>,
-        table_name: &str,
-        limit: Option<usize>,
-    ) -> Result<String, String> {
-        let limit = normalize_preview_limit(limit)?;
-        let table_name = self.format_qualified_name(schema, table_name)?;
-
-        Ok(format!("SELECT *\nFROM {table_name}\nLIMIT {limit};\n"))
-    }
-
-    fn should_omit_schema(self, schema: &str) -> bool {
-        match self {
-            Self::Sqlite => schema == "main",
-        }
-    }
-}
-
-pub fn normalize_preview_limit(limit: Option<usize>) -> Result<usize, String> {
-    match limit {
-        None => Ok(SQL_DEFAULT_TABLE_PREVIEW_LIMIT),
-        Some(0) => Err("limit must be a positive integer".to_string()),
-        Some(value) => Ok(value.min(SQL_MAX_TABLE_PREVIEW_LIMIT)),
-    }
-}
-
-fn normalize_identifier(value: &str, field_name: &str) -> Result<String, String> {
-    let normalized = value.trim();
-
-    if normalized.is_empty() {
-        return Err(format!("{field_name} must not be empty"));
-    }
-
-    if normalized.contains('\0') {
-        return Err(format!("{field_name} must not contain NUL bytes"));
-    }
-
-    Ok(normalized.to_string())
-}
-
-fn normalize_optional_identifier(
-    value: Option<&str>,
-    field_name: &str,
-) -> Result<Option<String>, String> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-
-    let normalized = value.trim();
-
-    if normalized.is_empty() {
-        return Ok(None);
-    }
-
-    if normalized.contains('\0') {
-        return Err(format!("{field_name} must not contain NUL bytes"));
-    }
-
-    Ok(Some(normalized.to_string()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sqlite_quotes_identifier_with_double_quotes() {
-        assert_eq!(
-            SqlDialect::Sqlite.quote_identifier("users").unwrap(),
-            "\"users\""
-        );
-    }
-
-    #[test]
-    fn sqlite_escapes_double_quotes() {
-        assert_eq!(
-            SqlDialect::Sqlite
-                .quote_identifier("weird\"name")
-                .unwrap(),
-            "\"weird\"\"name\""
-        );
-    }
-
-    #[test]
-    fn sqlite_rejects_empty_identifier() {
-        let err = SqlDialect::Sqlite.quote_identifier("  ").unwrap_err();
-        assert!(err.contains("identifier must not be empty"));
-    }
-
-    #[test]
-    fn sqlite_rejects_nul_identifier() {
-        let err = SqlDialect::Sqlite.quote_identifier("bad\0name").unwrap_err();
-        assert!(err.contains("NUL"));
-    }
-
-    #[test]
-    fn sqlite_omits_main_schema() {
-        assert_eq!(
-            SqlDialect::Sqlite
-                .format_qualified_name(Some("main"), "users")
-                .unwrap(),
-            "\"users\""
-        );
-    }
-
-    #[test]
-    fn sqlite_includes_attached_schema() {
-        assert_eq!(
-            SqlDialect::Sqlite
-                .format_qualified_name(Some("analytics"), "events")
-                .unwrap(),
-            "\"analytics\".\"events\""
-        );
-    }
-
-    #[test]
-    fn sqlite_create_table_preview_sql() {
-        assert_eq!(
-            SqlDialect::Sqlite
-                .create_table_preview_sql(Some("main"), "users", None)
-                .unwrap(),
-            "SELECT *\nFROM \"users\"\nLIMIT 100;\n"
-        );
-    }
-
-    #[test]
-    fn normalize_preview_limit_clamps_large_limit() {
-        assert_eq!(
-            normalize_preview_limit(Some(usize::MAX)).unwrap(),
-            SQL_MAX_TABLE_PREVIEW_LIMIT
-        );
-    }
-
-    #[test]
-    fn normalize_preview_limit_rejects_zero() {
-        let err = normalize_preview_limit(Some(0)).unwrap_err();
-        assert!(err.contains("positive integer"));
-    }
-
-    #[test]
-    fn dialect_maps_from_connection_kind() {
-        assert_eq!(
-            SqlDialect::from_connection_kind(&SqlConnectionKind::Sqlite),
-            SqlDialect::Sqlite
-        );
-    }
-}
-```
-
-> 这里 Rust 侧只实现 SQLite，因为当前 Rust `SqlConnectionKind` 也只有 SQLite。不要在 Rust enum 里提前加 MySQL/Postgres，除非你同时接入驱动和连接校验。
-
----
-
-## 2. 修改 `src-tauri/src/commands/sql/mod.rs`
-
-```rust id="4a8jw1"
-mod connection;
-pub mod dialect;
-mod metadata;
-mod persistence;
-mod query;
-mod state;
-mod types;
-
-pub use connection::*;
-pub use metadata::*;
-pub use query::*;
-pub use state::SqlConnectionStore;
-pub use types::*;
-```
-
----
-
-# 四、修改 package.json
-
-当前测试链路已经有 `test:sql-services / test:sql-connections / test:sql-editor / test:sql-result`。
-
-新增：
-
-```json id="1anbks"
-"test:sql-domain": "node --test --import tsx src/vs/workbench/services/sql/test/sqlDialect.test.ts src/vs/workbench/services/sql/test/sqlDrivers.test.ts"
-```
-
-把总测试改成：
-
-```json id="5ooon5"
-"test": "pnpm run test:branding && pnpm run test:rust && pnpm run test:sql-services && pnpm run test:sql-domain && pnpm run test:sql-connections && pnpm run test:sql-editor && pnpm run test:sql-result"
-```
-
----
-
-# 五、验收命令
-
-```bash id="dfncv6"
-pnpm run test:sql-domain
-pnpm run test:sql-connections
+```bash
+pnpm run test:sql-result
 pnpm run test
-
-cd src-tauri
-cargo test sql::dialect
-cargo test sql
-
-cd ..
 pnpm run lint
 pnpm run build
 ```
 
 ---
 
-# 六、手动验收
+# 7. 手动验收
 
-Phase 7 是领域层迁移，不应该大改 UI。手动验收保持现有主路径：
-
-```txt id="4ty551"
-1. pnpm tauri dev
+```txt
+1. 启动应用
 2. 添加 SQLite 连接
-3. 展开 Tables
-4. 点击 SELECT
-5. 生成 SQL 仍然是：
-   SELECT *
-   FROM "table"
-   LIMIT 100;
-6. 执行 SQL
-7. SQL Results Panel 正常展示结果
+3. 打开 SQL Editor
+4. 执行：
+   SELECT 1 AS id, 'Alice' AS name, NULL AS note;
+5. SQL Results 展示结果表格
+6. 点击 cell 后 cell 高亮
+7. Copy Cell 可复制单元格值
+8. Copy Row 可复制表头 + 当前行 TSV
+9. Copy CSV 可复制完整结果 CSV
+10. Copy TSV 可复制完整结果 TSV
+11. NULL 显示为灰色 italic
+12. number 右对齐
+13. statusbar 显示 row / column / elapsed
+14. Clear 可清空结果
 ```
 
 ---
 
-# Phase 7 完成后的收益
+# Phase 7 完成标准
 
-Phase 7 完成后，原来散落在 `sqlConnectionQueryModel.ts` 里的 SQLite 专用逻辑会变成：
-
-```txt id="n9x5vz"
-sqlDialect.ts
-  -> identifier quote
-  -> qualified name
-  -> table preview sql
-  -> dialect mapping
-
-sqlDrivers.ts
-  -> driver metadata
-  -> capability matrix
+```txt
+执行 SELECT
+  -> Result Panel 展示表格
+  -> 可以选中单元格
+  -> 可以复制 cell / row / csv / tsv
+  -> 能区分 NULL / number / blob / text
+  -> 有 status bar
+  -> 测试进入 test:sql-result
 ```
 
-这样下一阶段再做 MySQL/Postgres 时，不需要到 UI 里到处写 if/else，而是走：
+下一阶段再做：
 
-```txt id="76hvki"
-connection.kind
-  -> driver descriptor
-  -> dialect
-  -> SQL generation
+```txt
+Phase 7.2：Query History & Recent SQL
 ```
-
----
-
-# 下一步建议
-
-Phase 7 后建议进入：
-
-```txt id="498xsy"
-Phase 7.1：Connection Form Driver Abstraction
-```
-
-也就是把当前 SQLite 专用表单拆成：
-
-```txt id="tnocyu"
-driver catalog
-  -> SQLite form
-  -> future MySQL form
-  -> future Postgres form
-```
-
-但仍然只启用 SQLite。
-
-不要马上接 MySQL/Postgres 驱动。先把连接表单、saved connection schema、secret store 边界设计好，否则后面一接密码就会返工。

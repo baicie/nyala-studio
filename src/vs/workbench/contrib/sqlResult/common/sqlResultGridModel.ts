@@ -41,6 +41,7 @@ export interface SqlResultGrid {
 	readonly columns: SqlResultGridColumn[];
 	readonly rows: SqlResultGridRow[];
 	readonly renderedRowCount: number;
+	readonly sourceRowCount: number;
 	readonly totalRowCount: number;
 	readonly truncatedByBackend: boolean;
 	readonly truncatedByPanel: boolean;
@@ -74,18 +75,19 @@ export function buildSqlResultGrid(
 	maxRows = SQL_RESULT_MAX_RENDER_ROWS
 ): SqlResultGrid {
 	const normalizedMaxRows = normalizeMaxRows(maxRows);
-	const rows = result.rows.slice(0, normalizedMaxRows);
+	const renderedRows = result.rows.slice(0, normalizedMaxRows);
 
 	return {
 		columns: result.columns.map(createGridColumn),
-		rows: rows.map((row, rowIndex) => ({
+		rows: renderedRows.map((row, rowIndex) => ({
 			index: rowIndex,
 			cells: row.map((cell, columnIndex) => createGridCell(cell, rowIndex, columnIndex))
 		})),
-		renderedRowCount: rows.length,
+		renderedRowCount: renderedRows.length,
+		sourceRowCount: result.rows.length,
 		totalRowCount: result.rowCount,
 		truncatedByBackend: result.truncated,
-		truncatedByPanel: result.rows.length > rows.length
+		truncatedByPanel: result.rows.length > renderedRows.length
 	};
 }
 
@@ -167,20 +169,10 @@ export function copySqlResultGrid(grid: SqlResultGrid, options: SqlResultCopyOpt
 			return copySelectedCell(grid, options.selection);
 
 		case SqlResultCopyMode.Row:
-			return serializeRows(
-				grid,
-				options.selection ? [options.selection.rowIndex] : [],
-				options.format,
-				includeHeader
-			);
+			return copySelectedRow(grid, options.selection, options.format, includeHeader);
 
 		case SqlResultCopyMode.All:
-			return serializeRows(
-				grid,
-				grid.rows.map(row => row.index),
-				options.format,
-				includeHeader
-			);
+			return copyAllRows(grid, options.format, includeHeader);
 
 		default:
 			return assertNever(options.mode);
@@ -195,15 +187,43 @@ export function copySelectedCell(
 		return '';
 	}
 
-	const cell = getGridCell(grid, selection);
+	return getGridCell(grid, selection)?.text ?? '';
+}
 
-	return cell?.text ?? '';
+export function copySelectedRow(
+	grid: SqlResultGrid,
+	selection: SqlResultCellAddress | undefined,
+	format: SqlResultCopyFormat,
+	includeHeader = true
+): string {
+	if (!selection || !isValidCellAddress(selection)) {
+		return '';
+	}
+
+	return serializeRows(grid, [selection.rowIndex], format, includeHeader);
+}
+
+export function copyAllRows(
+	grid: SqlResultGrid,
+	format: SqlResultCopyFormat,
+	includeHeader = true
+): string {
+	return serializeRows(
+		grid,
+		grid.rows.map(row => row.index),
+		format,
+		includeHeader
+	);
 }
 
 export function getGridCell(
 	grid: SqlResultGrid,
 	address: SqlResultCellAddress
 ): SqlResultGridCell | undefined {
+	if (!isValidCellAddress(address)) {
+		return undefined;
+	}
+
 	const row = grid.rows[address.rowIndex];
 
 	if (!row) {
@@ -302,6 +322,13 @@ export function clampColumnWidth(width: number): number {
 
 export function estimateColumnWidth(columnName: string): number {
 	return SQL_RESULT_DEFAULT_COLUMN_WIDTH + Math.max(0, columnName.length - 12) * 8;
+}
+
+function isValidCellAddress(address: SqlResultCellAddress): boolean {
+	return Number.isInteger(address.rowIndex)
+		&& Number.isInteger(address.columnIndex)
+		&& address.rowIndex >= 0
+		&& address.columnIndex >= 0;
 }
 
 function normalizeMaxRows(maxRows: number): number {

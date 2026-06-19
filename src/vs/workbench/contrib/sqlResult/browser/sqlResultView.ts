@@ -260,28 +260,28 @@ export class SqlResultView extends ViewPane {
 
 		this.renderDisposables.add(
 			addDisposableListener(wrapper, EventType.CLICK, event => {
-				this.handleGridClick(event);
+				this.handleGridActivation(event);
 			})
 		);
 
 		this.renderDisposables.add(
 			addDisposableListener(wrapper, EventType.KEY_DOWN, event => {
 				if (event.key === 'Enter') {
-					this.handleGridClick(event);
+					this.handleGridActivation(event);
 				}
 			})
 		);
 
-		if (grid.truncatedByBackend || grid.truncatedByPanel) {
+		if (grid.truncatedByPanel || grid.truncatedByBackend) {
 			const message = grid.truncatedByPanel
-				? `Showing first ${grid.renderedRowCount} of ${grid.totalRowCount} row(s).`
+				? `Showing first ${grid.renderedRowCount} of ${grid.sourceRowCount} loaded row(s).`
 				: `Backend truncated result at ${grid.totalRowCount} row(s).`;
 
 			append(this.contentElement, $('.sql-result-truncated', undefined, message));
 		}
 	}
 
-	private handleGridClick(event: Event): void {
+	private handleGridActivation(event: Event): void {
 		const target = event.target;
 
 		if (!(target instanceof HTMLElement)) {
@@ -312,10 +312,9 @@ export class SqlResultView extends ViewPane {
 		this.selectedCellElement.classList.add('selected');
 
 		const cell = this.currentGrid ? getGridCell(this.currentGrid, address) : undefined;
-		const cellLabel = cell ? `Selected row ${address.rowIndex + 1}, column ${address.columnIndex + 1}: ${cell.text}` : '';
 
-		if (cellLabel) {
-			this.setStatus(cellLabel);
+		if (cell) {
+			this.setStatus(`Selected row ${address.rowIndex + 1}, column ${address.columnIndex + 1}: ${cell.text}`);
 		}
 
 		this.updateToolbarState();
@@ -368,8 +367,6 @@ export class SqlResultView extends ViewPane {
 	}
 
 	private setStatus(message: string): void {
-		if (this.statusElement) {
-			this.statusElement.textContent = message;
-		}
+		this.statusElement.textContent = message;
 	}
 }

@@ -5,7 +5,9 @@ import { SqlCellKind, SqlQueryResult } from '../../../services/sql/common/sqlTyp
 import {
 	buildSqlResultGrid,
 	clampColumnWidth,
+	copyAllRows,
 	copySelectedCell,
+	copySelectedRow,
 	copySqlResultGrid,
 	escapeCsvCell,
 	escapeTsvCell,
@@ -49,24 +51,36 @@ test('buildSqlResultGrid keeps column and cell metadata', () => {
 	);
 
 	assert.equal(grid.rows.length, 2);
+	assert.equal(grid.renderedRowCount, 2);
+	assert.equal(grid.sourceRowCount, 2);
+	assert.equal(grid.totalRowCount, 2);
+
 	assert.equal(grid.rows[0].cells[0].text, '1');
 	assert.equal(grid.rows[0].cells[0].className, 'kind-number');
+
 	assert.equal(grid.rows[1].cells[1].text, 'NULL');
 	assert.equal(grid.rows[1].cells[1].isNull, true);
+	assert.equal(grid.rows[1].cells[1].className, 'kind-null');
+
 	assert.equal(grid.rows[1].cells[2].text, '[blob 3 bytes]');
 	assert.equal(grid.rows[1].cells[2].isBlob, true);
+	assert.equal(grid.rows[1].cells[2].className, 'kind-blob');
 });
 
 test('buildSqlResultGrid marks panel truncation', () => {
 	const grid = buildSqlResultGrid(sampleResult, 1);
 
 	assert.equal(grid.renderedRowCount, 1);
+	assert.equal(grid.sourceRowCount, 2);
 	assert.equal(grid.totalRowCount, 2);
 	assert.equal(grid.truncatedByPanel, true);
+	assert.equal(grid.truncatedByBackend, false);
 });
 
 test('buildSqlResultGrid rejects invalid maxRows', () => {
 	assert.throws(() => buildSqlResultGrid(sampleResult, 0), /maxRows must be a positive integer/);
+	assert.throws(() => buildSqlResultGrid(sampleResult, -1), /maxRows must be a positive integer/);
+	assert.throws(() => buildSqlResultGrid(sampleResult, 1.5), /maxRows must be a positive integer/);
 });
 
 test('formatSqlResultCell formats supported cell kinds', () => {
@@ -83,11 +97,23 @@ test('formatSqlResultCell formats supported cell kinds', () => {
 	);
 });
 
+test('formatSqlResultCell stringifies object fallback', () => {
+	assert.equal(
+		formatSqlResultCell({
+			kind: SqlCellKind.Text,
+			value: { nested: true }
+		}),
+		'{"nested":true}'
+	);
+});
+
 test('getGridCell returns selected cell', () => {
 	const grid = buildSqlResultGrid(sampleResult);
 
 	assert.equal(getGridCell(grid, { rowIndex: 0, columnIndex: 1 })?.text, 'Alice');
 	assert.equal(getGridCell(grid, { rowIndex: 99, columnIndex: 1 }), undefined);
+	assert.equal(getGridCell(grid, { rowIndex: 0, columnIndex: 99 }), undefined);
+	assert.equal(getGridCell(grid, { rowIndex: -1, columnIndex: 0 }), undefined);
 });
 
 test('copySelectedCell copies only selected cell text', () => {
@@ -95,9 +121,53 @@ test('copySelectedCell copies only selected cell text', () => {
 
 	assert.equal(copySelectedCell(grid, { rowIndex: 0, columnIndex: 1 }), 'Alice');
 	assert.equal(copySelectedCell(grid, undefined), '');
+	assert.equal(copySelectedCell(grid, { rowIndex: 99, columnIndex: 1 }), '');
 });
 
-test('copySqlResultGrid copies selected cell', () => {
+test('copySelectedRow copies selected row as TSV with header', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(
+		copySelectedRow(
+			grid,
+			{ rowIndex: 0, columnIndex: 1 },
+			SqlResultCopyFormat.Tsv,
+			true
+		),
+		'id\tname\tnote\n1\tAlice\thello, "world"'
+	);
+});
+
+test('copySelectedRow copies selected row as CSV without header', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(
+		copySelectedRow(
+			grid,
+			{ rowIndex: 0, columnIndex: 1 },
+			SqlResultCopyFormat.Csv,
+			false
+		),
+		'1,Alice,"hello, ""world"""'
+	);
+});
+
+test('copySelectedRow returns empty string without selection', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(copySelectedRow(grid, undefined, SqlResultCopyFormat.Tsv), '');
+});
+
+test('copyAllRows copies all rows as CSV', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(
+		copyAllRows(grid, SqlResultCopyFormat.Csv),
+		'id,name,note\n1,Alice,"hello, ""world"""\n2,NULL,[blob 3 bytes]'
+	);
+});
+
+test('copySqlResultGrid supports cell row and all modes', () => {
 	const grid = buildSqlResultGrid(sampleResult);
 
 	assert.equal(
@@ -108,23 +178,15 @@ test('copySqlResultGrid copies selected cell', () => {
 		}),
 		'hello, "world"'
 	);
-});
-
-test('copySqlResultGrid copies selected row as TSV with header', () => {
-	const grid = buildSqlResultGrid(sampleResult);
 
 	assert.equal(
 		copySqlResultGrid(grid, {
 			mode: SqlResultCopyMode.Row,
 			format: SqlResultCopyFormat.Tsv,
-			selection: { rowIndex: 0, columnIndex: 1 }
+			selection: { rowIndex: 0, columnIndex: 0 }
 		}),
 		'id\tname\tnote\n1\tAlice\thello, "world"'
 	);
-});
-
-test('copySqlResultGrid copies all rows as CSV', () => {
-	const grid = buildSqlResultGrid(sampleResult);
 
 	assert.equal(
 		copySqlResultGrid(grid, {
@@ -165,6 +227,29 @@ test('getSqlResultGridStatus describes select result', () => {
 	const grid = buildSqlResultGrid(sampleResult);
 
 	assert.equal(getSqlResultGridStatus(sampleResult, grid), '2 row(s) · 3 column(s) · 5ms');
+});
+
+test('getSqlResultGridStatus describes panel truncation', () => {
+	const grid = buildSqlResultGrid(sampleResult, 1);
+
+	assert.equal(
+		getSqlResultGridStatus(sampleResult, grid),
+		'2 row(s) · 3 column(s) · 5ms · showing first 1'
+	);
+});
+
+test('getSqlResultGridStatus describes backend truncation', () => {
+	const result: SqlQueryResult = {
+		...sampleResult,
+		truncated: true
+	};
+
+	const grid = buildSqlResultGrid(result);
+
+	assert.equal(
+		getSqlResultGridStatus(result, grid),
+		'2 row(s) · 3 column(s) · 5ms · backend truncated'
+	);
 });
 
 test('getSqlResultGridStatus describes affected rows result', () => {
