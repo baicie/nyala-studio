@@ -282,3 +282,39 @@
 .sql-connection-node-description {
 	flex: 0 0 auto;
 }
+
+.sql-connections-driver-fields {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.sql-connections-driver-fields.hidden {
+	display: none;
+}
+
+.sql-connection-driver-preview {
+	box-sizing: border-box;
+	margin-top: 8px;
+	padding: 8px;
+	border: 1px solid var(--vscode-editorGroup-border);
+	background: var(--vscode-sideBarSectionHeader-background);
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.sql-connection-driver-preview-title {
+	color: var(--vscode-foreground);
+	font-weight: 600;
+	margin-bottom: 4px;
+}
+
+.sql-connection-driver-preview-message {
+	margin-bottom: 4px;
+}
+
+.sql-connection-driver-preview-note {
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	line-height: 1.4;
+}
