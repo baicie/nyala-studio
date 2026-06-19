@@ -27,7 +27,7 @@
     "test:sql-domain": "node --test --import tsx src/vs/workbench/services/sql/test/sqlDialect.test.ts src/vs/workbench/services/sql/test/sqlDrivers.test.ts",
     "test:sql-connections": "node --test --import tsx src/vs/workbench/contrib/sqlConnections/test/sqlConnectionTreeModel.test.ts src/vs/workbench/contrib/sqlConnections/test/sqlConnectionQueryModel.test.ts",
     "test:sql-editor": "node --test --import tsx src/vs/workbench/contrib/sqlEditor/test/sqlEditor.test.ts",
-    "test:sql-result": "node --test --import tsx src/vs/workbench/contrib/sqlResult/test/sqlResultModel.test.ts",
+    "test:sql-result": "node --test --import tsx src/vs/workbench/contrib/sqlResult/test/sqlResultModel.test.ts src/vs/workbench/contrib/sqlResult/test/sqlResultGridModel.test.ts",
     "test": "pnpm run test:branding && pnpm run test:rust && pnpm run test:sql-services && pnpm run test:sql-domain && pnpm run test:sql-connections && pnpm run test:sql-editor && pnpm run test:sql-result"
   },
   "dependencies": {
