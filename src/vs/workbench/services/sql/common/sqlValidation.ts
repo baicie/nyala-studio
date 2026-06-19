@@ -18,6 +18,15 @@ export const SQL_DEFAULT_QUERY_LIMIT = 1_000;
 export const SQL_MAX_QUERY_LIMIT = 100_000;
 export const SQL_MAX_SQL_BYTES = 1_048_576;
 
+export interface NormalizeSqlConnectionInputOptions {
+	/**
+	 * Runtime-only option.
+	 * Used by test/open connection so MySQL password can reach Tauri.
+	 * Must stay false for save/persistence flows.
+	 */
+	readonly preserveSecrets?: boolean;
+}
+
 export function assertNonEmptyString(value: unknown, fieldName: string): string {
 	if (typeof value !== 'string') {
 		throw new Error(`${fieldName} must be a string`);
@@ -32,7 +41,10 @@ export function assertNonEmptyString(value: unknown, fieldName: string): string 
 	return trimmed;
 }
 
-export function normalizeSqlConnectionInput(input: SqlConnectionInput): SqlConnectionInput {
+export function normalizeSqlConnectionInput(
+	input: SqlConnectionInput,
+	options: NormalizeSqlConnectionInputOptions = {}
+): SqlConnectionInput {
 	if (!input || typeof input !== 'object') {
 		throw new Error('connection input must be an object');
 	}
@@ -50,6 +62,13 @@ export function normalizeSqlConnectionInput(input: SqlConnectionInput): SqlConne
 	 */
 	if (normalized.kind !== SqlConnectionKind.Sqlite && normalized.kind !== SqlConnectionKind.MySql) {
 		throw new Error(`SQL driver '${normalized.kind}' is not enabled yet.`);
+	}
+
+	if (options.preserveSecrets && normalized.kind === SqlConnectionKind.MySql) {
+		const password = preservePassword(input.password);
+		if (password !== undefined) {
+			normalized.password = password;
+		}
 	}
 
 	return normalized;
@@ -126,7 +145,9 @@ export function normalizeSqlSaveConnectionRequest(request: SqlSaveConnectionRequ
 		throw new Error('save connection request must be an object');
 	}
 
-	const input = normalizeSqlConnectionInput(request.input);
+	const input = normalizeSqlConnectionInput(request.input, {
+		preserveSecrets: false
+	});
 
 	if (input.kind === SqlConnectionKind.Sqlite && input.databasePath?.trim() === ':memory:') {
 		throw new Error('in-memory SQLite connections cannot be saved');
@@ -150,4 +171,12 @@ export function normalizeSqlRemoveSavedConnectionRequest(
 		connectionId: normalizeConnectionId(request.connectionId),
 		closeIfOpen: request.closeIfOpen === true
 	};
+}
+
+function preservePassword(value: unknown): string | undefined {
+	if (typeof value !== 'string') {
+		return undefined;
+	}
+
+	return value.length > 0 ? value : undefined;
 }

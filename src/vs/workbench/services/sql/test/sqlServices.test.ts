@@ -582,3 +582,143 @@ test('normalizeSqlSaveConnectionRequest rejects in-memory SQLite connection', ()
 		/in-memory SQLite connections cannot be saved/
 	);
 });
+
+test('normalizeSqlConnectionInput preserves MySQL password only for runtime inputs', () => {
+	const runtimeInput = normalizeSqlConnectionInput(
+		{
+			kind: SqlConnectionKind.MySql,
+			host: ' localhost ',
+			port: 3306,
+			database: ' app ',
+			username: ' root ',
+			password: ' secret ',
+			sslMode: SqlSslMode.Prefer
+		},
+		{
+			preserveSecrets: true
+		}
+	);
+
+	assert.equal(runtimeInput.password, ' secret ');
+
+	const persistedInput = normalizeSqlConnectionInput({
+		kind: SqlConnectionKind.MySql,
+		host: ' localhost ',
+		port: 3306,
+		database: ' app ',
+		username: ' root ',
+		password: ' secret ',
+		sslMode: SqlSslMode.Prefer
+	});
+
+	assert.equal(persistedInput.password, undefined);
+});
+
+test('SqlConnectionService.openConnection preserves MySQL password for runtime connection', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	executor.responses.set('sql_open_connection', {
+		id: 'mysql-local',
+		name: 'MySQL · localhost:3306/app',
+		kind: SqlConnectionKind.MySql,
+		host: 'localhost',
+		port: 3306,
+		database: 'app',
+		username: 'root',
+		sslMode: SqlSslMode.Prefer,
+		readOnly: false
+	});
+
+	const service = new SqlConnectionService(executor);
+
+	await service.openConnection({
+		kind: SqlConnectionKind.MySql,
+		host: ' localhost ',
+		port: 3306,
+		database: ' app ',
+		username: ' root ',
+		password: 'secret',
+		sslMode: SqlSslMode.Prefer
+	});
+
+	const lastCall = executor.lastCall();
+	assert.equal(lastCall.command, 'sql_open_connection');
+	assert.equal(lastCall.args.input.kind, SqlConnectionKind.MySql);
+	assert.equal(lastCall.args.input.host, 'localhost');
+	assert.equal(lastCall.args.input.port, 3306);
+	assert.equal(lastCall.args.input.database, 'app');
+	assert.equal(lastCall.args.input.username, 'root');
+	assert.equal(lastCall.args.input.password, 'secret');
+	assert.equal(lastCall.args.input.sslMode, SqlSslMode.Prefer);
+	assert.equal(lastCall.args.input.readOnly, false);
+	assert.equal(lastCall.args.input.id, undefined);
+	assert.equal(lastCall.args.input.name, undefined);
+});
+
+test('SqlConnectionService.saveConnection strips MySQL password from persisted input', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	executor.responses.set('sql_save_connection', {
+		id: 'mysql-local',
+		name: 'MySQL · localhost:3306/app',
+		kind: SqlConnectionKind.MySql,
+		host: 'localhost',
+		port: 3306,
+		database: 'app',
+		username: 'root',
+		sslMode: SqlSslMode.Prefer,
+		readOnly: false,
+		createIfMissing: false,
+		autoConnect: false
+	});
+
+	const service = new SqlConnectionService(executor);
+
+	await service.saveConnection({
+		input: {
+			kind: SqlConnectionKind.MySql,
+			host: 'localhost',
+			port: 3306,
+			database: 'app',
+			username: 'root',
+			password: 'secret',
+			sslMode: SqlSslMode.Prefer
+		},
+		autoConnect: true,
+		openNow: false
+	});
+
+	const lastCall = executor.lastCall();
+	assert.equal(lastCall.command, 'sql_save_connection');
+	assert.equal(lastCall.args.request.input.kind, SqlConnectionKind.MySql);
+	assert.equal(lastCall.args.request.input.host, 'localhost');
+	assert.equal(lastCall.args.request.input.port, 3306);
+	assert.equal(lastCall.args.request.input.database, 'app');
+	assert.equal(lastCall.args.request.input.username, 'root');
+	assert.equal(lastCall.args.request.input.sslMode, SqlSslMode.Prefer);
+	assert.equal(lastCall.args.request.input.readOnly, false);
+	assert.equal(lastCall.args.request.input.id, undefined);
+	assert.equal(lastCall.args.request.input.name, undefined);
+	assert.equal('password' in lastCall.args.request.input, false);
+	assert.equal(lastCall.args.request.autoConnect, true);
+	assert.equal(lastCall.args.request.openNow, false);
+});
+
+test('SqlMetadataService.listDatabases invokes sql_list_databases', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	executor.responses.set('sql_list_databases', [
+		{
+			name: 'mysql'
+		}
+	]);
+
+	const service = new SqlMetadataService(executor);
+
+	const databases = await service.listDatabases(' mysql-local ');
+
+	assert.equal(databases[0].name, 'mysql');
+	assert.deepEqual(executor.lastCall(), {
+		command: 'sql_list_databases',
+		args: {
+			connectionId: 'mysql-local'
+		}
+	});
+});

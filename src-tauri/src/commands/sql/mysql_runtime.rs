@@ -1,6 +1,6 @@
 use super::types::{
-    SqlCellValue, SqlColumn, SqlConnectionInput, SqlDatabase, SqlQueryResult,
-    SqlResultColumn, SqlSslMode, SqlTable, SqlTableType, MAX_QUERY_ROW_LIMIT,
+    SqlCellValue, SqlColumn, SqlConnectionInput, SqlDatabase, SqlQueryResult, SqlResultColumn,
+    SqlSslMode, SqlTable, SqlTableType, MAX_QUERY_ROW_LIMIT,
 };
 use mysql::prelude::Queryable;
 use mysql::{OptsBuilder, Pool, PooledConn, Row, SslOpts, Value};

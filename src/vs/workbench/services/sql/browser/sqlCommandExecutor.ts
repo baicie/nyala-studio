@@ -13,6 +13,7 @@ export type SqlCommandName =
 	| 'sql_list_saved_connections'
 	| 'sql_remove_saved_connection'
 	| 'sql_restore_saved_connections'
+	| 'sql_list_databases'
 	| 'sql_list_tables'
 	| 'sql_list_columns'
 	| 'sql_execute_query'

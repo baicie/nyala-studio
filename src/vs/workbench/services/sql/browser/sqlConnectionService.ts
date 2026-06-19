@@ -26,7 +26,9 @@ export class SqlConnectionService implements ISqlConnectionService {
 	constructor(private readonly executor: ISqlCommandExecutor = new TauriSqlCommandExecutor()) {}
 
 	async testConnection(input: SqlConnectionInput): Promise<SqlConnectionTestResult> {
-		const normalized = normalizeSqlConnectionInput(input);
+		const normalized = normalizeSqlConnectionInput(input, {
+			preserveSecrets: true
+		});
 
 		try {
 			return await this.executor.execute<SqlConnectionTestResult>('sql_test_connection', {
@@ -38,7 +40,9 @@ export class SqlConnectionService implements ISqlConnectionService {
 	}
 
 	async openConnection(input: SqlConnectionInput): Promise<SqlConnection> {
-		const normalized = normalizeSqlConnectionInput(input);
+		const normalized = normalizeSqlConnectionInput(input, {
+			preserveSecrets: true
+		});
 
 		try {
 			return await this.executor.execute<SqlConnection>('sql_open_connection', {

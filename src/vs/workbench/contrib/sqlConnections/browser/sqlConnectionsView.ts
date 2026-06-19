@@ -915,6 +915,11 @@ export class SqlConnectionsView extends ViewPane {
 			name: saved.name,
 			kind: saved.kind,
 			databasePath: saved.databasePath,
+			host: saved.host,
+			port: saved.port,
+			database: saved.database,
+			username: saved.username,
+			sslMode: saved.sslMode,
 			readOnly: saved.readOnly,
 			createIfMissing: saved.createIfMissing
 		});
