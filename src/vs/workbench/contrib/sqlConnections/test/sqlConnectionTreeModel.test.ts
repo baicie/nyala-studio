@@ -5,6 +5,8 @@ import {
 	buildSqlConnectionTree,
 	getColumnNodeId,
 	getColumnsKey,
+	getConnectionColumnsKeyPrefix,
+	getConnectionNodeId,
 	getTableNodeId,
 	SqlConnectionTreeNodeType
 } from '../common/sqlConnectionTreeModel.js';
@@ -171,4 +173,18 @@ test('connection node id matches encoded connection id convention', () => {
 	});
 
 	assert.equal(nodes[0].id, 'sql/connection/local%20connection');
+});
+
+test('getConnectionNodeId escapes connection id', () => {
+	assert.equal(
+		getConnectionNodeId('local/db 1'),
+		'sql/connection/local%2Fdb%201'
+	);
+});
+
+test('getConnectionColumnsKeyPrefix matches table key prefix', () => {
+	assert.equal(
+		getConnectionColumnsKeyPrefix('local/db 1'),
+		'sql/connection/local%2Fdb%201/'
+	);
 });

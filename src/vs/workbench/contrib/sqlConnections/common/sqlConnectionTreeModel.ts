@@ -80,6 +80,14 @@ export function getColumnsKey(connectionId: string, table: Pick<SqlTable, 'schem
 	return getTableNodeId(connectionId, table);
 }
 
+export function getConnectionNodeId(connectionId: string): string {
+	return `sql/connection/${escapeNodeId(connectionId)}`;
+}
+
+export function getConnectionColumnsKeyPrefix(connectionId: string): string {
+	return `${getConnectionNodeId(connectionId)}/`;
+}
+
 function buildConnectionNode(
 	connection: SqlConnection,
 	tables: SqlTable[],
@@ -90,7 +98,7 @@ function buildConnectionNode(
 
 	if (error) {
 		children.push({
-			id: `sql/connection/${escapeNodeId(connection.id)}/error`,
+			id: `${getConnectionNodeId(connection.id)}/error`,
 			type: SqlConnectionTreeNodeType.Error,
 			label: 'Failed to load metadata',
 			description: error,
@@ -103,7 +111,7 @@ function buildConnectionNode(
 
 	if (tableNodes.length > 0) {
 		children.push({
-			id: `sql/connection/${escapeNodeId(connection.id)}/tables`,
+			id: `${getConnectionNodeId(connection.id)}/tables`,
 			type: SqlConnectionTreeNodeType.Group,
 			label: 'Tables',
 			description: String(tableNodes.length),
@@ -114,7 +122,7 @@ function buildConnectionNode(
 
 	if (viewNodes.length > 0) {
 		children.push({
-			id: `sql/connection/${escapeNodeId(connection.id)}/views`,
+			id: `${getConnectionNodeId(connection.id)}/views`,
 			type: SqlConnectionTreeNodeType.Group,
 			label: 'Views',
 			description: String(viewNodes.length),
@@ -125,7 +133,7 @@ function buildConnectionNode(
 
 	if (children.length === 0) {
 		children.push({
-			id: `sql/connection/${escapeNodeId(connection.id)}/empty`,
+			id: `${getConnectionNodeId(connection.id)}/empty`,
 			type: SqlConnectionTreeNodeType.Empty,
 			label: 'No tables or views',
 			description: 'The database is empty or metadata has not been loaded.',
@@ -134,7 +142,7 @@ function buildConnectionNode(
 	}
 
 	return {
-		id: `sql/connection/${escapeNodeId(connection.id)}`,
+		id: getConnectionNodeId(connection.id),
 		type: SqlConnectionTreeNodeType.Connection,
 		label: connection.name,
 		description: connection.readOnly ? 'SQLite · read-only' : 'SQLite',

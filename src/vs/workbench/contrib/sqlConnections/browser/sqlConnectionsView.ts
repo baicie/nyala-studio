@@ -33,6 +33,8 @@ import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
 import {
 	buildSqlConnectionTree,
 	getColumnsKey,
+	getConnectionColumnsKeyPrefix,
+	getConnectionNodeId,
 	SqlConnectionTreeNode,
 	SqlConnectionTreeNodeType
 } from '../common/sqlConnectionTreeModel.js';
@@ -620,7 +622,7 @@ export class SqlConnectionsView extends ViewPane {
 		delete this.state.tablesByConnectionId[connectionId];
 		delete this.state.errorsByConnectionId[connectionId];
 
-		const prefix = `${getConnectionNodeId(connectionId)}/`;
+		const prefix = getConnectionColumnsKeyPrefix(connectionId);
 
 		for (const key of Object.keys(this.state.columnsByTableId)) {
 			if (key.startsWith(prefix)) {
@@ -715,10 +717,6 @@ export class SqlConnectionsView extends ViewPane {
 		this.messageElement.textContent = message;
 		this.notificationService.error(message);
 	}
-}
-
-function getConnectionNodeId(connectionId: string): string {
-	return `sql/connection/${encodeURIComponent(connectionId)}`;
 }
 
 function isActionableNode(node: SqlConnectionTreeNode): boolean {
