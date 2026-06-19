@@ -4,10 +4,20 @@ pub const DEFAULT_QUERY_ROW_LIMIT: usize = 1_000;
 pub const MAX_QUERY_ROW_LIMIT: usize = 100_000;
 pub const MAX_SQL_BYTES: usize = 1_048_576;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SqlConnectionKind {
     Sqlite,
+    PostgreSql,
+    MySql,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SqlSslMode {
+    Disable,
+    Prefer,
+    Require,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,7 +26,15 @@ pub struct SqlConnectionInput {
     pub id: Option<String>,
     pub name: Option<String>,
     pub kind: SqlConnectionKind,
-    pub database_path: String,
+
+    pub database_path: Option<String>,
+
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub database: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub ssl_mode: Option<SqlSslMode>,
 
     #[serde(default)]
     pub read_only: bool,
@@ -31,7 +49,15 @@ pub struct SqlConnection {
     pub id: String,
     pub name: String,
     pub kind: SqlConnectionKind,
-    pub database_path: String,
+
+    pub database_path: Option<String>,
+
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub database: Option<String>,
+    pub username: Option<String>,
+    pub ssl_mode: Option<SqlSslMode>,
+
     pub read_only: bool,
 }
 
@@ -41,7 +67,15 @@ pub struct SqlSavedConnection {
     pub id: String,
     pub name: String,
     pub kind: SqlConnectionKind,
-    pub database_path: String,
+
+    pub database_path: Option<String>,
+
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub database: Option<String>,
+    pub username: Option<String>,
+    pub ssl_mode: Option<SqlSslMode>,
+
     pub read_only: bool,
     pub create_if_missing: bool,
     pub auto_connect: bool,
@@ -54,6 +88,12 @@ impl SqlSavedConnection {
             name: Some(self.name.clone()),
             kind: self.kind.clone(),
             database_path: self.database_path.clone(),
+            host: self.host.clone(),
+            port: self.port,
+            database: self.database.clone(),
+            username: self.username.clone(),
+            password: None,
+            ssl_mode: self.ssl_mode.clone(),
             read_only: self.read_only,
             create_if_missing: self.create_if_missing,
         }

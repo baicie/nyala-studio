@@ -1,11 +1,12 @@
+use super::driver::{is_persistable_connection, normalize_connection_input};
 use super::persistence::{load_saved_connections, save_saved_connections};
 use super::types::{
     SqlCancelQueryRequest, SqlCancelQueryResult, SqlCellValue, SqlColumn, SqlConnection,
     SqlConnectionInput, SqlConnectionKind, SqlConnectionTestResult, SqlExecuteQueryRequest,
     SqlListColumnsRequest, SqlQueryResult, SqlRemoveSavedConnectionRequest,
     SqlRestoreSavedConnectionError, SqlRestoreSavedConnectionsResult, SqlResultColumn,
-    SqlSaveConnectionRequest, SqlSavedConnection, SqlTable, SqlTableType,
-    DEFAULT_QUERY_ROW_LIMIT, MAX_QUERY_ROW_LIMIT, MAX_SQL_BYTES,
+    SqlSaveConnectionRequest, SqlSavedConnection, SqlTable, SqlTableType, DEFAULT_QUERY_ROW_LIMIT,
+    MAX_QUERY_ROW_LIMIT, MAX_SQL_BYTES,
 };
 use base64::{engine::general_purpose, Engine as _};
 use rusqlite::types::ValueRef;
@@ -14,7 +15,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
-use uuid::Uuid;
 
 type ConnectionMap = HashMap<String, Arc<SqlConnectionHandle>>;
 type SavedConnectionMap = HashMap<String, SqlSavedConnection>;
@@ -137,7 +137,7 @@ impl SqlConnectionStore {
     ) -> Result<SqlSavedConnection, String> {
         let connection = normalize_connection_input(&request.input)?;
 
-        if !is_persistable_database_path(&connection.database_path) {
+        if !is_persistable_connection(&connection) {
             return Err("in-memory SQLite connections cannot be saved".to_string());
         }
 
@@ -146,6 +146,11 @@ impl SqlConnectionStore {
             name: connection.name.clone(),
             kind: connection.kind.clone(),
             database_path: connection.database_path.clone(),
+            host: connection.host.clone(),
+            port: connection.port,
+            database: connection.database.clone(),
+            username: connection.username.clone(),
+            ssl_mode: connection.ssl_mode.clone(),
             read_only: connection.read_only,
             create_if_missing: request.input.create_if_missing,
             auto_connect: request.auto_connect,
@@ -490,42 +495,6 @@ impl Default for SqlConnectionStore {
     }
 }
 
-fn normalize_connection_input(input: &SqlConnectionInput) -> Result<SqlConnection, String> {
-    if input.kind != SqlConnectionKind::Sqlite {
-        return Err("only sqlite connections are supported in phase 2".to_string());
-    }
-
-    let database_path = input.database_path.trim();
-
-    if database_path.is_empty() {
-        return Err("databasePath must not be empty".to_string());
-    }
-
-    validate_sqlite_path(database_path, input.create_if_missing)?;
-
-    let id = input
-        .id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map_or_else(|| format!("sqlite-{}", Uuid::new_v4()), ToOwned::to_owned);
-
-    let name = input
-        .name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map_or_else(|| default_connection_name(database_path), ToOwned::to_owned);
-
-    Ok(SqlConnection {
-        id,
-        name,
-        kind: SqlConnectionKind::Sqlite,
-        database_path: database_path.to_string(),
-        read_only: input.read_only,
-    })
-}
-
 fn validate_sqlite_path(database_path: &str, create_if_missing: bool) -> Result<(), String> {
     if database_path == ":memory:" {
         return Ok(());
@@ -564,6 +533,18 @@ fn validate_sqlite_path(database_path: &str, create_if_missing: bool) -> Result<
 }
 
 fn open_sqlite_connection(input: &SqlConnectionInput) -> Result<Connection, String> {
+    if input.kind != SqlConnectionKind::Sqlite {
+        return Err("only SQLite runtime driver is enabled".to_string());
+    }
+
+    let database_path = input.database_path.as_deref().unwrap_or("").trim();
+
+    if database_path.is_empty() {
+        return Err("databasePath must not be empty".to_string());
+    }
+
+    validate_sqlite_path(database_path, input.create_if_missing)?;
+
     let flags = if input.read_only {
         OpenFlags::SQLITE_OPEN_READ_ONLY
     } else if input.create_if_missing {
@@ -572,7 +553,9 @@ fn open_sqlite_connection(input: &SqlConnectionInput) -> Result<Connection, Stri
         OpenFlags::SQLITE_OPEN_READ_WRITE
     };
 
-    let conn = Connection::open_with_flags(input.database_path.trim(), flags)
+    let path = Path::new(database_path);
+
+    let conn = Connection::open_with_flags(path, flags)
         .map_err(|err| format!("failed to open sqlite database: {err}"))?;
 
     conn.busy_timeout(std::time::Duration::from_secs(5))
@@ -582,23 +565,6 @@ fn open_sqlite_connection(input: &SqlConnectionInput) -> Result<Connection, Stri
         .map_err(|err| format!("failed to enable sqlite foreign_keys: {err}"))?;
 
     Ok(conn)
-}
-
-fn is_persistable_database_path(database_path: &str) -> bool {
-    database_path.trim() != ":memory:"
-}
-
-fn default_connection_name(database_path: &str) -> String {
-    if database_path == ":memory:" {
-        return "In-memory SQLite".to_string();
-    }
-
-    Path::new(database_path)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("SQLite")
-        .to_string()
 }
 
 fn normalize_limit(limit: Option<usize>) -> Result<usize, String> {
@@ -729,6 +695,7 @@ fn elapsed_ms(started_at: Instant) -> u64 {
 mod tests {
     use super::*;
     use std::fs;
+    use uuid::Uuid;
 
     struct TempDb {
         path: std::path::PathBuf,
@@ -747,7 +714,13 @@ mod tests {
                 id: Some(id.to_string()),
                 name: Some(id.to_string()),
                 kind: SqlConnectionKind::Sqlite,
-                database_path: self.path.display().to_string(),
+                database_path: Some(self.path.display().to_string()),
+                host: None,
+                port: None,
+                database: None,
+                username: None,
+                password: None,
+                ssl_mode: None,
                 read_only: false,
                 create_if_missing: true,
             }
@@ -758,7 +731,13 @@ mod tests {
                 id: Some(id.to_string()),
                 name: Some(id.to_string()),
                 kind: SqlConnectionKind::Sqlite,
-                database_path: self.path.display().to_string(),
+                database_path: Some(self.path.display().to_string()),
+                host: None,
+                port: None,
+                database: None,
+                username: None,
+                password: None,
+                ssl_mode: None,
                 read_only: true,
                 create_if_missing: false,
             }
@@ -1227,7 +1206,10 @@ mod tests {
         // though no file is written. On restore, the read-only flag
         // forces SQLITE_OPEN_READ_ONLY against a missing file, which
         // fails at the SQLite open step.
-        let missing_dir = std::env::temp_dir().join(format!("sql-studio-next-restore-missing-{}", Uuid::new_v4()));
+        let missing_dir = std::env::temp_dir().join(format!(
+            "sql-studio-next-restore-missing-{}",
+            Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&missing_dir).unwrap();
         let missing_path = missing_dir.join("never-created.sqlite");
         let missing_path_str = missing_path.to_string_lossy().to_string();
@@ -1238,7 +1220,13 @@ mod tests {
                     id: Some("missing".to_string()),
                     name: Some("Missing".to_string()),
                     kind: SqlConnectionKind::Sqlite,
-                    database_path: missing_path_str,
+                    database_path: Some(missing_path_str),
+                    host: None,
+                    port: None,
+                    database: None,
+                    username: None,
+                    password: None,
+                    ssl_mode: None,
                     read_only: true,
                     create_if_missing: true,
                 },
@@ -1267,10 +1255,8 @@ mod tests {
 
         store.initialize_persistence(path.clone()).unwrap();
 
-        let missing_dir = std::env::temp_dir().join(format!(
-            "sql-studio-next-save-open-fail-{}",
-            Uuid::new_v4()
-        ));
+        let missing_dir =
+            std::env::temp_dir().join(format!("sql-studio-next-save-open-fail-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&missing_dir).unwrap();
 
         let missing_path = missing_dir.join("never-created.sqlite");
@@ -1282,7 +1268,13 @@ mod tests {
                     id: Some("missing".to_string()),
                     name: Some("Missing".to_string()),
                     kind: SqlConnectionKind::Sqlite,
-                    database_path: missing_path_str,
+                    database_path: Some(missing_path_str),
+                    host: None,
+                    port: None,
+                    database: None,
+                    username: None,
+                    password: None,
+                    ssl_mode: None,
                     read_only: true,
                     create_if_missing: true,
                 },
@@ -1316,7 +1308,13 @@ mod tests {
                     id: Some("memory".to_string()),
                     name: Some("Memory".to_string()),
                     kind: SqlConnectionKind::Sqlite,
-                    database_path: ":memory:".to_string(),
+                    database_path: Some(":memory:".to_string()),
+                    host: None,
+                    port: None,
+                    database: None,
+                    username: None,
+                    password: None,
+                    ssl_mode: None,
                     read_only: false,
                     create_if_missing: true,
                 },

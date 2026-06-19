@@ -1,5 +1,6 @@
 mod connection;
 pub mod dialect;
+mod driver;
 mod metadata;
 mod persistence;
 mod query;

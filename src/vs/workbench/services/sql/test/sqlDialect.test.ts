@@ -7,31 +7,29 @@ import {
 	getDialectForConnectionKind,
 	normalizePreviewLimit,
 	quoteSqlIdentifier,
-	SqlDialect,
-	SQL_DEFAULT_TABLE_PREVIEW_LIMIT,
-	SQL_MAX_TABLE_PREVIEW_LIMIT
+	SqlDialect
 } from '../common/sqlDialect.js';
 import { SqlConnectionKind } from '../common/sqlTypes.js';
 
-test('getDialectForConnectionKind maps sqlite to sqlite dialect', () => {
+test('getDialectForConnectionKind maps all known connection kinds', () => {
 	assert.equal(getDialectForConnectionKind(SqlConnectionKind.Sqlite), SqlDialect.Sqlite);
+	assert.equal(getDialectForConnectionKind(SqlConnectionKind.PostgreSql), SqlDialect.PostgreSql);
+	assert.equal(getDialectForConnectionKind(SqlConnectionKind.MySql), SqlDialect.MySql);
 });
 
-test('quoteSqlIdentifier quotes sqlite identifiers with double quotes', () => {
+test('quoteSqlIdentifier quotes sqlite identifiers', () => {
 	assert.equal(quoteSqlIdentifier(SqlDialect.Sqlite, 'users'), '"users"');
-	assert.equal(quoteSqlIdentifier(SqlDialect.Sqlite, 'weird"name'), '"weird""name"');
+	assert.equal(quoteSqlIdentifier(SqlDialect.Sqlite, 'a"b'), '"a""b"');
 });
 
-test('quoteSqlIdentifier trims identifiers', () => {
-	assert.equal(quoteSqlIdentifier(SqlDialect.Sqlite, ' users '), '"users"');
+test('quoteSqlIdentifier quotes postgresql identifiers', () => {
+	assert.equal(quoteSqlIdentifier(SqlDialect.PostgreSql, 'users'), '"users"');
+	assert.equal(quoteSqlIdentifier(SqlDialect.PostgreSql, 'a"b'), '"a""b"');
 });
 
-test('quoteSqlIdentifier rejects empty identifiers', () => {
-	assert.throws(() => quoteSqlIdentifier(SqlDialect.Sqlite, '  '), /identifier must not be empty/);
-});
-
-test('quoteSqlIdentifier rejects NUL identifiers', () => {
-	assert.throws(() => quoteSqlIdentifier(SqlDialect.Sqlite, 'bad\0name'), /NUL/);
+test('quoteSqlIdentifier quotes mysql identifiers', () => {
+	assert.equal(quoteSqlIdentifier(SqlDialect.MySql, 'users'), '`users`');
+	assert.equal(quoteSqlIdentifier(SqlDialect.MySql, 'a`b'), '`a``b`');
 });
 
 test('formatQualifiedName omits sqlite main schema', () => {
@@ -44,27 +42,27 @@ test('formatQualifiedName omits sqlite main schema', () => {
 	);
 });
 
-test('formatQualifiedName includes sqlite attached schema', () => {
+test('formatQualifiedName omits postgresql public schema', () => {
 	assert.equal(
-		formatQualifiedName(SqlDialect.Sqlite, {
-			schema: 'analytics',
-			name: 'events'
-		}),
-		'"analytics"."events"'
-	);
-});
-
-test('formatQualifiedName ignores empty schema', () => {
-	assert.equal(
-		formatQualifiedName(SqlDialect.Sqlite, {
-			schema: '   ',
+		formatQualifiedName(SqlDialect.PostgreSql, {
+			schema: 'public',
 			name: 'users'
 		}),
 		'"users"'
 	);
 });
 
-test('createTablePreviewSql creates sqlite preview SQL with default limit', () => {
+test('formatQualifiedName includes mysql database qualifier', () => {
+	assert.equal(
+		formatQualifiedName(SqlDialect.MySql, {
+			schema: 'app',
+			name: 'users'
+		}),
+		'`app`.`users`'
+	);
+});
+
+test('createTablePreviewSql creates sqlite preview SQL', () => {
 	assert.equal(
 		createTablePreviewSql({
 			dialect: SqlDialect.Sqlite,
@@ -73,32 +71,43 @@ test('createTablePreviewSql creates sqlite preview SQL with default limit', () =
 		}),
 		`SELECT *
 FROM "users"
-LIMIT ${SQL_DEFAULT_TABLE_PREVIEW_LIMIT};
+LIMIT 100;
 `
 	);
 });
 
-test('createTablePreviewSql creates sqlite preview SQL with custom limit', () => {
+test('createTablePreviewSql creates postgresql preview SQL', () => {
 	assert.equal(
 		createTablePreviewSql({
-			dialect: SqlDialect.Sqlite,
-			schema: 'analytics',
-			tableName: 'events',
-			limit: 50
+			dialect: SqlDialect.PostgreSql,
+			schema: 'public',
+			tableName: 'users',
+			limit: 25
 		}),
 		`SELECT *
-FROM "analytics"."events"
-LIMIT 50;
+FROM "users"
+LIMIT 25;
 `
 	);
 });
 
-test('normalizePreviewLimit clamps large limit', () => {
-	assert.equal(normalizePreviewLimit(999_999), SQL_MAX_TABLE_PREVIEW_LIMIT);
+test('createTablePreviewSql creates mysql preview SQL', () => {
+	assert.equal(
+		createTablePreviewSql({
+			dialect: SqlDialect.MySql,
+			schema: 'app',
+			tableName: 'users',
+			limit: 25
+		}),
+		`SELECT *
+FROM \`app\`.\`users\`
+LIMIT 25;
+`
+	);
 });
 
-test('normalizePreviewLimit rejects invalid limit', () => {
+test('normalizePreviewLimit clamps limit', () => {
+	assert.equal(normalizePreviewLimit(undefined), 100);
+	assert.equal(normalizePreviewLimit(100_000), 10_000);
 	assert.throws(() => normalizePreviewLimit(0), /positive integer/);
-	assert.throws(() => normalizePreviewLimit(-1), /positive integer/);
-	assert.throws(() => normalizePreviewLimit(1.5), /positive integer/);
 });

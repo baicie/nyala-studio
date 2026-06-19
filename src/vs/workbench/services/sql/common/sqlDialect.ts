@@ -1,12 +1,14 @@
 /*---------------------------------------------------------------------------------------------
  * SQL Studio Next - SQL dialect domain helpers.
- * Phase 6.6 intentionally supports SQLite only.
+ * Phase 9 adds foundation for PostgreSQL/MySQL SQL generation.
  *--------------------------------------------------------------------------------------------*/
 
 import { SqlConnectionKind } from './sqlTypes.js';
 
 export const enum SqlDialect {
-	Sqlite = 'sqlite'
+	Sqlite = 'sqlite',
+	PostgreSql = 'postgresql',
+	MySql = 'mysql'
 }
 
 export interface SqlQualifiedName {
@@ -28,6 +30,13 @@ export function getDialectForConnectionKind(kind: SqlConnectionKind): SqlDialect
 	switch (kind) {
 		case SqlConnectionKind.Sqlite:
 			return SqlDialect.Sqlite;
+
+		case SqlConnectionKind.PostgreSql:
+			return SqlDialect.PostgreSql;
+
+		case SqlConnectionKind.MySql:
+			return SqlDialect.MySql;
+
 		default:
 			return assertNever(kind);
 	}
@@ -38,7 +47,11 @@ export function quoteSqlIdentifier(dialect: SqlDialect, value: string): string {
 
 	switch (dialect) {
 		case SqlDialect.Sqlite:
+		case SqlDialect.PostgreSql:
 			return `"${normalized.replaceAll('"', '""')}"`;
+
+		case SqlDialect.MySql:
+			return `\`${normalized.replaceAll('`', '``')}\``;
 
 		default:
 			return assertNever(dialect);
@@ -63,10 +76,18 @@ export function createTablePreviewSql(options: SqlTablePreviewOptions): string {
 		name: options.tableName
 	});
 
-	return `SELECT *
+	switch (options.dialect) {
+		case SqlDialect.Sqlite:
+		case SqlDialect.PostgreSql:
+		case SqlDialect.MySql:
+			return `SELECT *
 FROM ${tableName}
 LIMIT ${limit};
 `;
+
+		default:
+			return assertNever(options.dialect);
+	}
 }
 
 export function normalizePreviewLimit(limit: number | undefined): number {
@@ -77,6 +98,12 @@ function shouldOmitSchema(dialect: SqlDialect, schema: string): boolean {
 	switch (dialect) {
 		case SqlDialect.Sqlite:
 			return schema === 'main';
+
+		case SqlDialect.PostgreSql:
+			return schema === 'public';
+
+		case SqlDialect.MySql:
+			return false;
 
 		default:
 			return assertNever(dialect);

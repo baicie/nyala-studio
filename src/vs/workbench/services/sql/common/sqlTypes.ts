@@ -1,16 +1,42 @@
 /*---------------------------------------------------------------------------------------------
  * SQL Studio Next - SQL service protocol types.
+ * Phase 9 introduces multi-database-capable protocol fields.
+ * SQLite remains the only enabled runtime driver.
  *--------------------------------------------------------------------------------------------*/
 
 export const enum SqlConnectionKind {
-	Sqlite = 'sqlite'
+	Sqlite = 'sqlite',
+	PostgreSql = 'postgresql',
+	MySql = 'mysql'
+}
+
+export const enum SqlSslMode {
+	Disable = 'disable',
+	Prefer = 'prefer',
+	Require = 'require'
 }
 
 export interface SqlConnectionInput {
 	id?: string;
 	name?: string;
 	kind: SqlConnectionKind;
-	databasePath: string;
+
+	/**
+	 * SQLite-only.
+	 */
+	databasePath?: string;
+
+	/**
+	 * Network database fields.
+	 * Reserved for PostgreSQL/MySQL foundation in Phase 9.
+	 */
+	host?: string;
+	port?: number;
+	database?: string;
+	username?: string;
+	password?: string;
+	sslMode?: SqlSslMode;
+
 	readOnly?: boolean;
 	createIfMissing?: boolean;
 }
@@ -19,7 +45,22 @@ export interface SqlConnection {
 	id: string;
 	name: string;
 	kind: SqlConnectionKind;
-	databasePath: string;
+
+	/**
+	 * SQLite-only display/runtime path.
+	 */
+	databasePath?: string;
+
+	/**
+	 * Network database display fields.
+	 * Password is intentionally never returned.
+	 */
+	host?: string;
+	port?: number;
+	database?: string;
+	username?: string;
+	sslMode?: SqlSslMode;
+
 	readOnly: boolean;
 }
 
@@ -115,7 +156,15 @@ export interface SqlSavedConnection {
 	id: string;
 	name: string;
 	kind: SqlConnectionKind;
-	databasePath: string;
+
+	databasePath?: string;
+
+	host?: string;
+	port?: number;
+	database?: string;
+	username?: string;
+	sslMode?: SqlSslMode;
+
 	readOnly: boolean;
 	createIfMissing: boolean;
 	autoConnect: boolean;

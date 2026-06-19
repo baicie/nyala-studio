@@ -2,6 +2,8 @@
  * SQL Studio Next - SQL service input validation helpers.
  *--------------------------------------------------------------------------------------------*/
 
+import { assertSqlDriverEnabled } from './sqlDrivers.js';
+import { createConnectionProfileFromInput, toConnectionInput } from './sqlConnectionProfile.js';
 import {
 	SqlCancelQueryRequest,
 	SqlConnectionInput,
@@ -35,27 +37,19 @@ export function normalizeSqlConnectionInput(input: SqlConnectionInput): SqlConne
 		throw new Error('connection input must be an object');
 	}
 
-	if (input.kind !== SqlConnectionKind.Sqlite) {
-		throw new Error('only sqlite connections are supported in phase 3');
-	}
+	assertSqlDriverEnabled(input.kind);
 
-	const databasePath = assertNonEmptyString(input.databasePath, 'databasePath');
+	const profile = createConnectionProfileFromInput(input);
+	const normalized = toConnectionInput(profile);
 
-	const normalized: SqlConnectionInput = {
-		kind: SqlConnectionKind.Sqlite,
-		databasePath,
-		readOnly: input.readOnly === true,
-		createIfMissing: input.createIfMissing === true
-	};
-
-	const id = typeof input.id === 'string' ? input.id.trim() : '';
-	if (id) {
-		normalized.id = id;
-	}
-
-	const name = typeof input.name === 'string' ? input.name.trim() : '';
-	if (name) {
-		normalized.name = name;
+	/**
+	 * Phase 9 still enables SQLite only.
+	 * assertSqlDriverEnabled() already rejects planned drivers, but keep this
+	 * explicit guard to prevent accidental remote driver activation by changing
+	 * catalog metadata only.
+	 */
+	if (normalized.kind !== SqlConnectionKind.Sqlite) {
+		throw new Error(`SQL driver '${normalized.kind}' is not enabled yet.`);
 	}
 
 	return normalized;
@@ -134,7 +128,7 @@ export function normalizeSqlSaveConnectionRequest(request: SqlSaveConnectionRequ
 
 	const input = normalizeSqlConnectionInput(request.input);
 
-	if (input.databasePath.trim() === ':memory:') {
+	if (input.kind === SqlConnectionKind.Sqlite && input.databasePath?.trim() === ':memory:') {
 		throw new Error('in-memory SQLite connections cannot be saved');
 	}
 

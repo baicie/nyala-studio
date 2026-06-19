@@ -1,8 +1,6 @@
 //! SQL dialect domain helpers.
 //!
-//! Phase 6.6 intentionally supports SQLite only. The Rust side keeps the API
-//! surface minimal until the MySQL/Postgres driver phases wire these helpers into
-//! real commands.
+//! Phase 9 adds foundation for PostgreSQL/MySQL SQL generation.
 
 #![allow(dead_code)]
 
@@ -14,12 +12,16 @@ pub const SQL_MAX_TABLE_PREVIEW_LIMIT: usize = 10_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SqlDialect {
     Sqlite,
+    PostgreSql,
+    MySql,
 }
 
 impl SqlDialect {
     pub fn from_connection_kind(kind: &SqlConnectionKind) -> Self {
         match kind {
             SqlConnectionKind::Sqlite => Self::Sqlite,
+            SqlConnectionKind::PostgreSql => Self::PostgreSql,
+            SqlConnectionKind::MySql => Self::MySql,
         }
     }
 
@@ -27,7 +29,10 @@ impl SqlDialect {
         let normalized = normalize_identifier(value, "identifier")?;
 
         match self {
-            Self::Sqlite => Ok(format!("\"{}\"", normalized.replace('"', "\"\""))),
+            Self::Sqlite | Self::PostgreSql => {
+                Ok(format!("\"{}\"", normalized.replace('"', "\"\"")))
+            }
+            Self::MySql => Ok(format!("`{}`", normalized.replace('`', "``"))),
         }
     }
 
@@ -63,6 +68,8 @@ impl SqlDialect {
     fn should_omit_schema(self, schema: &str) -> bool {
         match self {
             Self::Sqlite => schema == "main",
+            Self::PostgreSql => schema == "public",
+            Self::MySql => false,
         }
     }
 }
@@ -131,6 +138,30 @@ mod tests {
     }
 
     #[test]
+    fn postgresql_quotes_identifier_with_double_quotes() {
+        assert_eq!(
+            SqlDialect::PostgreSql.quote_identifier("users").unwrap(),
+            "\"users\""
+        );
+    }
+
+    #[test]
+    fn mysql_quotes_identifier_with_backticks() {
+        assert_eq!(
+            SqlDialect::MySql.quote_identifier("users").unwrap(),
+            "`users`"
+        );
+    }
+
+    #[test]
+    fn mysql_escapes_backticks() {
+        assert_eq!(
+            SqlDialect::MySql.quote_identifier("weird`name").unwrap(),
+            "`weird``name`"
+        );
+    }
+
+    #[test]
     fn sqlite_rejects_empty_identifier() {
         let err = SqlDialect::Sqlite.quote_identifier("  ").unwrap_err();
         assert!(err.contains("identifier must not be empty"));
@@ -165,12 +196,52 @@ mod tests {
     }
 
     #[test]
+    fn postgresql_omits_public_schema() {
+        assert_eq!(
+            SqlDialect::PostgreSql
+                .format_qualified_name(Some("public"), "users")
+                .unwrap(),
+            "\"users\""
+        );
+    }
+
+    #[test]
+    fn mysql_never_omits_schema() {
+        assert_eq!(
+            SqlDialect::MySql
+                .format_qualified_name(Some("app"), "users")
+                .unwrap(),
+            "`app`.`users`"
+        );
+    }
+
+    #[test]
     fn sqlite_create_table_preview_sql() {
         assert_eq!(
             SqlDialect::Sqlite
                 .create_table_preview_sql(Some("main"), "users", None)
                 .unwrap(),
             "SELECT *\nFROM \"users\"\nLIMIT 100;\n"
+        );
+    }
+
+    #[test]
+    fn postgresql_create_table_preview_sql() {
+        assert_eq!(
+            SqlDialect::PostgreSql
+                .create_table_preview_sql(Some("public"), "users", Some(25))
+                .unwrap(),
+            "SELECT *\nFROM \"users\"\nLIMIT 25;\n"
+        );
+    }
+
+    #[test]
+    fn mysql_create_table_preview_sql() {
+        assert_eq!(
+            SqlDialect::MySql
+                .create_table_preview_sql(Some("app"), "users", Some(50))
+                .unwrap(),
+            "SELECT *\nFROM `app`.`users`\nLIMIT 50;\n"
         );
     }
 
@@ -201,6 +272,14 @@ mod tests {
         assert_eq!(
             SqlDialect::from_connection_kind(&SqlConnectionKind::Sqlite),
             SqlDialect::Sqlite
+        );
+        assert_eq!(
+            SqlDialect::from_connection_kind(&SqlConnectionKind::PostgreSql),
+            SqlDialect::PostgreSql
+        );
+        assert_eq!(
+            SqlDialect::from_connection_kind(&SqlConnectionKind::MySql),
+            SqlDialect::MySql
         );
     }
 }

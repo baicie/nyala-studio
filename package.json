@@ -23,7 +23,7 @@
     "rust:fmt:fix": "cd src-tauri && cargo fmt --all",
     "test:branding": "node scripts/verify-branding.mjs",
     "test:rust": "cd src-tauri && cargo test --lib",
-    "test:sql-services": "node --test --import tsx src/vs/workbench/services/sql/test/sqlServices.test.ts",
+    "test:sql-services": "node --test --import tsx src/vs/workbench/services/sql/test/sqlServices.test.ts src/vs/workbench/services/sql/test/sqlConnectionProfile.test.ts",
     "test:sql-domain": "node --test --import tsx src/vs/workbench/services/sql/test/sqlDialect.test.ts src/vs/workbench/services/sql/test/sqlDrivers.test.ts",
     "test:sql-connections": "node --test --import tsx src/vs/workbench/contrib/sqlConnections/test/sqlConnectionTreeModel.test.ts src/vs/workbench/contrib/sqlConnections/test/sqlConnectionQueryModel.test.ts src/vs/workbench/contrib/sqlConnections/test/sqlConnectionTemplateModel.test.ts",
     "test:sql-editor": "node --test --import tsx src/vs/workbench/contrib/sqlEditor/test/sqlEditorModel.test.ts src/vs/workbench/contrib/sqlEditor/test/sqlEditorDraftService.test.ts",

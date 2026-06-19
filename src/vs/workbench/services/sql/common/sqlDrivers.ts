@@ -1,13 +1,16 @@
 /*---------------------------------------------------------------------------------------------
  * SQL Studio Next - SQL driver catalog.
- * Phase 6.6 exposes metadata only. SQLite remains the only enabled driver.
+ * Phase 9 introduces multi-database foundations.
+ * SQLite is enabled. PostgreSQL/MySQL are planned.
  *--------------------------------------------------------------------------------------------*/
 
 import { SqlConnectionKind } from './sqlTypes.js';
 import { SqlDialect } from './sqlDialect.js';
 
 export const enum SqlDriverAvailability {
-	Enabled = 'enabled'
+	Enabled = 'enabled',
+	Planned = 'planned',
+	Disabled = 'disabled'
 }
 
 export interface SqlDriverCapabilities {
@@ -18,6 +21,13 @@ export interface SqlDriverCapabilities {
 	readonly createIfMissing: boolean;
 	readonly transactions: boolean;
 	readonly explain: boolean;
+	readonly ssl: boolean;
+	readonly credentials: boolean;
+}
+
+export interface SqlDriverDefaultPorts {
+	readonly default?: number;
+	readonly alternatives: readonly number[];
 }
 
 export interface SqlDriverDescriptor {
@@ -26,6 +36,8 @@ export interface SqlDriverDescriptor {
 	readonly dialect: SqlDialect;
 	readonly availability: SqlDriverAvailability;
 	readonly capabilities: SqlDriverCapabilities;
+	readonly defaultPorts?: SqlDriverDefaultPorts;
+	readonly reason?: string;
 }
 
 export const SQLITE_DRIVER: SqlDriverDescriptor = {
@@ -40,11 +52,75 @@ export const SQLITE_DRIVER: SqlDriverDescriptor = {
 		readOnly: true,
 		createIfMissing: true,
 		transactions: true,
-		explain: true
+		explain: true,
+		ssl: false,
+		credentials: false
 	}
 };
 
-export const SQL_DRIVER_CATALOG: readonly SqlDriverDescriptor[] = [SQLITE_DRIVER];
+export const POSTGRESQL_DRIVER: SqlDriverDescriptor = {
+	id: SqlConnectionKind.PostgreSql,
+	label: 'PostgreSQL',
+	dialect: SqlDialect.PostgreSql,
+	availability: SqlDriverAvailability.Planned,
+	defaultPorts: {
+		default: 5432,
+		alternatives: []
+	},
+	reason: 'PostgreSQL runtime driver is planned after the SQLite MVP is stable.',
+	capabilities: {
+		fileBased: false,
+		remote: true,
+		schemas: true,
+		readOnly: false,
+		createIfMissing: false,
+		transactions: true,
+		explain: true,
+		ssl: true,
+		credentials: true
+	}
+};
+
+export const MYSQL_DRIVER: SqlDriverDescriptor = {
+	id: SqlConnectionKind.MySql,
+	label: 'MySQL',
+	dialect: SqlDialect.MySql,
+	availability: SqlDriverAvailability.Planned,
+	defaultPorts: {
+		default: 3306,
+		alternatives: []
+	},
+	reason: 'MySQL runtime driver is planned after the SQLite MVP is stable.',
+	capabilities: {
+		fileBased: false,
+		remote: true,
+		schemas: true,
+		readOnly: false,
+		createIfMissing: false,
+		transactions: true,
+		explain: true,
+		ssl: true,
+		credentials: true
+	}
+};
+
+export const SQL_DRIVER_CATALOG: readonly SqlDriverDescriptor[] = [
+	SQLITE_DRIVER,
+	POSTGRESQL_DRIVER,
+	MYSQL_DRIVER
+];
+
+export function listSqlDriverDescriptors(): SqlDriverDescriptor[] {
+	return [...SQL_DRIVER_CATALOG];
+}
+
+export function listEnabledSqlDrivers(): SqlDriverDescriptor[] {
+	return SQL_DRIVER_CATALOG.filter(driver => driver.availability === SqlDriverAvailability.Enabled);
+}
+
+export function listPlannedSqlDrivers(): SqlDriverDescriptor[] {
+	return SQL_DRIVER_CATALOG.filter(driver => driver.availability === SqlDriverAvailability.Planned);
+}
 
 export function getSqlDriverDescriptor(kind: SqlConnectionKind): SqlDriverDescriptor {
 	const descriptor = SQL_DRIVER_CATALOG.find(driver => driver.id === kind);
@@ -60,6 +136,12 @@ export function isSqlDriverEnabled(kind: SqlConnectionKind): boolean {
 	return getSqlDriverDescriptor(kind).availability === SqlDriverAvailability.Enabled;
 }
 
-export function listEnabledSqlDrivers(): SqlDriverDescriptor[] {
-	return SQL_DRIVER_CATALOG.filter(driver => driver.availability === SqlDriverAvailability.Enabled);
+export function assertSqlDriverEnabled(kind: SqlConnectionKind): void {
+	const descriptor = getSqlDriverDescriptor(kind);
+
+	if (descriptor.availability !== SqlDriverAvailability.Enabled) {
+		throw new Error(
+			`SQL driver '${descriptor.label}' is ${descriptor.availability} and cannot be used yet.`
+		);
+	}
 }

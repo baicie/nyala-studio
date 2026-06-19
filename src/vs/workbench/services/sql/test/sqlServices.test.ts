@@ -72,15 +72,44 @@ test('normalizeSqlConnectionInput trims fields and applies boolean defaults', ()
 	});
 });
 
-test('normalizeSqlConnectionInput rejects unsupported connection kind', () => {
+test('normalizeSqlConnectionInput rejects planned PostgreSQL driver', () => {
 	assert.throws(
 		() =>
 			normalizeSqlConnectionInput({
-				kind: 'postgres' as SqlConnectionKind,
-				databasePath: '/tmp/app.db'
+				kind: SqlConnectionKind.PostgreSql,
+				host: 'localhost',
+				database: 'app'
 			}),
-		/only sqlite connections are supported/
+		/PostgreSQL.*planned/
 	);
+});
+
+test('normalizeSqlConnectionInput rejects planned MySQL driver', () => {
+	assert.throws(
+		() =>
+			normalizeSqlConnectionInput({
+				kind: SqlConnectionKind.MySql,
+				host: 'localhost',
+				database: 'app'
+			}),
+		/MySQL.*planned/
+	);
+});
+
+test('normalizeSqlConnectionInput keeps SQLite path flow', () => {
+	const result = normalizeSqlConnectionInput({
+		kind: SqlConnectionKind.Sqlite,
+		databasePath: ' /tmp/app.db ',
+		readOnly: true,
+		createIfMissing: true
+	});
+
+	assert.equal(result.kind, SqlConnectionKind.Sqlite);
+	assert.equal(result.databasePath, '/tmp/app.db');
+	assert.equal(result.readOnly, true);
+	assert.equal(result.createIfMissing, true);
+	assert.equal(result.id, undefined);
+	assert.equal(result.name, undefined);
 });
 
 test('normalizeSqlExecuteQueryRequest trims sql and clamps large limit', () => {
