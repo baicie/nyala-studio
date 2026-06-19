@@ -119,25 +119,29 @@ export class SqlResultView extends ViewPane {
 
 		this._register(
 			addDisposableListener(this.copyCellButton, EventType.CLICK, () => {
-				this.copySelection(SqlResultCopyMode.Cell, SqlResultCopyFormat.Tsv).catch(() => undefined);
+				this.copySelection(SqlResultCopyMode.Cell, SqlResultCopyFormat.Tsv)
+					.catch(error => this.setStatus(toCopyErrorMessage(error)));
 			})
 		);
 
 		this._register(
 			addDisposableListener(this.copyRowButton, EventType.CLICK, () => {
-				this.copySelection(SqlResultCopyMode.Row, SqlResultCopyFormat.Tsv).catch(() => undefined);
+				this.copySelection(SqlResultCopyMode.Row, SqlResultCopyFormat.Tsv)
+					.catch(error => this.setStatus(toCopyErrorMessage(error)));
 			})
 		);
 
 		this._register(
 			addDisposableListener(this.copyCsvButton, EventType.CLICK, () => {
-				this.copySelection(SqlResultCopyMode.All, SqlResultCopyFormat.Csv).catch(() => undefined);
+				this.copySelection(SqlResultCopyMode.All, SqlResultCopyFormat.Csv)
+					.catch(error => this.setStatus(toCopyErrorMessage(error)));
 			})
 		);
 
 		this._register(
 			addDisposableListener(this.copyTsvButton, EventType.CLICK, () => {
-				this.copySelection(SqlResultCopyMode.All, SqlResultCopyFormat.Tsv).catch(() => undefined);
+				this.copySelection(SqlResultCopyMode.All, SqlResultCopyFormat.Tsv)
+					.catch(error => this.setStatus(toCopyErrorMessage(error)));
 			})
 		);
 
@@ -266,8 +270,9 @@ export class SqlResultView extends ViewPane {
 
 		this.renderDisposables.add(
 			addDisposableListener(wrapper, EventType.KEY_DOWN, event => {
-				if (event.key === 'Enter') {
+				if (event.key === 'Enter' || event.key === ' ') {
 					this.handleGridActivation(event);
+					event.preventDefault();
 				}
 			})
 		);
@@ -343,13 +348,11 @@ export class SqlResultView extends ViewPane {
 		});
 
 		if (!text) {
+			this.setStatus('Nothing to copy.');
 			return;
 		}
 
-		if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-			await navigator.clipboard.writeText(text);
-		}
-
+		await writeClipboardText(text);
 		this.setStatus(this.getCopyStatus(mode, format));
 	}
 
@@ -369,4 +372,21 @@ export class SqlResultView extends ViewPane {
 	private setStatus(message: string): void {
 		this.statusElement.textContent = message;
 	}
+}
+
+async function writeClipboardText(text: string): Promise<void> {
+	if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+		await navigator.clipboard.writeText(text);
+		return;
+	}
+
+	throw new Error('Clipboard API is not available.');
+}
+
+function toCopyErrorMessage(error: unknown): string {
+	if (error instanceof Error) {
+		return `Copy failed: ${error.message}`;
+	}
+
+	return `Copy failed: ${String(error)}`;
 }

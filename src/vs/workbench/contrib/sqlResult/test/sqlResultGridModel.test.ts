@@ -158,6 +158,34 @@ test('copySelectedRow returns empty string without selection', () => {
 	assert.equal(copySelectedRow(grid, undefined, SqlResultCopyFormat.Tsv), '');
 });
 
+test('copySelectedRow returns empty string for out-of-range row', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(
+		copySelectedRow(
+			grid,
+			{ rowIndex: 99, columnIndex: 0 },
+			SqlResultCopyFormat.Tsv,
+			true
+		),
+		''
+	);
+});
+
+test('copySelectedRow returns empty string for negative row', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(
+		copySelectedRow(
+			grid,
+			{ rowIndex: -1, columnIndex: 0 },
+			SqlResultCopyFormat.Tsv,
+			true
+		),
+		''
+	);
+});
+
 test('copyAllRows copies all rows as CSV', () => {
 	const grid = buildSqlResultGrid(sampleResult);
 
@@ -221,6 +249,7 @@ test('escapeTsvCell removes tabs and normalizes newlines', () => {
 	assert.equal(escapeTsvCell('hello\tworld'), 'hello world');
 	assert.equal(escapeTsvCell('hello\r\nworld'), 'hello world');
 	assert.equal(escapeTsvCell('hello\rworld'), 'hello world');
+	assert.equal(escapeTsvCell('hello\nworld'), 'hello world');
 });
 
 test('getSqlResultGridStatus describes select result', () => {

@@ -200,6 +200,10 @@ export function copySelectedRow(
 		return '';
 	}
 
+	if (!grid.rows[selection.rowIndex]) {
+		return '';
+	}
+
 	return serializeRows(grid, [selection.rowIndex], format, includeHeader);
 }
 
