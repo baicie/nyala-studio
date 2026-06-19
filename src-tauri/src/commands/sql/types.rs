@@ -4,7 +4,7 @@ pub const DEFAULT_QUERY_ROW_LIMIT: usize = 1_000;
 pub const MAX_QUERY_ROW_LIMIT: usize = 100_000;
 pub const MAX_SQL_BYTES: usize = 1_048_576;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SqlConnectionKind {
     Sqlite,
@@ -12,7 +12,7 @@ pub enum SqlConnectionKind {
     MySql,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SqlSslMode {
     Disable,

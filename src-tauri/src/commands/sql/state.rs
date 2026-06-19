@@ -543,6 +543,19 @@ fn open_sqlite_connection(input: &SqlConnectionInput) -> Result<Connection, Stri
         return Err("databasePath must not be empty".to_string());
     }
 
+    if database_path == ":memory:" {
+        let conn = Connection::open_in_memory()
+            .map_err(|err| format!("failed to open in-memory SQLite database: {err}"))?;
+
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(|err| format!("failed to set sqlite busy timeout: {err}"))?;
+
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .map_err(|err| format!("failed to enable sqlite foreign_keys: {err}"))?;
+
+        return Ok(conn);
+    }
+
     validate_sqlite_path(database_path, input.create_if_missing)?;
 
     let flags = if input.read_only {
@@ -1339,5 +1352,65 @@ mod tests {
             .as_nanos();
 
         std::env::temp_dir().join(format!("sql-studio-next-{name}-{now}.json"))
+    }
+}
+
+#[cfg(test)]
+mod phase9_tests {
+    use super::*;
+    use crate::commands::sql::types::{SqlConnectionInput, SqlConnectionKind};
+
+    #[test]
+    fn open_memory_sqlite_connection_uses_in_memory_database() {
+        let input = SqlConnectionInput {
+            id: None,
+            name: None,
+            kind: SqlConnectionKind::Sqlite,
+            database_path: Some(":memory:".to_string()),
+            host: None,
+            port: None,
+            database: None,
+            username: None,
+            password: None,
+            ssl_mode: None,
+            read_only: false,
+            create_if_missing: true,
+        };
+
+        let conn = open_sqlite_connection(&input).unwrap();
+
+        conn.execute("CREATE TABLE users(id INTEGER PRIMARY KEY)", [])
+            .unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'users'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn open_sqlite_connection_rejects_non_sqlite_driver() {
+        let input = SqlConnectionInput {
+            id: None,
+            name: None,
+            kind: SqlConnectionKind::PostgreSql,
+            database_path: None,
+            host: Some("localhost".to_string()),
+            port: None,
+            database: Some("app".to_string()),
+            username: None,
+            password: None,
+            ssl_mode: None,
+            read_only: false,
+            create_if_missing: false,
+        };
+
+        let err = open_sqlite_connection(&input).unwrap_err();
+        assert!(err.contains("only SQLite runtime driver is enabled"));
     }
 }

@@ -144,11 +144,15 @@ export function maskConnectionInput(input: SqlConnectionInput): SqlConnectionInp
 }
 
 function normalizeConnectionKind(kind: SqlConnectionKind): SqlConnectionKind {
-	if (!Object.values(SqlConnectionKind).includes(kind)) {
-		throw new Error(`Unsupported SQL connection kind: ${String(kind)}`);
-	}
+	switch (kind) {
+		case SqlConnectionKind.Sqlite:
+		case SqlConnectionKind.PostgreSql:
+		case SqlConnectionKind.MySql:
+			return kind;
 
-	return kind;
+		default:
+			throw new Error(`Unsupported SQL connection kind: ${String(kind)}`);
+	}
 }
 
 function normalizeRequiredString(value: string | undefined, fieldName: string): string {
@@ -173,21 +177,24 @@ function normalizeOptionalString(value: string | undefined): string | undefined 
 function normalizePort(value: number | undefined, fallback: number | undefined): number {
 	const port = value ?? fallback;
 
-	if (!Number.isInteger(port!) || port! <= 0 || port! > 65_535) {
+	if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
 		throw new Error('port must be an integer between 1 and 65535');
 	}
 
-	return port!;
+	return port;
 }
 
 function normalizeSslMode(value: SqlSslMode | undefined): SqlSslMode {
-	if (!value) {
-		return SqlSslMode.Prefer;
-	}
+	switch (value) {
+		case undefined:
+			return SqlSslMode.Prefer;
 
-	if (!Object.values(SqlSslMode).includes(value)) {
-		throw new Error(`Unsupported SQL ssl mode: ${String(value)}`);
-	}
+		case SqlSslMode.Disable:
+		case SqlSslMode.Prefer:
+		case SqlSslMode.Require:
+			return value;
 
-	return value;
+		default:
+			throw new Error(`Unsupported SQL ssl mode: ${String(value)}`);
+	}
 }
