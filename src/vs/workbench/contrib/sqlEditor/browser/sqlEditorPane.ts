@@ -34,6 +34,8 @@ import {
 } from '../common/sqlEditorModel.js';
 import { ISqlEditorEventService } from '../common/sqlEditorEvents.js';
 import { ISqlEditorDraftService } from '../common/sqlEditorDraftService.js';
+import { ISqlProductPreferencesService } from '../../sqlProduct/common/sqlProductPreferencesService.js';
+import { shouldAutoSaveSqlEditorDraft } from '../../sqlProduct/common/sqlProductIntegrationModel.js';
 
 export class SqlEditorPane extends EditorPane {
 	static readonly ID = SQL_EDITOR_PANE_ID;
@@ -68,7 +70,8 @@ export class SqlEditorPane extends EditorPane {
 		@ISqlConnectionService private readonly sqlConnectionService: ISqlConnectionService,
 		@ISqlQueryService private readonly sqlQueryService: ISqlQueryService,
 		@ISqlEditorEventService private readonly sqlEditorEventService: ISqlEditorEventService,
-		@ISqlEditorDraftService private readonly draftService: ISqlEditorDraftService
+		@ISqlEditorDraftService private readonly draftService: ISqlEditorDraftService,
+		@ISqlProductPreferencesService private readonly preferencesService: ISqlProductPreferencesService
 	) {
 		super(SqlEditorPane.ID, group, telemetryService, themeService, storageService);
 	}
@@ -407,6 +410,10 @@ export class SqlEditorPane extends EditorPane {
 	}
 
 	private saveCurrentDraft(): void {
+		if (!shouldAutoSaveSqlEditorDraft(this.preferencesService.preferences)) {
+			return;
+		}
+
 		const input = this.currentInput;
 		const sql = this.getAllSql();
 

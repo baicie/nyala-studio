@@ -22,7 +22,8 @@ import {
 	SqlResultState,
 	SqlResultStateKind
 } from '../common/sqlResultModel.js';
-import { SQL_RESULT_MAX_RENDER_ROWS, SQL_RESULT_VIEW_ID } from '../common/sqlResult.js';
+import { SQL_RESULT_VIEW_ID } from '../common/sqlResult.js';
+import { ISqlProductPreferencesService } from '../../sqlProduct/common/sqlProductPreferencesService.js';
 import { ISqlResultService } from '../common/sqlResultService.js';
 import {
 	buildSqlResultGrid,
@@ -34,6 +35,7 @@ import {
 	SqlResultCopyMode,
 	SqlResultGrid
 } from '../common/sqlResultGridModel.js';
+import { getPreferredResultMaxRows } from '../../sqlProduct/common/sqlProductIntegrationModel.js';
 
 export class SqlResultView extends ViewPane {
 	static readonly ID = SQL_RESULT_VIEW_ID;
@@ -67,7 +69,8 @@ export class SqlResultView extends ViewPane {
 		@IOpenerService openerService: IOpenerService,
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
-		@ISqlResultService private readonly sqlResultService: ISqlResultService
+		@ISqlResultService private readonly sqlResultService: ISqlResultService,
+		@ISqlProductPreferencesService private readonly preferencesService: ISqlProductPreferencesService
 	) {
 		super(
 			options,
@@ -152,6 +155,7 @@ export class SqlResultView extends ViewPane {
 		);
 
 		this._register(this.sqlResultService.onDidChangeResult(state => this.renderState(state)));
+		this._register(this.preferencesService.onDidChangePreferences(() => this.renderState(this.sqlResultService.state)));
 		this.renderState(this.sqlResultService.state);
 	}
 
@@ -223,7 +227,7 @@ export class SqlResultView extends ViewPane {
 			return;
 		}
 
-		const grid = buildSqlResultGrid(result, SQL_RESULT_MAX_RENDER_ROWS);
+		const grid = buildSqlResultGrid(result, getPreferredResultMaxRows(this.preferencesService.preferences));
 		this.currentGrid = grid;
 		this.setStatus(getSqlResultGridStatus(result, grid));
 

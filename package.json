@@ -29,7 +29,7 @@
     "test:sql-editor": "node --test --import tsx src/vs/workbench/contrib/sqlEditor/test/sqlEditorModel.test.ts src/vs/workbench/contrib/sqlEditor/test/sqlEditorDraftService.test.ts",
     "test:sql-result": "node --test --import tsx src/vs/workbench/contrib/sqlResult/test/sqlResultModel.test.ts src/vs/workbench/contrib/sqlResult/test/sqlResultGridModel.test.ts",
     "test:sql-history": "node --test --import tsx src/vs/workbench/contrib/sqlHistory/test/sqlQueryHistoryModel.test.ts src/vs/workbench/contrib/sqlHistory/test/sqlQueryHistoryService.test.ts",
-    "test:sql-product": "node --test --import tsx src/vs/workbench/contrib/sqlProduct/test/sqlProductProfile.test.ts src/vs/workbench/contrib/sqlProduct/test/sqlProductBootstrapModel.test.ts src/vs/workbench/contrib/sqlProduct/test/sqlProductPreferences.test.ts src/vs/workbench/contrib/sqlProduct/test/sqlProductPreferencesService.test.ts",
+    "test:sql-product": "node --test --import tsx src/vs/workbench/contrib/sqlProduct/test/sqlProductProfile.test.ts src/vs/workbench/contrib/sqlProduct/test/sqlProductBootstrapModel.test.ts src/vs/workbench/contrib/sqlProduct/test/sqlProductPreferences.test.ts src/vs/workbench/contrib/sqlProduct/test/sqlProductPreferencesService.test.ts src/vs/workbench/contrib/sqlProduct/test/sqlProductIntegrationModel.test.ts",
     "test": "pnpm run test:branding && pnpm run test:rust && pnpm run test:sql-services && pnpm run test:sql-domain && pnpm run test:sql-connections && pnpm run test:sql-editor && pnpm run test:sql-result && pnpm run test:sql-history && pnpm run test:sql-product"
   },
   "dependencies": {

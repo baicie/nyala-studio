@@ -5,24 +5,30 @@
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
+import { ISqlProductPreferencesService } from '../../sqlProduct/common/sqlProductPreferencesService.js';
 import { ISqlEditorDraftService } from '../common/sqlEditorDraftService.js';
 import { SqlEditorInput } from '../common/sqlEditorInput.js';
+import { limitRestoredDrafts } from '../../sqlProduct/common/sqlProductIntegrationModel.js';
 
 export class SqlEditorDraftRestoreContribution extends Disposable implements IWorkbenchContribution {
 	constructor(
 		@ISqlEditorDraftService draftService: ISqlEditorDraftService,
-		@IEditorService editorService: IEditorService
+		@IEditorService editorService: IEditorService,
+		@ISqlProductPreferencesService preferencesService: ISqlProductPreferencesService
 	) {
 		super();
 
-		this.restoreDrafts(draftService, editorService).catch(() => undefined);
+		this.restoreDrafts(draftService, editorService, preferencesService).catch(() => undefined);
 	}
 
 	private async restoreDrafts(
 		draftService: ISqlEditorDraftService,
-		editorService: IEditorService
+		editorService: IEditorService,
+		preferencesService: ISqlProductPreferencesService
 	): Promise<void> {
-		for (const draft of draftService.entries) {
+		const drafts = limitRestoredDrafts(draftService.entries, preferencesService.preferences);
+
+		for (const draft of drafts) {
 			await editorService.openEditor(
 				new SqlEditorInput({
 					id: draft.id,
