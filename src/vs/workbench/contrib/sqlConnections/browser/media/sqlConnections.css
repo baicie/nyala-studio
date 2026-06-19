@@ -237,3 +237,48 @@
 .sql-saved-connection-action.danger:hover {
 	color: var(--vscode-errorForeground);
 }
+
+.sql-connection-node-actions {
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	opacity: 0;
+	transition: opacity 80ms ease-out;
+}
+
+.sql-connection-node:hover .sql-connection-node-actions,
+.sql-connection-node:focus-within .sql-connection-node-actions {
+	opacity: 1;
+}
+
+.sql-connection-node-action {
+	height: 20px;
+	padding: 0 6px;
+	border: 1px solid var(--vscode-button-border);
+	color: var(--vscode-button-secondaryForeground);
+	background: var(--vscode-button-secondaryBackground);
+	cursor: pointer;
+	font-size: 11px;
+	line-height: 18px;
+	border-radius: 2px;
+}
+
+.sql-connection-node-action:hover {
+	background: var(--vscode-button-hoverBackground);
+}
+
+.sql-connection-node-action.danger {
+	color: var(--vscode-errorForeground);
+}
+
+.sql-connection-node-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sql-connection-node-description {
+	flex: 0 0 auto;
+}

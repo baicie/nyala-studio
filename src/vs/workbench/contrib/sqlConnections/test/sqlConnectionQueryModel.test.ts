@@ -3,9 +3,17 @@ import test from 'node:test';
 
 import {
 	createConnectionQueryDraft,
+	createCopyQualifiedNameTextFromTreeNode,
+	createCopyTableNameTextFromTreeNode,
+	createCountDraftFromTreeNode,
+	createInsertDraftFromTreeNode,
+	createSelectDraftFromTreeNode,
 	createSqlEditorDraftFromTreeNode,
 	createTablePreviewDraft,
+	createUpdateDraftFromTreeNode,
 	formatSqliteQualifiedName,
+	isSqlMutableTableNode,
+	isSqlTableLikeNode,
 	quoteSqliteIdentifier,
 	SQL_CONNECTION_TABLE_PREVIEW_LIMIT
 } from '../common/sqlConnectionQueryModel.js';
@@ -251,5 +259,175 @@ test('createTablePreviewDraft supports attached sqlite schema', () => {
 FROM "analytics"."events"
 LIMIT 50;
 `
+	);
+});
+
+test('createSelectDraftFromTreeNode creates SELECT draft', () => {
+	const draft = createSelectDraftFromTreeNode({
+		id: 'table-users',
+		type: SqlConnectionTreeNodeType.Table,
+		label: 'users',
+		connectionId: 'local',
+		schema: 'main',
+		tableName: 'users'
+	});
+
+	assert.equal(
+		draft.initialSql,
+		`SELECT *
+FROM "users"
+LIMIT 100;
+`
+	);
+});
+
+test('createCountDraftFromTreeNode creates COUNT draft', () => {
+	const draft = createCountDraftFromTreeNode({
+		id: 'table-users',
+		type: SqlConnectionTreeNodeType.Table,
+		label: 'users',
+		connectionId: 'local',
+		schema: 'main',
+		tableName: 'users'
+	});
+
+	assert.equal(
+		draft.initialSql,
+		`SELECT COUNT(*) AS "count"
+FROM "users";
+`
+	);
+});
+
+test('createInsertDraftFromTreeNode creates INSERT draft', () => {
+	const draft = createInsertDraftFromTreeNode(
+		{
+			id: 'table-users',
+			type: SqlConnectionTreeNodeType.Table,
+			label: 'users',
+			connectionId: 'local',
+			schema: 'main',
+			tableName: 'users'
+		},
+		{
+			columns: [
+				{
+					name: 'id',
+					dataType: 'INTEGER',
+					ordinal: 0,
+					primaryKey: true,
+					notNull: true,
+					defaultValue: undefined
+				},
+				{
+					name: 'name',
+					dataType: 'TEXT',
+					ordinal: 1,
+					primaryKey: false,
+					notNull: false,
+					defaultValue: undefined
+				}
+			]
+		}
+	);
+
+	assert.equal(
+		draft.initialSql,
+		`INSERT INTO "users" ("id", "name")
+VALUES (:id, :name);
+`
+	);
+});
+
+test('createUpdateDraftFromTreeNode creates UPDATE draft', () => {
+	const draft = createUpdateDraftFromTreeNode(
+		{
+			id: 'table-users',
+			type: SqlConnectionTreeNodeType.Table,
+			label: 'users',
+			connectionId: 'local',
+			schema: 'main',
+			tableName: 'users'
+		},
+		{
+			columns: [
+				{
+					name: 'id',
+					dataType: 'INTEGER',
+					ordinal: 0,
+					primaryKey: true,
+					notNull: true,
+					defaultValue: undefined
+				},
+				{
+					name: 'name',
+					dataType: 'TEXT',
+					ordinal: 1,
+					primaryKey: false,
+					notNull: false,
+					defaultValue: undefined
+				}
+			]
+		}
+	);
+
+	assert.equal(
+		draft.initialSql,
+		`UPDATE "users"
+SET "name" = :name
+WHERE "id" = :id;
+`
+	);
+});
+
+test('copy helpers create table name text', () => {
+	const node = {
+		id: 'table-events',
+		type: SqlConnectionTreeNodeType.Table,
+		label: 'events',
+		connectionId: 'local',
+		schema: 'analytics',
+		tableName: 'events'
+	};
+
+	assert.equal(createCopyTableNameTextFromTreeNode(node), 'events');
+	assert.equal(createCopyQualifiedNameTextFromTreeNode(node), '"analytics"."events"');
+});
+
+test('table like node guards work', () => {
+	assert.equal(
+		isSqlTableLikeNode({
+			id: 'table-users',
+			type: SqlConnectionTreeNodeType.Table,
+			label: 'users'
+		}),
+		true
+	);
+
+	assert.equal(
+		isSqlTableLikeNode({
+			id: 'views',
+			type: SqlConnectionTreeNodeType.Group,
+			label: 'Views'
+		}),
+		false
+	);
+
+	assert.equal(
+		isSqlMutableTableNode({
+			id: 'table-users',
+			type: SqlConnectionTreeNodeType.Table,
+			label: 'users'
+		}),
+		true
+	);
+
+	assert.equal(
+		isSqlMutableTableNode({
+			id: 'view-users',
+			type: SqlConnectionTreeNodeType.View,
+			label: 'users'
+		}),
+		false
 	);
 });

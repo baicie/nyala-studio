@@ -1,3 +1,489 @@
+下面给出 **Phase 7.4：Schema Tree UX Enhancement** 的完整设计与代码。
+
+当前 Connections Tree 只有全局 Refresh、节点上的 `SQL / SELECT / Close` 这些基础动作。
+Phase 7.4 就在这个基础上补齐：
+
+```txt id="xuozit"
+1. Refresh Connection
+2. Refresh Table/View Columns
+3. Copy Table Name
+4. Copy Qualified Name
+5. Generate SELECT
+6. Generate COUNT
+7. Generate INSERT template
+8. Generate UPDATE template
+```
+
+仍然只服务 SQLite，不做多数据库 UI。
+
+---
+
+# Phase 7.4：Schema Tree UX Enhancement
+
+## 文件变更
+
+新增：
+
+```txt id="z2usmc"
+src/vs/workbench/contrib/sqlConnections/common/sqlConnectionTemplateModel.ts
+src/vs/workbench/contrib/sqlConnections/test/sqlConnectionTemplateModel.test.ts
+```
+
+替换：
+
+```txt id="zsdjpm"
+src/vs/workbench/contrib/sqlConnections/common/sqlConnectionQueryModel.ts
+src/vs/workbench/contrib/sqlConnections/browser/sqlConnectionsView.ts
+```
+
+追加修改：
+
+```txt id="tubcr2"
+src/vs/workbench/contrib/sqlConnections/browser/media/sqlConnections.css
+package.json
+```
+
+---
+
+# 1. 新增 `sqlConnectionTemplateModel.ts`
+
+路径：
+
+```txt id="awy5ma"
+src/vs/workbench/contrib/sqlConnections/common/sqlConnectionTemplateModel.ts
+```
+
+```ts id="d6e6xr"
+/*---------------------------------------------------------------------------------------------
+ * SQL Studio Next - SQL connection tree SQL template model.
+ * Phase 7.4 intentionally supports SQLite only through SqlDialect helpers.
+ *--------------------------------------------------------------------------------------------*/
+
+import { SqlColumn } from '../../../services/sql/common/sqlTypes.js';
+import {
+	createTablePreviewSql,
+	formatQualifiedName,
+	quoteSqlIdentifier,
+	SqlDialect,
+	SQL_DEFAULT_TABLE_PREVIEW_LIMIT
+} from '../../../services/sql/common/sqlDialect.js';
+
+export interface SqlTableTemplateTarget {
+	readonly schema?: string;
+	readonly tableName: string;
+	readonly columns?: readonly SqlColumn[];
+	readonly dialect?: SqlDialect;
+}
+
+export interface SqlGeneratedTemplate {
+	readonly title: string;
+	readonly sql: string;
+}
+
+export const SQL_CONNECTION_COUNT_ALIAS = 'count';
+
+export function createSelectTemplate(target: SqlTableTemplateTarget, limit = SQL_DEFAULT_TABLE_PREVIEW_LIMIT): SqlGeneratedTemplate {
+	return {
+		title: 'SELECT',
+		sql: createTablePreviewSql({
+			dialect: target.dialect ?? SqlDialect.Sqlite,
+			schema: target.schema,
+			tableName: target.tableName,
+			limit
+		})
+	};
+}
+
+export function createCountTemplate(target: SqlTableTemplateTarget): SqlGeneratedTemplate {
+	const dialect = target.dialect ?? SqlDialect.Sqlite;
+	const tableName = createQualifiedTableName(target);
+
+	return {
+		title: 'COUNT',
+		sql: `SELECT COUNT(*) AS ${quoteSqlIdentifier(dialect, SQL_CONNECTION_COUNT_ALIAS)}
+FROM ${tableName};
+`
+	};
+}
+
+export function createInsertTemplate(target: SqlTableTemplateTarget): SqlGeneratedTemplate {
+	const dialect = target.dialect ?? SqlDialect.Sqlite;
+	const tableName = createQualifiedTableName(target);
+	const columns = normalizeTemplateColumns(target.columns);
+
+	if (columns.length === 0) {
+		return {
+			title: 'INSERT',
+			sql: `INSERT INTO ${tableName}
+DEFAULT VALUES;
+`
+		};
+	}
+
+	const columnList = columns
+		.map(column => quoteSqlIdentifier(dialect, column.name))
+		.join(', ');
+
+	const valueList = columns
+		.map((column, index) => createSqlParameterName(column.name, index))
+		.join(', ');
+
+	return {
+		title: 'INSERT',
+		sql: `INSERT INTO ${tableName} (${columnList})
+VALUES (${valueList});
+`
+	};
+}
+
+export function createUpdateTemplate(target: SqlTableTemplateTarget): SqlGeneratedTemplate {
+	const dialect = target.dialect ?? SqlDialect.Sqlite;
+	const tableName = createQualifiedTableName(target);
+	const columns = normalizeTemplateColumns(target);
+
+	if (columns.length === 0) {
+		return {
+			title: 'UPDATE',
+			sql: `UPDATE ${tableName}
+SET -- column = value
+WHERE -- condition;
+`
+		};
+	}
+
+	const whereColumn = pickWhereColumn(columns);
+	const setColumns = columns.filter(column => column.name !== whereColumn.name);
+
+	const effectiveSetColumns = setColumns.length > 0 ? setColumns : [whereColumn];
+
+	const setClause = effectiveSetColumns
+		.map((column, index) => {
+			const prefix = index === 0 ? 'SET ' : '    ';
+			return `${prefix}${quoteSqlIdentifier(dialect, column.name)} = ${createSqlParameterName(column.name, index)}`;
+		})
+		.join(',\n');
+
+	return {
+		title: 'UPDATE',
+		sql: `UPDATE ${tableName}
+${setClause}
+WHERE ${quoteSqlIdentifier(dialect, whereColumn.name)} = ${createSqlParameterName(whereColumn.name, effectiveSetColumns.length)};
+`
+	};
+}
+
+export function createCopyTableNameText(target: SqlTableTemplateTarget): string {
+	return normalizeTableName(target.tableName);
+}
+
+export function createCopyQualifiedNameText(target: SqlTableTemplateTarget): string {
+	return createQualifiedTableName(target);
+}
+
+export function createQualifiedTableName(target: SqlTableTemplateTarget): string {
+	return formatQualifiedName(target.dialect ?? SqlDialect.Sqlite, {
+		schema: normalizeOptionalIdentifier(target.schema),
+		name: normalizeTableName(target.tableName)
+	});
+}
+
+export function normalizeTemplateColumns(columns: readonly SqlColumn[] | undefined): SqlColumn[] {
+	if (!columns) {
+		return [];
+	}
+
+	const seen = new Set<string>();
+	const result: SqlColumn[] = [];
+
+	for (const column of [...columns].sort((left, right) => left.ordinal - right.ordinal || left.name.localeCompare(right.name))) {
+		const normalizedName = normalizeOptionalIdentifier(column.name);
+
+		if (!normalizedName || seen.has(normalizedName)) {
+			continue;
+		}
+
+		seen.add(normalizedName);
+		result.push({
+			...column,
+			name: normalizedName
+		});
+	}
+
+	return result;
+}
+
+export function createSqlParameterName(columnName: string, index: number): string {
+	const normalized = normalizeOptionalIdentifier(columnName) ?? `value${index + 1}`;
+	const safe = normalized
+		.replace(/[^A-Za-z0-9_]+/g, '_')
+		.replace(/^([0-9])/, '_$1')
+		.replace(/^_+$/, '');
+
+	if (!safe) {
+		return `:value${index + 1}`;
+	}
+
+	return `:${safe}`;
+}
+
+function pickWhereColumn(columns: readonly SqlColumn[]): SqlColumn {
+	return columns.find(column => column.primaryKey) ?? columns[0];
+}
+
+function normalizeTableName(tableName: string): string {
+	const normalized = normalizeOptionalIdentifier(tableName);
+
+	if (!normalized) {
+		throw new Error('tableName must not be empty');
+	}
+
+	return normalized;
+}
+
+function normalizeOptionalIdentifier(value: string | undefined): string | undefined {
+	const normalized = value?.trim();
+
+	if (!normalized) {
+		return undefined;
+	}
+
+	if (normalized.includes('\0')) {
+		throw new Error('identifier must not contain NUL bytes');
+	}
+
+	return normalized;
+}
+```
+
+---
+
+# 2. 替换 `sqlConnectionQueryModel.ts`
+
+路径：
+
+```txt id="b3d31v"
+src/vs/workbench/contrib/sqlConnections/common/sqlConnectionQueryModel.ts
+```
+
+```ts id="y1cdph"
+/*---------------------------------------------------------------------------------------------
+ * SQL Studio Next - SQL query draft helpers for connection tree nodes.
+ *--------------------------------------------------------------------------------------------*/
+
+import { SqlColumn, SqlTableType } from '../../../services/sql/common/sqlTypes.js';
+import {
+	createTablePreviewSql,
+	formatQualifiedName,
+	quoteSqlIdentifier,
+	SqlDialect,
+	SQL_DEFAULT_TABLE_PREVIEW_LIMIT,
+	SQL_MAX_TABLE_PREVIEW_LIMIT
+} from '../../../services/sql/common/sqlDialect.js';
+import { SqlConnectionTreeNode, SqlConnectionTreeNodeType } from './sqlConnectionTreeModel.js';
+import {
+	createCopyQualifiedNameText,
+	createCopyTableNameText,
+	createCountTemplate,
+	createInsertTemplate,
+	createSelectTemplate,
+	createUpdateTemplate,
+	SqlGeneratedTemplate,
+	SqlTableTemplateTarget
+} from './sqlConnectionTemplateModel.js';
+
+export const SQL_CONNECTION_TABLE_PREVIEW_LIMIT = SQL_DEFAULT_TABLE_PREVIEW_LIMIT;
+
+export interface SqlEditorDraft {
+	readonly connectionId: string;
+	readonly connectionName?: string;
+	readonly initialSql: string;
+}
+
+export interface SqlEditorDraftOptions {
+	readonly connectionName?: string;
+	readonly dialect?: SqlDialect;
+	readonly limit?: number;
+	readonly columns?: readonly SqlColumn[];
+}
+
+export function createSqlEditorDraftFromTreeNode(
+	node: SqlConnectionTreeNode,
+	options: SqlEditorDraftOptions = {}
+): SqlEditorDraft {
+	if (!node.connectionId) {
+		throw new Error('Cannot open SQL query because the tree node has no connection id.');
+	}
+
+	switch (node.type) {
+		case SqlConnectionTreeNodeType.Connection:
+			return createConnectionQueryDraft(node.connectionId, options.connectionName ?? node.label);
+
+		case SqlConnectionTreeNodeType.Table:
+		case SqlConnectionTreeNodeType.View:
+			return createTablePreviewDraft(node, options);
+
+		default:
+			throw new Error(`Cannot open SQL query from node type: ${node.type}`);
+	}
+}
+
+export function createConnectionQueryDraft(connectionId: string, connectionName?: string): SqlEditorDraft {
+	const normalizedConnectionId = normalizeRequiredString(connectionId, 'connectionId');
+	const normalizedConnectionName = normalizeOptionalString(connectionName);
+
+	return {
+		connectionId: normalizedConnectionId,
+		connectionName: normalizedConnectionName,
+		initialSql: `-- SQL Studio Query
+-- Connection: ${normalizedConnectionName ?? normalizedConnectionId}
+
+SELECT 1 AS value;
+`
+	};
+}
+
+export function createTablePreviewDraft(
+	node: Pick<SqlConnectionTreeNode, 'connectionId' | 'schema' | 'tableName' | 'label' | 'type'>,
+	options: SqlEditorDraftOptions = {}
+): SqlEditorDraft {
+	const connectionId = normalizeRequiredString(node.connectionId, 'connectionId');
+	const tableName = normalizeRequiredString(node.tableName ?? node.label, 'tableName');
+
+	return {
+		connectionId,
+		connectionName: normalizeOptionalString(options.connectionName),
+		initialSql: createTablePreviewSql({
+			dialect: options.dialect ?? SqlDialect.Sqlite,
+			schema: normalizeOptionalString(node.schema),
+			tableName,
+			limit: options.limit
+		})
+	};
+}
+
+export function createSelectDraftFromTreeNode(
+	node: SqlConnectionTreeNode,
+	options: SqlEditorDraftOptions = {}
+): SqlEditorDraft {
+	return createTemplateDraft(node, createSelectTemplate(createTemplateTarget(node, options), options.limit));
+}
+
+export function createCountDraftFromTreeNode(
+	node: SqlConnectionTreeNode,
+	options: SqlEditorDraftOptions = {}
+): SqlEditorDraft {
+	return createTemplateDraft(node, createCountTemplate(createTemplateTarget(node, options)));
+}
+
+export function createInsertDraftFromTreeNode(
+	node: SqlConnectionTreeNode,
+	options: SqlEditorDraftOptions = {}
+): SqlEditorDraft {
+	return createTemplateDraft(node, createInsertTemplate(createTemplateTarget(node, options)));
+}
+
+export function createUpdateDraftFromTreeNode(
+	node: SqlConnectionTreeNode,
+	options: SqlEditorDraftOptions = {}
+): SqlEditorDraft {
+	return createTemplateDraft(node, createUpdateTemplate(createTemplateTarget(node, options)));
+}
+
+export function createCopyTableNameTextFromTreeNode(node: SqlConnectionTreeNode): string {
+	return createCopyTableNameText(createTemplateTarget(node));
+}
+
+export function createCopyQualifiedNameTextFromTreeNode(node: SqlConnectionTreeNode): string {
+	return createCopyQualifiedNameText(createTemplateTarget(node));
+}
+
+export function isSqlTableLikeNode(node: SqlConnectionTreeNode): boolean {
+	return node.type === SqlConnectionTreeNodeType.Table || node.type === SqlConnectionTreeNodeType.View;
+}
+
+export function isSqlMutableTableNode(node: SqlConnectionTreeNode): boolean {
+	return node.type === SqlConnectionTreeNodeType.Table;
+}
+
+export function getSqlTableTypeFromNode(node: SqlConnectionTreeNode): SqlTableType {
+	return node.type === SqlConnectionTreeNodeType.View ? SqlTableType.View : SqlTableType.Table;
+}
+
+/**
+ * Backward-compatible export for Phase 4.5 tests/callers.
+ * New code should use quoteSqlIdentifier(SqlDialect.Sqlite, value).
+ */
+export function quoteSqliteIdentifier(value: string): string {
+	return quoteSqlIdentifier(SqlDialect.Sqlite, value);
+}
+
+/**
+ * Backward-compatible export for Phase 4.5 tests/callers.
+ * New code should use formatQualifiedName(SqlDialect.Sqlite, ...).
+ */
+export function formatSqliteQualifiedName(schema: string | undefined, name: string): string {
+	return formatQualifiedName(SqlDialect.Sqlite, {
+		schema,
+		name
+	});
+}
+
+function createTemplateDraft(node: SqlConnectionTreeNode, template: SqlGeneratedTemplate): SqlEditorDraft {
+	const connectionId = normalizeRequiredString(node.connectionId, 'connectionId');
+
+	return {
+		connectionId,
+		connectionName: undefined,
+		initialSql: template.sql
+	};
+}
+
+function createTemplateTarget(node: SqlConnectionTreeNode, options: SqlEditorDraftOptions = {}): SqlTableTemplateTarget {
+	if (!isSqlTableLikeNode(node)) {
+		throw new Error(`Cannot create SQL template from node type: ${node.type}`);
+	}
+
+	return {
+		schema: normalizeOptionalString(node.schema),
+		tableName: normalizeRequiredString(node.tableName ?? node.label, 'tableName'),
+		columns: options.columns,
+		dialect: options.dialect ?? SqlDialect.Sqlite
+	};
+}
+
+function normalizeRequiredString(value: string | undefined, fieldName: string): string {
+	const normalized = normalizeOptionalString(value);
+
+	if (!normalized) {
+		throw new Error(`${fieldName} must not be empty`);
+	}
+
+	if (normalized.includes('\0')) {
+		throw new Error(`${fieldName} must not contain NUL bytes`);
+	}
+
+	return normalized;
+}
+
+function normalizeOptionalString(value: string | undefined): string | undefined {
+	const normalized = value?.trim();
+	return normalized ? normalized : undefined;
+}
+
+export { SQL_MAX_TABLE_PREVIEW_LIMIT };
+```
+
+---
+
+# 3. 替换 `sqlConnectionsView.ts`
+
+路径：
+
+```txt id="amw8bi"
+src/vs/workbench/contrib/sqlConnections/browser/sqlConnectionsView.ts
+```
+
+```ts id="y4kqfd"
 /*---------------------------------------------------------------------------------------------
  * SQL Studio Next - SQL Connections View.
  *--------------------------------------------------------------------------------------------*/
@@ -27,7 +513,8 @@ import {
 	SqlConnectionInput,
 	SqlConnectionKind,
 	SqlSavedConnection,
-	SqlTable
+	SqlTable,
+	SqlTableType
 } from '../../../services/sql/common/sqlTypes.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
 import {
@@ -38,6 +525,7 @@ import {
 } from '../common/sqlConnectionTreeModel.js';
 import {
 	createCopyQualifiedNameTextFromTreeNode,
+	createCopyTableNameTextFromTreeNode,
 	createCountDraftFromTreeNode,
 	createInsertDraftFromTreeNode,
 	createSelectDraftFromTreeNode,
@@ -749,3 +1237,576 @@ async function writeClipboardText(text: string): Promise<void> {
 
 	throw new Error('Clipboard API is not available.');
 }
+```
+
+---
+
+# 4. CSS 追加
+
+路径：
+
+```txt id="orp7ez"
+src/vs/workbench/contrib/sqlConnections/browser/media/sqlConnections.css
+```
+
+追加或合并下面样式：
+
+```css id="h9j2mj"
+.sql-connection-node-actions {
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	opacity: 0;
+	transition: opacity 80ms ease-out;
+}
+
+.sql-connection-node:hover .sql-connection-node-actions,
+.sql-connection-node:focus-within .sql-connection-node-actions {
+	opacity: 1;
+}
+
+.sql-connection-node-action {
+	height: 20px;
+	padding: 0 6px;
+	border: 1px solid var(--vscode-button-border);
+	color: var(--vscode-button-secondaryForeground);
+	background: var(--vscode-button-secondaryBackground);
+	cursor: pointer;
+	font-size: 11px;
+	line-height: 18px;
+	border-radius: 2px;
+}
+
+.sql-connection-node-action:hover {
+	background: var(--vscode-button-hoverBackground);
+}
+
+.sql-connection-node-action.danger {
+	color: var(--vscode-errorForeground);
+}
+
+.sql-connection-node-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sql-connection-node-description {
+	flex: 0 0 auto;
+}
+```
+
+---
+
+# 5. 新增 `sqlConnectionTemplateModel.test.ts`
+
+路径：
+
+```txt id="0upe23"
+src/vs/workbench/contrib/sqlConnections/test/sqlConnectionTemplateModel.test.ts
+```
+
+```ts id="ry2g3j"
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { SqlColumn } from '../../../services/sql/common/sqlTypes.js';
+import {
+	createCopyQualifiedNameText,
+	createCopyTableNameText,
+	createCountTemplate,
+	createInsertTemplate,
+	createSelectTemplate,
+	createSqlParameterName,
+	createUpdateTemplate,
+	normalizeTemplateColumns
+} from '../common/sqlConnectionTemplateModel.js';
+
+const columns: SqlColumn[] = [
+	{
+		name: 'id',
+		dataType: 'INTEGER',
+		ordinal: 0,
+		primaryKey: true,
+		notNull: true,
+		defaultValue: undefined
+	},
+	{
+		name: 'name',
+		dataType: 'TEXT',
+		ordinal: 1,
+		primaryKey: false,
+		notNull: false,
+		defaultValue: undefined
+	},
+	{
+		name: 'created_at',
+		dataType: 'TEXT',
+		ordinal: 2,
+		primaryKey: false,
+		notNull: false,
+		defaultValue: undefined
+	}
+];
+
+test('createSelectTemplate creates SQLite preview SQL', () => {
+	assert.equal(
+		createSelectTemplate({
+			schema: 'main',
+			tableName: 'users'
+		}).sql,
+		`SELECT *
+FROM "users"
+LIMIT 100;
+`
+	);
+});
+
+test('createSelectTemplate supports custom limit', () => {
+	assert.equal(
+		createSelectTemplate(
+			{
+				schema: 'analytics',
+				tableName: 'events'
+			},
+			50
+		).sql,
+		`SELECT *
+FROM "analytics"."events"
+LIMIT 50;
+`
+	);
+});
+
+test('createCountTemplate creates count SQL', () => {
+	assert.equal(
+		createCountTemplate({
+			schema: 'main',
+			tableName: 'users'
+		}).sql,
+		`SELECT COUNT(*) AS "count"
+FROM "users";
+`
+	);
+});
+
+test('createInsertTemplate creates insert template with columns', () => {
+	assert.equal(
+		createInsertTemplate({
+			schema: 'main',
+			tableName: 'users',
+			columns
+		}).sql,
+		`INSERT INTO "users" ("id", "name", "created_at")
+VALUES (:id, :name, :created_at);
+`
+	);
+});
+
+test('createInsertTemplate creates default values template without columns', () => {
+	assert.equal(
+		createInsertTemplate({
+			schema: 'main',
+			tableName: 'users',
+			columns: []
+		}).sql,
+		`INSERT INTO "users"
+DEFAULT VALUES;
+`
+	);
+});
+
+test('createUpdateTemplate uses primary key in WHERE clause', () => {
+	assert.equal(
+		createUpdateTemplate({
+			schema: 'main',
+			tableName: 'users',
+			columns
+		}).sql,
+		`UPDATE "users"
+SET "name" = :name,
+    "created_at" = :created_at
+WHERE "id" = :id;
+`
+	);
+});
+
+test('createUpdateTemplate falls back to first column when no primary key exists', () => {
+	const noPrimaryKeyColumns = columns.map(column => ({
+		...column,
+		primaryKey: false
+	}));
+
+	assert.equal(
+		createUpdateTemplate({
+			schema: 'main',
+			tableName: 'users',
+			columns: noPrimaryKeyColumns
+		}).sql,
+		`UPDATE "users"
+SET "name" = :name,
+    "created_at" = :created_at
+WHERE "id" = :id;
+`
+	);
+});
+
+test('createUpdateTemplate creates placeholder when no columns exist', () => {
+	assert.equal(
+		createUpdateTemplate({
+			schema: 'main',
+			tableName: 'users',
+			columns: []
+		}).sql,
+		`UPDATE "users"
+SET -- column = value
+WHERE -- condition;
+`
+	);
+});
+
+test('createCopyTableNameText returns raw table name', () => {
+	assert.equal(
+		createCopyTableNameText({
+			schema: 'main',
+			tableName: ' users '
+		}),
+		'users'
+	);
+});
+
+test('createCopyQualifiedNameText returns quoted qualified name', () => {
+	assert.equal(
+		createCopyQualifiedNameText({
+			schema: 'analytics',
+			tableName: 'events'
+		}),
+		'"analytics"."events"'
+	);
+});
+
+test('normalizeTemplateColumns sorts trims and removes duplicates', () => {
+	const result = normalizeTemplateColumns([
+		{
+			name: ' name ',
+			dataType: 'TEXT',
+			ordinal: 2,
+			primaryKey: false,
+			notNull: false,
+			defaultValue: undefined
+		},
+		{
+			name: 'id',
+			dataType: 'INTEGER',
+			ordinal: 1,
+			primaryKey: true,
+			notNull: true,
+			defaultValue: undefined
+		},
+		{
+			name: 'id',
+			dataType: 'INTEGER',
+			ordinal: 3,
+			primaryKey: false,
+			notNull: false,
+			defaultValue: undefined
+		}
+	]);
+
+	assert.deepEqual(
+		result.map(column => column.name),
+		['id', 'name']
+	);
+});
+
+test('createSqlParameterName sanitizes invalid characters', () => {
+	assert.equal(createSqlParameterName('created at', 0), ':created_at');
+	assert.equal(createSqlParameterName('123 name', 0), ':_123_name');
+	assert.equal(createSqlParameterName('---', 1), ':value2');
+});
+
+test('template helpers reject empty table name', () => {
+	assert.throws(
+		() =>
+			createCopyQualifiedNameText({
+				schema: 'main',
+				tableName: '   '
+			}),
+		/tableName must not be empty/
+	);
+});
+```
+
+---
+
+# 6. 修改 `sqlConnectionQueryModel.test.ts`
+
+路径：
+
+```txt id="8n8zm9"
+src/vs/workbench/contrib/sqlConnections/test/sqlConnectionQueryModel.test.ts
+```
+
+追加以下测试：
+
+```ts id="7r2tjq"
+import {
+	createCopyQualifiedNameTextFromTreeNode,
+	createCopyTableNameTextFromTreeNode,
+	createCountDraftFromTreeNode,
+	createInsertDraftFromTreeNode,
+	createSelectDraftFromTreeNode,
+	createUpdateDraftFromTreeNode,
+	isSqlMutableTableNode,
+	isSqlTableLikeNode
+} from '../common/sqlConnectionQueryModel.js';
+
+test('createSelectDraftFromTreeNode creates SELECT draft', () => {
+	const draft = createSelectDraftFromTreeNode({
+		id: 'table-users',
+		type: SqlConnectionTreeNodeType.Table,
+		label: 'users',
+		connectionId: 'local',
+		schema: 'main',
+		tableName: 'users'
+	});
+
+	assert.equal(
+		draft.initialSql,
+		`SELECT *
+FROM "users"
+LIMIT 100;
+`
+	);
+});
+
+test('createCountDraftFromTreeNode creates COUNT draft', () => {
+	const draft = createCountDraftFromTreeNode({
+		id: 'table-users',
+		type: SqlConnectionTreeNodeType.Table,
+		label: 'users',
+		connectionId: 'local',
+		schema: 'main',
+		tableName: 'users'
+	});
+
+	assert.equal(
+		draft.initialSql,
+		`SELECT COUNT(*) AS "count"
+FROM "users";
+`
+	);
+});
+
+test('createInsertDraftFromTreeNode creates INSERT draft', () => {
+	const draft = createInsertDraftFromTreeNode(
+		{
+			id: 'table-users',
+			type: SqlConnectionTreeNodeType.Table,
+			label: 'users',
+			connectionId: 'local',
+			schema: 'main',
+			tableName: 'users'
+		},
+		{
+			columns: [
+				{
+					name: 'id',
+					dataType: 'INTEGER',
+					ordinal: 0,
+					primaryKey: true,
+					notNull: true,
+					defaultValue: undefined
+				},
+				{
+					name: 'name',
+					dataType: 'TEXT',
+					ordinal: 1,
+					primaryKey: false,
+					notNull: false,
+					defaultValue: undefined
+				}
+			]
+		}
+	);
+
+	assert.equal(
+		draft.initialSql,
+		`INSERT INTO "users" ("id", "name")
+VALUES (:id, :name);
+`
+	);
+});
+
+test('createUpdateDraftFromTreeNode creates UPDATE draft', () => {
+	const draft = createUpdateDraftFromTreeNode(
+		{
+			id: 'table-users',
+			type: SqlConnectionTreeNodeType.Table,
+			label: 'users',
+			connectionId: 'local',
+			schema: 'main',
+			tableName: 'users'
+		},
+		{
+			columns: [
+				{
+					name: 'id',
+					dataType: 'INTEGER',
+					ordinal: 0,
+					primaryKey: true,
+					notNull: true,
+					defaultValue: undefined
+				},
+				{
+					name: 'name',
+					dataType: 'TEXT',
+					ordinal: 1,
+					primaryKey: false,
+					notNull: false,
+					defaultValue: undefined
+				}
+			]
+		}
+	);
+
+	assert.equal(
+		draft.initialSql,
+		`UPDATE "users"
+SET "name" = :name
+WHERE "id" = :id;
+`
+	);
+});
+
+test('copy helpers create table name text', () => {
+	const node = {
+		id: 'table-events',
+		type: SqlConnectionTreeNodeType.Table,
+		label: 'events',
+		connectionId: 'local',
+		schema: 'analytics',
+		tableName: 'events'
+	};
+
+	assert.equal(createCopyTableNameTextFromTreeNode(node), 'events');
+	assert.equal(createCopyQualifiedNameTextFromTreeNode(node), '"analytics"."events"');
+});
+
+test('table like node guards work', () => {
+	assert.equal(
+		isSqlTableLikeNode({
+			id: 'table-users',
+			type: SqlConnectionTreeNodeType.Table,
+			label: 'users'
+		}),
+		true
+	);
+
+	assert.equal(
+		isSqlTableLikeNode({
+			id: 'views',
+			type: SqlConnectionTreeNodeType.Group,
+			label: 'Views'
+		}),
+		false
+	);
+
+	assert.equal(
+		isSqlMutableTableNode({
+			id: 'table-users',
+			type: SqlConnectionTreeNodeType.Table,
+			label: 'users'
+		}),
+		true
+	);
+
+	assert.equal(
+		isSqlMutableTableNode({
+			id: 'view-users',
+			type: SqlConnectionTreeNodeType.View,
+			label: 'users'
+		}),
+		false
+	);
+});
+```
+
+---
+
+# 7. 修改 `package.json`
+
+当前 `test:sql-connections` 只跑 TreeModel 和 QueryModel。
+改为：
+
+```json id="ak7p4c"
+{
+  "scripts": {
+    "test:sql-connections": "node --test --import tsx src/vs/workbench/contrib/sqlConnections/test/sqlConnectionTreeModel.test.ts src/vs/workbench/contrib/sqlConnections/test/sqlConnectionQueryModel.test.ts src/vs/workbench/contrib/sqlConnections/test/sqlConnectionTemplateModel.test.ts"
+  }
+}
+```
+
+总 `test` 不用改，因为已经包含 `test:sql-connections`。
+
+---
+
+# 8. 验收命令
+
+```bash id="jlxqag"
+pnpm run test:sql-connections
+pnpm run test
+pnpm run lint
+pnpm run build
+```
+
+---
+
+# 9. 手动验收
+
+```txt id="vq2tky"
+1. 启动应用
+2. 添加 SQLite 连接
+3. 展开 Tables
+4. 表节点能看到：
+   SELECT / COUNT / INSERT / UPDATE / Copy / Refresh
+5. 视图节点能看到：
+   SELECT / COUNT / Copy / Refresh
+6. 点击 SELECT：
+   打开 SQL Editor，生成 SELECT * FROM "table" LIMIT 100;
+7. 点击 COUNT：
+   打开 SQL Editor，生成 SELECT COUNT(*) AS "count" FROM "table";
+8. 点击 INSERT：
+   根据列生成 INSERT INTO 模板
+9. 点击 UPDATE：
+   根据主键生成 WHERE 条件
+10. 点击 Copy：
+    复制 qualified table name
+11. 点击 Refresh：
+    只刷新该表 columns
+12. 点击连接节点 Refresh：
+    只刷新该连接 metadata
+```
+
+---
+
+# Phase 7.4 完成标准
+
+```txt id="sa0cg0"
+Schema Tree 支持局部刷新
+表/视图支持 Copy qualified name
+表/视图支持 SELECT / COUNT 生成
+表支持 INSERT / UPDATE 模板生成
+模板生成逻辑有完整单元测试
+不引入多数据库 UI
+不引入 AI
+不引入插件
+```
+
+下一阶段：
+
+```txt id="d2yj3i"
+Phase 8：产品收口 / Workbench 裁剪
+```

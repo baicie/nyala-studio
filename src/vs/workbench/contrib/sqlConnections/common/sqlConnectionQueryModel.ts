@@ -2,6 +2,7 @@
  * SQL Studio Next - SQL query draft helpers for connection tree nodes.
  *--------------------------------------------------------------------------------------------*/
 
+import { SqlColumn, SqlTableType } from '../../../services/sql/common/sqlTypes.js';
 import {
 	createTablePreviewSql,
 	formatQualifiedName,
@@ -11,19 +12,30 @@ import {
 	SQL_MAX_TABLE_PREVIEW_LIMIT
 } from '../../../services/sql/common/sqlDialect.js';
 import { SqlConnectionTreeNode, SqlConnectionTreeNodeType } from './sqlConnectionTreeModel.js';
+import {
+	createCopyQualifiedNameText,
+	createCopyTableNameText,
+	createCountTemplate,
+	createInsertTemplate,
+	createSelectTemplate,
+	createUpdateTemplate,
+	SqlGeneratedTemplate,
+	SqlTableTemplateTarget
+} from './sqlConnectionTemplateModel.js';
 
 export const SQL_CONNECTION_TABLE_PREVIEW_LIMIT = SQL_DEFAULT_TABLE_PREVIEW_LIMIT;
 
 export interface SqlEditorDraft {
-	connectionId: string;
-	connectionName?: string;
-	initialSql: string;
+	readonly connectionId: string;
+	readonly connectionName?: string;
+	readonly initialSql: string;
 }
 
 export interface SqlEditorDraftOptions {
-	connectionName?: string;
-	dialect?: SqlDialect;
-	limit?: number;
+	readonly connectionName?: string;
+	readonly dialect?: SqlDialect;
+	readonly limit?: number;
+	readonly columns?: readonly SqlColumn[];
 }
 
 export function createSqlEditorDraftFromTreeNode(
@@ -49,12 +61,13 @@ export function createSqlEditorDraftFromTreeNode(
 
 export function createConnectionQueryDraft(connectionId: string, connectionName?: string): SqlEditorDraft {
 	const normalizedConnectionId = normalizeRequiredString(connectionId, 'connectionId');
+	const normalizedConnectionName = normalizeOptionalString(connectionName);
 
 	return {
 		connectionId: normalizedConnectionId,
-		connectionName: normalizeOptionalString(connectionName),
+		connectionName: normalizedConnectionName,
 		initialSql: `-- SQL Studio Query
--- Connection: ${normalizeOptionalString(connectionName) ?? normalizedConnectionId}
+-- Connection: ${normalizedConnectionName ?? normalizedConnectionId}
 
 SELECT 1 AS value;
 `
@@ -80,6 +93,62 @@ export function createTablePreviewDraft(
 	};
 }
 
+export function createSelectDraftFromTreeNode(
+	node: SqlConnectionTreeNode,
+	options: SqlEditorDraftOptions = {}
+): SqlEditorDraft {
+	const target = createTemplateTarget(node, options);
+	const template = createSelectTemplate(target, options.limit);
+	return createTemplateDraft(node, template);
+}
+
+export function createCountDraftFromTreeNode(
+	node: SqlConnectionTreeNode,
+	options: SqlEditorDraftOptions = {}
+): SqlEditorDraft {
+	const target = createTemplateTarget(node, options);
+	const template = createCountTemplate(target);
+	return createTemplateDraft(node, template);
+}
+
+export function createInsertDraftFromTreeNode(
+	node: SqlConnectionTreeNode,
+	options: SqlEditorDraftOptions = {}
+): SqlEditorDraft {
+	const target = createTemplateTarget(node, options);
+	const template = createInsertTemplate(target);
+	return createTemplateDraft(node, template);
+}
+
+export function createUpdateDraftFromTreeNode(
+	node: SqlConnectionTreeNode,
+	options: SqlEditorDraftOptions = {}
+): SqlEditorDraft {
+	const target = createTemplateTarget(node, options);
+	const template = createUpdateTemplate(target);
+	return createTemplateDraft(node, template);
+}
+
+export function createCopyTableNameTextFromTreeNode(node: SqlConnectionTreeNode): string {
+	return createCopyTableNameText(createTemplateTarget(node));
+}
+
+export function createCopyQualifiedNameTextFromTreeNode(node: SqlConnectionTreeNode): string {
+	return createCopyQualifiedNameText(createTemplateTarget(node));
+}
+
+export function isSqlTableLikeNode(node: SqlConnectionTreeNode): boolean {
+	return node.type === SqlConnectionTreeNodeType.Table || node.type === SqlConnectionTreeNodeType.View;
+}
+
+export function isSqlMutableTableNode(node: SqlConnectionTreeNode): boolean {
+	return node.type === SqlConnectionTreeNodeType.Table;
+}
+
+export function getSqlTableTypeFromNode(node: SqlConnectionTreeNode): SqlTableType {
+	return node.type === SqlConnectionTreeNodeType.View ? SqlTableType.View : SqlTableType.Table;
+}
+
 /**
  * Backward-compatible export for Phase 4.5 tests/callers.
  * New code should use quoteSqlIdentifier(SqlDialect.Sqlite, value).
@@ -97,6 +166,29 @@ export function formatSqliteQualifiedName(schema: string | undefined, name: stri
 		schema,
 		name
 	});
+}
+
+function createTemplateDraft(node: SqlConnectionTreeNode, template: SqlGeneratedTemplate): SqlEditorDraft {
+	const connectionId = normalizeRequiredString(node.connectionId, 'connectionId');
+
+	return {
+		connectionId,
+		connectionName: undefined,
+		initialSql: template.sql
+	};
+}
+
+function createTemplateTarget(node: SqlConnectionTreeNode, options: SqlEditorDraftOptions = {}): SqlTableTemplateTarget {
+	if (!isSqlTableLikeNode(node)) {
+		throw new Error(`Cannot create SQL template from node type: ${node.type}`);
+	}
+
+	return {
+		schema: normalizeOptionalString(node.schema),
+		tableName: normalizeRequiredString(node.tableName ?? node.label, 'tableName'),
+		columns: options.columns,
+		dialect: options.dialect ?? SqlDialect.Sqlite
+	};
 }
 
 function normalizeRequiredString(value: string | undefined, fieldName: string): string {
