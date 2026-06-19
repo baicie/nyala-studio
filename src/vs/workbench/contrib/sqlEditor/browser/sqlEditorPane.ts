@@ -26,7 +26,6 @@ import { SqlEditorInput } from '../common/sqlEditorInput.js';
 import { SQL_EDITOR_PANE_ID } from '../common/sqlEditor.js';
 import {
 	createExecutePayload,
-	createFormatterPlaceholderResult,
 	findSqlStatementAtOffset,
 	getSqlEditorStatusLabel,
 	SqlEditorExecutionSource,
@@ -36,6 +35,9 @@ import { ISqlEditorEventService } from '../common/sqlEditorEvents.js';
 import { ISqlEditorDraftService } from '../common/sqlEditorDraftService.js';
 import { ISqlProductPreferencesService } from '../../sqlProduct/common/sqlProductPreferencesService.js';
 import { shouldAutoSaveSqlEditorDraft } from '../../sqlProduct/common/sqlProductIntegrationModel.js';
+import { formatSql } from '../../sqlAdvanced/common/sqlAdvancedFormatter.js';
+import { createExplainSql } from '../../sqlAdvanced/common/sqlAdvancedExplain.js';
+import { getDialectForConnectionKind } from '../../../services/sql/common/sqlDialect.js';
 
 export class SqlEditorPane extends EditorPane {
 	static readonly ID = SQL_EDITOR_PANE_ID;
@@ -104,7 +106,7 @@ export class SqlEditorPane extends EditorPane {
 
 		this.formatButton = append(
 			this.toolbar,
-			$('button.sql-editor-button', { type: 'button', title: 'Format SQL placeholder' }, 'Format')
+			$('button.sql-editor-button', { type: 'button', title: 'Format SQL' }, 'Format')
 		) as HTMLButtonElement;
 
 		this.statusElement = append(this.toolbar, $('span.sql-editor-status'));
@@ -306,7 +308,10 @@ export class SqlEditorPane extends EditorPane {
 			return;
 		}
 
-		const formatted = createFormatterPlaceholderResult(model.getValue());
+		const connection = this.getSelectedConnection();
+		const formatted = formatSql(model.getValue(), {
+			dialect: connection ? getDialectForConnectionKind(connection.kind) : undefined
+		});
 
 		if (formatted !== model.getValue()) {
 			model.setValue(formatted);
@@ -314,8 +319,73 @@ export class SqlEditorPane extends EditorPane {
 			this.saveCurrentDraft();
 		}
 
-		this.status('SQL formatter is reserved for a future phase.');
-		this.notificationService.info('SQL formatter is reserved for a future phase.');
+		this.status('SQL formatted.');
+		this.notificationService.info('SQL formatted.');
+	}
+
+	async explainPlan(): Promise<void> {
+		const input = this.currentInput;
+		const connection = this.getSelectedConnection();
+
+		if (!input || !connection) {
+			this.notificationService.info('Select a SQL connection before explaining SQL.');
+			return;
+		}
+
+		const sql = this.getCurrentStatementSql();
+		const explainSql = createExplainSql({
+			dialect: getDialectForConnectionKind(connection.kind),
+			sql
+		});
+
+		const startedAt = Date.now();
+
+		try {
+			this.status('Running explain plan...');
+			this.setRunning(true);
+
+			this.sqlEditorEventService.fireQueryStarted({
+				editorId: input.id,
+				connectionId: connection.id,
+				sql: explainSql,
+				startedAt
+			});
+
+			const result = await this.sqlQueryService.executeQuery({
+				connectionId: connection.id,
+				sql: explainSql
+			});
+
+			const completedAt = Date.now();
+
+			this.sqlEditorEventService.fireQueryCompleted({
+				editorId: input.id,
+				connectionId: connection.id,
+				sql: explainSql,
+				startedAt,
+				completedAt,
+				result
+			});
+
+			this.status(`Explain completed: ${result.rowCount} row(s).`);
+			this.notificationService.info(`Explain completed: ${result.rowCount} row(s).`);
+		} catch (error) {
+			const completedAt = Date.now();
+			const normalizedError = error instanceof Error ? error : new Error(String(error));
+
+			this.sqlEditorEventService.fireQueryFailed({
+				editorId: input.id,
+				connectionId: connection.id,
+				sql: explainSql,
+				startedAt,
+				completedAt,
+				error: normalizedError
+			});
+
+			this.showError(normalizedError);
+		} finally {
+			this.setRunning(false);
+		}
 	}
 
 	private async refreshConnections(input: SqlEditorInput): Promise<void> {
@@ -363,6 +433,11 @@ export class SqlEditorPane extends EditorPane {
 	private getSelectedConnectionName(): string | undefined {
 		const connectionId = this.getSelectedConnectionId();
 		return this.currentConnections.find(connection => connection.id === connectionId)?.name;
+	}
+
+	private getSelectedConnection(): SqlConnection | undefined {
+		const connectionId = this.getSelectedConnectionId();
+		return this.currentConnections.find(connection => connection.id === connectionId);
 	}
 
 	private getAllSql(): string {
