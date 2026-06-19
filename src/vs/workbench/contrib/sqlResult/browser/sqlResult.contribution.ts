@@ -3,6 +3,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import './media/sqlResult.css';
+import '../../sqlHistory/browser/media/sqlQueryHistory.css';
 
 import { localize, localize2 } from '../../../../nls.js';
 import { Codicon } from '../../../../base/common/codicons.js';
@@ -43,8 +44,12 @@ import {
 import { ISqlResultService, SqlResultService } from '../common/sqlResultService.js';
 import { SqlResultBridgeContribution } from './sqlResultBridge.js';
 import { SqlResultView } from './sqlResultView.js';
+import { ISqlQueryHistoryService, SqlQueryHistoryService } from '../../sqlHistory/common/sqlQueryHistoryService.js';
+import { SqlQueryHistoryBridgeContribution } from '../../sqlHistory/browser/sqlQueryHistoryBridge.js';
+import { SqlQueryHistoryView } from '../../sqlHistory/browser/sqlQueryHistoryView.js';
 
 registerSingleton(ISqlResultService, SqlResultService, InstantiationType.Delayed);
+registerSingleton(ISqlQueryHistoryService, SqlQueryHistoryService, InstantiationType.Delayed);
 
 const sqlResultIcon = registerIcon(
 	'sql-result-view-icon',
@@ -123,6 +128,15 @@ viewsRegistry.registerViews(
 			order: 0,
 			canMoveView: false,
 			canToggleVisibility: false
+		},
+		{
+			id: SqlQueryHistoryView.ID,
+			name: localize2('sqlQueryHistoryView', 'Query History'),
+			containerIcon: sqlResultIcon,
+			ctorDescriptor: new SyncDescriptor(SqlQueryHistoryView),
+			order: 1,
+			canMoveView: false,
+			canToggleVisibility: true
 		}
 	],
 	SQL_RESULT_VIEW_CONTAINER
@@ -131,5 +145,11 @@ viewsRegistry.registerViews(
 Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).registerWorkbenchContribution2(
 	'workbench.contrib.sqlResultBridge',
 	SqlResultBridgeContribution,
+	WorkbenchPhase.AfterRestored
+);
+
+Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).registerWorkbenchContribution2(
+	'workbench.contrib.sqlQueryHistoryBridge',
+	SqlQueryHistoryBridgeContribution,
 	WorkbenchPhase.AfterRestored
 );

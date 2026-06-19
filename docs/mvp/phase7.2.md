@@ -1,43 +1,33 @@
-下面是**重新拉回路线后的 Phase 7**。这版不做多数据库、不做 Driver Form、不做 AI、不做插件，而是专注把 Phase 6 的简单 Result Panel 提升成“能日常使用”的结果表格体验。
+下面是 **Phase 7.2：Query History & Recent SQL** 的详细设计与完整代码。
 
-当前 Phase 6 的结果模型还是 `columns: string[] / rows: string[][]`，只有基础 CSV 导出能力。 当前 `SqlResultView` 也只有 `Copy CSV / Clear` 两个按钮，表格单元格只是普通 `td`。  所以 Phase 7 的目标就是增强这里。
+这版基于当前已有事件链路实现：`SqlEditorPane.executeQuery()` 已经在执行开始、成功、失败时发出 `SqlEditorEventService` 事件；Result Panel 也是通过 `SqlResultBridgeContribution` 订阅这些事件更新结果。
+所以 Phase 7.2 不需要改 SQL 执行链路，只需要新增 Query History Service + Bridge + View。
 
 ---
 
-# Phase 7：Result Grid & Query UX Migration
+# Phase 7.2：Query History & Recent SQL
 
 ## 目标
 
-```txt
-把 Phase 6 的简单 SQL Results Panel
-升级成一个可用的 SQL 查询结果表格体验
+```txt id="4t67ka"
+记录最近执行过的 SQL
+支持查看历史
+支持 Open in Editor
+支持 Rerun
+支持 Remove
+支持 Clear History
+本地持久化
 ```
 
-本阶段做：
+## 本阶段不做
 
-```txt
-1. 新增 SqlResultGridModel
-2. 保留 raw cell kind，不再只转 string
-3. 支持 cell / row / all copy
-4. 支持 CSV / TSV 输出
-5. 支持选中单元格
-6. 支持 NULL / blob / number / text 样式区分
-7. 支持 Result status bar
-8. 支持 copied message
-9. 继续限制 1000 行，不做虚拟滚动
-10. 完整单元测试
-```
-
-本阶段不做：
-
-```txt
-1. 不接 AG Grid
-2. 不做虚拟滚动
-3. 不做编辑单元格
-4. 不做分页查询
-5. 不做多结果集
-6. 不做 MySQL/Postgres
-7. 不做 AI
+```txt id="ua56lg"
+不做云同步
+不做复杂搜索
+不做 AI 总结
+不做收藏夹
+不做多数据库
+不做 SQL 格式化
 ```
 
 ---
@@ -46,409 +36,531 @@
 
 新增：
 
-```txt
-src/vs/workbench/contrib/sqlResult/common/sqlResultGridModel.ts
-src/vs/workbench/contrib/sqlResult/test/sqlResultGridModel.test.ts
+```txt id="t23ahh"
+src/vs/workbench/contrib/sqlHistory/common/sqlQueryHistory.ts
+src/vs/workbench/contrib/sqlHistory/common/sqlQueryHistoryModel.ts
+src/vs/workbench/contrib/sqlHistory/common/sqlQueryHistoryService.ts
+src/vs/workbench/contrib/sqlHistory/browser/sqlQueryHistoryBridge.ts
+src/vs/workbench/contrib/sqlHistory/browser/sqlQueryHistoryView.ts
+src/vs/workbench/contrib/sqlHistory/browser/media/sqlQueryHistory.css
+src/vs/workbench/contrib/sqlHistory/test/sqlQueryHistoryModel.test.ts
+src/vs/workbench/contrib/sqlHistory/test/sqlQueryHistoryService.test.ts
 ```
 
 修改：
 
-```txt
-src/vs/workbench/contrib/sqlResult/browser/sqlResultView.ts
-src/vs/workbench/contrib/sqlResult/browser/media/sqlResult.css
+```txt id="yv29gh"
+src/vs/workbench/contrib/sqlResult/browser/sqlResult.contribution.ts
 package.json
 ```
 
+设计上把 History View 放到现有 SQL Results Panel 里，和 Results View 同一个 Panel Container。当前 SQL Results contribution 已经注册了 `SQL_RESULT_VIEW_CONTAINER` 和 Results view，可以在这里继续注册 History view。
+
 ---
 
-# 1. 新增 `src/vs/workbench/contrib/sqlResult/common/sqlResultGridModel.ts`
+# 1. 新增 `sqlQueryHistory.ts`
 
-```ts
+路径：
+
+```txt id="p28hzf"
+src/vs/workbench/contrib/sqlHistory/common/sqlQueryHistory.ts
+```
+
+```ts id="8guet6"
 /*---------------------------------------------------------------------------------------------
- * SQL Studio Next - SQL Result Grid Model.
+ * SQL Studio Next - SQL Query History constants.
+ *--------------------------------------------------------------------------------------------*/
+
+export const SQL_QUERY_HISTORY_VIEW_ID = 'sqlStudio.queryHistory';
+export const SQL_QUERY_HISTORY_STORAGE_KEY = 'workbench.sqlStudio.queryHistory.entries';
+
+export const SQL_QUERY_HISTORY_MAX_ENTRIES = 100;
+export const SQL_QUERY_HISTORY_SQL_PREVIEW_LENGTH = 160;
+```
+
+---
+
+# 2. 新增 `sqlQueryHistoryModel.ts`
+
+路径：
+
+```txt id="ez8my7"
+src/vs/workbench/contrib/sqlHistory/common/sqlQueryHistoryModel.ts
+```
+
+```ts id="37r13y"
+/*---------------------------------------------------------------------------------------------
+ * SQL Studio Next - SQL Query History model.
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	SqlCellKind,
-	SqlCellValue,
-	SqlQueryResult,
-	SqlResultColumn
-} from '../../../services/sql/common/sqlTypes.js';
-import { SQL_RESULT_MAX_RENDER_ROWS } from './sqlResult.js';
+	SqlEditorQueryCompletedEvent,
+	SqlEditorQueryFailedEvent
+} from '../../sqlEditor/common/sqlEditorEvents.js';
+import {
+	SQL_QUERY_HISTORY_MAX_ENTRIES,
+	SQL_QUERY_HISTORY_SQL_PREVIEW_LENGTH
+} from './sqlQueryHistory.js';
 
-export const SQL_RESULT_DEFAULT_COLUMN_WIDTH = 160;
-export const SQL_RESULT_MIN_COLUMN_WIDTH = 80;
-export const SQL_RESULT_MAX_COLUMN_WIDTH = 480;
+export const enum SqlQueryHistoryStatus {
+	Success = 'success',
+	Error = 'error'
+}
 
-export interface SqlResultGridColumn {
+export interface SqlQueryHistoryEntry {
 	readonly id: string;
-	readonly name: string;
-	readonly ordinal: number;
-	readonly width: number;
+	readonly editorId: string;
+	readonly connectionId: string;
+	readonly sql: string;
+	readonly sqlPreview: string;
+	readonly status: SqlQueryHistoryStatus;
+	readonly startedAt: number;
+	readonly completedAt: number;
+	readonly durationMs: number;
+	readonly rowCount?: number;
+	readonly affectedRows?: number;
+	readonly elapsedMs?: number;
+	readonly errorMessage?: string;
 }
 
-export interface SqlResultGridCell {
-	readonly rowIndex: number;
-	readonly columnIndex: number;
-	readonly kind: SqlCellKind;
-	readonly value: SqlCellValue['value'];
-	readonly text: string;
-	readonly className: string;
-	readonly isNull: boolean;
-	readonly isBlob: boolean;
+export interface SerializedSqlQueryHistoryDocument {
+	readonly version: 1;
+	readonly entries: SqlQueryHistoryEntry[];
 }
 
-export interface SqlResultGridRow {
-	readonly index: number;
-	readonly cells: SqlResultGridCell[];
-}
-
-export interface SqlResultGrid {
-	readonly columns: SqlResultGridColumn[];
-	readonly rows: SqlResultGridRow[];
-	readonly renderedRowCount: number;
-	readonly totalRowCount: number;
-	readonly truncatedByBackend: boolean;
-	readonly truncatedByPanel: boolean;
-}
-
-export interface SqlResultCellAddress {
-	readonly rowIndex: number;
-	readonly columnIndex: number;
-}
-
-export const enum SqlResultCopyMode {
-	Cell = 'cell',
-	Row = 'row',
-	All = 'all'
-}
-
-export const enum SqlResultCopyFormat {
-	Csv = 'csv',
-	Tsv = 'tsv'
-}
-
-export interface SqlResultCopyOptions {
-	readonly mode: SqlResultCopyMode;
-	readonly format: SqlResultCopyFormat;
-	readonly selection?: SqlResultCellAddress;
-	readonly includeHeader?: boolean;
-}
-
-export function buildSqlResultGrid(
-	result: SqlQueryResult,
-	maxRows = SQL_RESULT_MAX_RENDER_ROWS
-): SqlResultGrid {
-	const normalizedMaxRows = normalizeMaxRows(maxRows);
-	const rows = result.rows.slice(0, normalizedMaxRows);
+export function createCompletedQueryHistoryEntry(event: SqlEditorQueryCompletedEvent): SqlQueryHistoryEntry {
+	const sql = normalizeSql(event.sql);
+	const completedAt = normalizeTimestamp(event.completedAt);
+	const startedAt = normalizeTimestamp(event.startedAt);
 
 	return {
-		columns: result.columns.map(createGridColumn),
-		rows: rows.map((row, rowIndex) => ({
-			index: rowIndex,
-			cells: row.map((cell, columnIndex) => createGridCell(cell, rowIndex, columnIndex))
-		})),
-		renderedRowCount: rows.length,
-		totalRowCount: result.rowCount,
-		truncatedByBackend: result.truncated,
-		truncatedByPanel: result.rows.length > rows.length
+		id: createHistoryEntryId(event.editorId, event.connectionId, completedAt, sql),
+		editorId: event.editorId,
+		connectionId: event.connectionId,
+		sql,
+		sqlPreview: createSqlPreview(sql),
+		status: SqlQueryHistoryStatus.Success,
+		startedAt,
+		completedAt,
+		durationMs: Math.max(0, completedAt - startedAt),
+		rowCount: event.result.rowCount,
+		affectedRows: event.result.affectedRows,
+		elapsedMs: event.result.elapsedMs
 	};
 }
 
-export function createGridColumn(column: SqlResultColumn): SqlResultGridColumn {
-	const name = column.name || `Column ${column.ordinal + 1}`;
+export function createFailedQueryHistoryEntry(event: SqlEditorQueryFailedEvent): SqlQueryHistoryEntry {
+	const sql = normalizeSql(event.sql);
+	const completedAt = normalizeTimestamp(event.completedAt);
+	const startedAt = normalizeTimestamp(event.startedAt);
 
 	return {
-		id: `column-${column.ordinal}`,
-		name,
-		ordinal: column.ordinal,
-		width: clampColumnWidth(estimateColumnWidth(name))
+		id: createHistoryEntryId(event.editorId, event.connectionId, completedAt, sql),
+		editorId: event.editorId,
+		connectionId: event.connectionId,
+		sql,
+		sqlPreview: createSqlPreview(sql),
+		status: SqlQueryHistoryStatus.Error,
+		startedAt,
+		completedAt,
+		durationMs: Math.max(0, completedAt - startedAt),
+		errorMessage: event.error.message || String(event.error)
 	};
 }
 
-export function createGridCell(
-	cell: SqlCellValue,
-	rowIndex: number,
-	columnIndex: number
-): SqlResultGridCell {
-	const text = formatSqlResultCell(cell);
-	const isNull = cell.kind === SqlCellKind.Null || cell.value === null || cell.value === undefined;
-	const isBlob = cell.kind === SqlCellKind.Blob;
-
-	return {
-		rowIndex,
-		columnIndex,
-		kind: cell.kind,
-		value: cell.value,
-		text,
-		className: getCellClassName(cell),
-		isNull,
-		isBlob
-	};
-}
-
-export function formatSqlResultCell(cell: SqlCellValue): string {
-	if (cell.kind === SqlCellKind.Null || cell.value === null || cell.value === undefined) {
-		return 'NULL';
+export function normalizeHistoryEntries(
+	entries: readonly SqlQueryHistoryEntry[],
+	maxEntries = SQL_QUERY_HISTORY_MAX_ENTRIES
+): SqlQueryHistoryEntry[] {
+	if (!Number.isInteger(maxEntries) || maxEntries <= 0) {
+		throw new Error('maxEntries must be a positive integer');
 	}
 
-	if (cell.kind === SqlCellKind.Blob) {
-		if (isBlobJsonValue(cell.value)) {
-			return `[blob ${cell.value.byteLength} bytes]`;
-		}
+	const seen = new Set<string>();
+	const normalized: SqlQueryHistoryEntry[] = [];
 
-		return '[blob]';
-	}
+	for (const entry of entries) {
+		const valid = normalizeHistoryEntry(entry);
 
-	if (typeof cell.value === 'object') {
-		return JSON.stringify(cell.value);
-	}
-
-	return String(cell.value);
-}
-
-export function getCellClassName(cell: SqlCellValue): string {
-	switch (cell.kind) {
-		case SqlCellKind.Null:
-			return 'kind-null';
-
-		case SqlCellKind.Integer:
-		case SqlCellKind.Real:
-			return 'kind-number';
-
-		case SqlCellKind.Blob:
-			return 'kind-blob';
-
-		case SqlCellKind.Text:
-		default:
-			return 'kind-text';
-	}
-}
-
-export function copySqlResultGrid(grid: SqlResultGrid, options: SqlResultCopyOptions): string {
-	const includeHeader = options.includeHeader !== false;
-
-	switch (options.mode) {
-		case SqlResultCopyMode.Cell:
-			return copySelectedCell(grid, options.selection);
-
-		case SqlResultCopyMode.Row:
-			return serializeRows(
-				grid,
-				options.selection ? [options.selection.rowIndex] : [],
-				options.format,
-				includeHeader
-			);
-
-		case SqlResultCopyMode.All:
-			return serializeRows(
-				grid,
-				grid.rows.map(row => row.index),
-				options.format,
-				includeHeader
-			);
-
-		default:
-			return assertNever(options.mode);
-	}
-}
-
-export function copySelectedCell(
-	grid: SqlResultGrid,
-	selection: SqlResultCellAddress | undefined
-): string {
-	if (!selection) {
-		return '';
-	}
-
-	const cell = getGridCell(grid, selection);
-
-	return cell?.text ?? '';
-}
-
-export function getGridCell(
-	grid: SqlResultGrid,
-	address: SqlResultCellAddress
-): SqlResultGridCell | undefined {
-	const row = grid.rows[address.rowIndex];
-
-	if (!row) {
-		return undefined;
-	}
-
-	return row.cells[address.columnIndex];
-}
-
-export function getSqlResultGridStatus(result: SqlQueryResult, grid: SqlResultGrid): string {
-	if (result.columns.length === 0) {
-		return `${result.affectedRows ?? 0} row(s) affected · ${result.elapsedMs}ms`;
-	}
-
-	const parts = [
-		`${grid.totalRowCount} row(s)`,
-		`${grid.columns.length} column(s)`,
-		`${result.elapsedMs}ms`
-	];
-
-	if (grid.truncatedByPanel) {
-		parts.push(`showing first ${grid.renderedRowCount}`);
-	}
-
-	if (grid.truncatedByBackend) {
-		parts.push('backend truncated');
-	}
-
-	return parts.join(' · ');
-}
-
-export function serializeRows(
-	grid: SqlResultGrid,
-	rowIndexes: readonly number[],
-	format: SqlResultCopyFormat,
-	includeHeader = true
-): string {
-	const rows: string[][] = [];
-
-	if (includeHeader) {
-		rows.push(grid.columns.map(column => column.name));
-	}
-
-	for (const rowIndex of rowIndexes) {
-		const row = grid.rows[rowIndex];
-
-		if (!row) {
+		if (!valid) {
 			continue;
 		}
 
-		rows.push(row.cells.map(cell => cell.text));
+		if (seen.has(valid.id)) {
+			continue;
+		}
+
+		seen.add(valid.id);
+		normalized.push(valid);
+
+		if (normalized.length >= maxEntries) {
+			break;
+		}
 	}
 
-	return serializeTable(rows, format);
+	return normalized;
 }
 
-export function serializeTable(
-	rows: readonly (readonly string[])[],
-	format: SqlResultCopyFormat
-): string {
-	switch (format) {
-		case SqlResultCopyFormat.Csv:
-			return rows.map(row => row.map(escapeCsvCell).join(',')).join('\n');
-
-		case SqlResultCopyFormat.Tsv:
-			return rows.map(row => row.map(escapeTsvCell).join('\t')).join('\n');
-
-		default:
-			return assertNever(format);
-	}
+export function serializeHistory(entries: readonly SqlQueryHistoryEntry[]): SerializedSqlQueryHistoryDocument {
+	return {
+		version: 1,
+		entries: normalizeHistoryEntries(entries)
+	};
 }
 
-export function escapeCsvCell(value: string): string {
-	if (!/[",\n\r]/.test(value)) {
-		return value;
+export function deserializeHistory(raw: unknown): SqlQueryHistoryEntry[] {
+	if (!raw || typeof raw !== 'object') {
+		return [];
 	}
 
-	return `"${value.replaceAll('"', '""')}"`;
-}
+	const document = raw as Partial<SerializedSqlQueryHistoryDocument>;
 
-export function escapeTsvCell(value: string): string {
-	return value
-		.replaceAll('\t', ' ')
-		.replaceAll('\r\n', '\n')
-		.replaceAll('\r', '\n')
-		.replaceAll('\n', ' ');
-}
-
-export function clampColumnWidth(width: number): number {
-	if (!Number.isFinite(width)) {
-		return SQL_RESULT_DEFAULT_COLUMN_WIDTH;
+	if (document.version !== 1 || !Array.isArray(document.entries)) {
+		return [];
 	}
 
-	return Math.min(SQL_RESULT_MAX_COLUMN_WIDTH, Math.max(SQL_RESULT_MIN_COLUMN_WIDTH, Math.round(width)));
+	return normalizeHistoryEntries(document.entries);
 }
 
-export function estimateColumnWidth(columnName: string): number {
-	return SQL_RESULT_DEFAULT_COLUMN_WIDTH + Math.max(0, columnName.length - 12) * 8;
-}
+export function addHistoryEntry(
+	entries: readonly SqlQueryHistoryEntry[],
+	entry: SqlQueryHistoryEntry,
+	maxEntries = SQL_QUERY_HISTORY_MAX_ENTRIES
+): SqlQueryHistoryEntry[] {
+	const normalized = normalizeHistoryEntry(entry);
 
-function normalizeMaxRows(maxRows: number): number {
-	if (!Number.isInteger(maxRows) || maxRows <= 0) {
-		throw new Error('maxRows must be a positive integer');
+	if (!normalized) {
+		return normalizeHistoryEntries(entries, maxEntries);
 	}
 
-	return maxRows;
+	return normalizeHistoryEntries([normalized, ...entries], maxEntries);
 }
 
-function isBlobJsonValue(value: SqlCellValue['value']): value is { encoding: 'base64'; data: string; byteLength: number } {
-	return typeof value === 'object' && value !== null && !Array.isArray(value) && 'byteLength' in value;
+export function removeHistoryEntry(
+	entries: readonly SqlQueryHistoryEntry[],
+	entryId: string
+): SqlQueryHistoryEntry[] {
+	const normalizedId = entryId.trim();
+
+	if (!normalizedId) {
+		return [...entries];
+	}
+
+	return entries.filter(entry => entry.id !== normalizedId);
 }
 
-function assertNever(value: never): never {
-	throw new Error(`Unexpected SQL result grid value: ${String(value)}`);
+export function createSqlPreview(sql: string, maxLength = SQL_QUERY_HISTORY_SQL_PREVIEW_LENGTH): string {
+	const normalized = normalizeSql(sql).replace(/\s+/g, ' ');
+
+	if (normalized.length <= maxLength) {
+		return normalized;
+	}
+
+	return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+export function getHistoryEntryLabel(entry: SqlQueryHistoryEntry): string {
+	const status = entry.status === SqlQueryHistoryStatus.Success ? 'OK' : 'ERR';
+	return `${status} · ${entry.connectionId} · ${entry.sqlPreview}`;
+}
+
+export function getHistoryEntryDetail(entry: SqlQueryHistoryEntry): string {
+	if (entry.status === SqlQueryHistoryStatus.Error) {
+		return `${entry.durationMs}ms · ${entry.errorMessage ?? 'Query failed'}`;
+	}
+
+	const rowText = entry.rowCount === 1 ? '1 row' : `${entry.rowCount ?? 0} rows`;
+	const elapsed = entry.elapsedMs ?? entry.durationMs;
+
+	return `${rowText} · ${elapsed}ms`;
+}
+
+export function normalizeSql(sql: string): string {
+	if (typeof sql !== 'string') {
+		return '';
+	}
+
+	return sql.trim();
+}
+
+function normalizeHistoryEntry(entry: SqlQueryHistoryEntry): SqlQueryHistoryEntry | undefined {
+	if (!entry || typeof entry !== 'object') {
+		return undefined;
+	}
+
+	const id = entry.id?.trim();
+	const editorId = entry.editorId?.trim();
+	const connectionId = entry.connectionId?.trim();
+	const sql = normalizeSql(entry.sql);
+
+	if (!id || !editorId || !connectionId || !sql) {
+		return undefined;
+	}
+
+	const completedAt = normalizeTimestamp(entry.completedAt);
+	const startedAt = normalizeTimestamp(entry.startedAt);
+
+	return {
+		id,
+		editorId,
+		connectionId,
+		sql,
+		sqlPreview: createSqlPreview(sql),
+		status: entry.status === SqlQueryHistoryStatus.Error
+			? SqlQueryHistoryStatus.Error
+			: SqlQueryHistoryStatus.Success,
+		startedAt,
+		completedAt,
+		durationMs: Math.max(0, entry.durationMs ?? completedAt - startedAt),
+		rowCount: normalizeOptionalNumber(entry.rowCount),
+		affectedRows: normalizeOptionalNumber(entry.affectedRows),
+		elapsedMs: normalizeOptionalNumber(entry.elapsedMs),
+		errorMessage: normalizeOptionalString(entry.errorMessage)
+	};
+}
+
+function normalizeOptionalNumber(value: number | undefined): number | undefined {
+	if (value === undefined || value === null) {
+		return undefined;
+	}
+
+	return Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeOptionalString(value: string | undefined): string | undefined {
+	const normalized = value?.trim();
+	return normalized ? normalized : undefined;
+}
+
+function normalizeTimestamp(value: number): number {
+	return Number.isFinite(value) && value > 0 ? Math.floor(value) : Date.now();
+}
+
+function createHistoryEntryId(editorId: string, connectionId: string, completedAt: number, sql: string): string {
+	return `${completedAt}-${hashString(`${editorId}:${connectionId}:${sql}`)}`;
+}
+
+function hashString(value: string): string {
+	let hash = 0;
+
+	for (let index = 0; index < value.length; index++) {
+		hash = (hash * 31 + value.charCodeAt(index)) | 0;
+	}
+
+	return Math.abs(hash).toString(36);
 }
 ```
 
 ---
 
-# 2. 替换 `src/vs/workbench/contrib/sqlResult/browser/sqlResultView.ts`
+# 3. 新增 `sqlQueryHistoryService.ts`
 
-```ts
+路径：
+
+```txt id="m7azuh"
+src/vs/workbench/contrib/sqlHistory/common/sqlQueryHistoryService.ts
+```
+
+```ts id="2q9ldx"
 /*---------------------------------------------------------------------------------------------
- * SQL Studio Next - SQL Result Panel View.
+ * SQL Studio Next - SQL Query History service.
  *--------------------------------------------------------------------------------------------*/
 
-import './media/sqlResult.css';
+import { Emitter, Event } from '../../../../base/common/event.js';
+import { Disposable } from '../../../../base/common/lifecycle.js';
+import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import {
+	IStorageService,
+	StorageScope,
+	StorageTarget
+} from '../../../../platform/storage/common/storage.js';
+import {
+	SqlEditorQueryCompletedEvent,
+	SqlEditorQueryFailedEvent
+} from '../../sqlEditor/common/sqlEditorEvents.js';
+import { SQL_QUERY_HISTORY_MAX_ENTRIES, SQL_QUERY_HISTORY_STORAGE_KEY } from './sqlQueryHistory.js';
+import {
+	addHistoryEntry,
+	createCompletedQueryHistoryEntry,
+	createFailedQueryHistoryEntry,
+	deserializeHistory,
+	removeHistoryEntry,
+	serializeHistory,
+	SqlQueryHistoryEntry
+} from './sqlQueryHistoryModel.js';
+
+export const ISqlQueryHistoryService = createDecorator<ISqlQueryHistoryService>('sqlQueryHistoryService');
+
+export interface ISqlQueryHistoryService {
+	readonly _serviceBrand: undefined;
+
+	readonly onDidChangeHistory: Event<readonly SqlQueryHistoryEntry[]>;
+
+	readonly entries: readonly SqlQueryHistoryEntry[];
+
+	addCompletedQuery(event: SqlEditorQueryCompletedEvent): void;
+	addFailedQuery(event: SqlEditorQueryFailedEvent): void;
+	remove(entryId: string): void;
+	clear(): void;
+}
+
+export class SqlQueryHistoryService extends Disposable implements ISqlQueryHistoryService {
+	declare readonly _serviceBrand: undefined;
+
+	private readonly _onDidChangeHistory = this._register(new Emitter<readonly SqlQueryHistoryEntry[]>());
+	readonly onDidChangeHistory = this._onDidChangeHistory.event;
+
+	private _entries: SqlQueryHistoryEntry[];
+
+	constructor(
+		@IStorageService private readonly storageService: IStorageService
+	) {
+		super();
+
+		this._entries = this.load();
+	}
+
+	get entries(): readonly SqlQueryHistoryEntry[] {
+		return this._entries;
+	}
+
+	addCompletedQuery(event: SqlEditorQueryCompletedEvent): void {
+		const entry = createCompletedQueryHistoryEntry(event);
+		this.setEntries(addHistoryEntry(this._entries, entry, SQL_QUERY_HISTORY_MAX_ENTRIES));
+	}
+
+	addFailedQuery(event: SqlEditorQueryFailedEvent): void {
+		const entry = createFailedQueryHistoryEntry(event);
+		this.setEntries(addHistoryEntry(this._entries, entry, SQL_QUERY_HISTORY_MAX_ENTRIES));
+	}
+
+	remove(entryId: string): void {
+		this.setEntries(removeHistoryEntry(this._entries, entryId));
+	}
+
+	clear(): void {
+		this.setEntries([]);
+	}
+
+	private load(): SqlQueryHistoryEntry[] {
+		const raw = this.storageService.getObject<unknown>(
+			SQL_QUERY_HISTORY_STORAGE_KEY,
+			StorageScope.PROFILE,
+			undefined
+		);
+
+		return deserializeHistory(raw);
+	}
+
+	private setEntries(entries: SqlQueryHistoryEntry[]): void {
+		this._entries = entries;
+		this.persist();
+		this._onDidChangeHistory.fire(this._entries);
+	}
+
+	private persist(): void {
+		this.storageService.store(
+			SQL_QUERY_HISTORY_STORAGE_KEY,
+			JSON.stringify(serializeHistory(this._entries)),
+			StorageScope.PROFILE,
+			StorageTarget.USER
+		);
+	}
+}
+```
+
+> 这里使用 `StorageScope.PROFILE` + `StorageTarget.USER`。`IStorageService` 支持 `getObject()`、`store()` 和 `StorageScope.PROFILE`。
+
+---
+
+# 4. 新增 History Bridge
+
+路径：
+
+```txt id="7rpr1f"
+src/vs/workbench/contrib/sqlHistory/browser/sqlQueryHistoryBridge.ts
+```
+
+```ts id="3570xl"
+/*---------------------------------------------------------------------------------------------
+ * SQL Studio Next - SQL Editor -> SQL Query History bridge.
+ *--------------------------------------------------------------------------------------------*/
+
+import { Disposable } from '../../../../base/common/lifecycle.js';
+import { IWorkbenchContribution } from '../../../common/contributions.js';
+import { ISqlEditorEventService } from '../../sqlEditor/common/sqlEditorEvents.js';
+import { ISqlQueryHistoryService } from '../common/sqlQueryHistoryService.js';
+
+export class SqlQueryHistoryBridgeContribution extends Disposable implements IWorkbenchContribution {
+	constructor(
+		@ISqlEditorEventService sqlEditorEventService: ISqlEditorEventService,
+		@ISqlQueryHistoryService sqlQueryHistoryService: ISqlQueryHistoryService
+	) {
+		super();
+
+		this._register(sqlEditorEventService.onDidCompleteQuery(event => sqlQueryHistoryService.addCompletedQuery(event)));
+		this._register(sqlEditorEventService.onDidFailQuery(event => sqlQueryHistoryService.addFailedQuery(event)));
+	}
+}
+```
+
+---
+
+# 5. 新增 History View
+
+路径：
+
+```txt id="8fqlm5"
+src/vs/workbench/contrib/sqlHistory/browser/sqlQueryHistoryView.ts
+```
+
+```ts id="h7uvzr"
+/*---------------------------------------------------------------------------------------------
+ * SQL Studio Next - SQL Query History view.
+ *--------------------------------------------------------------------------------------------*/
+
+import './media/sqlQueryHistory.css';
 
 import { $, addDisposableListener, append, clearNode, EventType } from '../../../../base/browser/dom.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
 import { IViewDescriptorService } from '../../../common/views.js';
+import { ISqlQueryService } from '../../../services/sql/common/sqlQuery.js';
+import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
+import { ISqlEditorEventService } from '../../sqlEditor/common/sqlEditorEvents.js';
 import {
-	getSqlResultSummary,
-	SqlResultState,
-	SqlResultStateKind
-} from '../common/sqlResultModel.js';
-import { SQL_RESULT_MAX_RENDER_ROWS, SQL_RESULT_VIEW_ID } from '../common/sqlResult.js';
-import { ISqlResultService } from '../common/sqlResultService.js';
+	SQL_QUERY_HISTORY_VIEW_ID
+} from '../common/sqlQueryHistory.js';
 import {
-	buildSqlResultGrid,
-	copySqlResultGrid,
-	getGridCell,
-	getSqlResultGridStatus,
-	SqlResultCellAddress,
-	SqlResultCopyFormat,
-	SqlResultCopyMode,
-	SqlResultGrid
-} from '../common/sqlResultGridModel.js';
+	getHistoryEntryDetail,
+	getHistoryEntryLabel,
+	SqlQueryHistoryEntry,
+	SqlQueryHistoryStatus
+} from '../common/sqlQueryHistoryModel.js';
+import { ISqlQueryHistoryService } from '../common/sqlQueryHistoryService.js';
 
-export class SqlResultView extends ViewPane {
-	static readonly ID = SQL_RESULT_VIEW_ID;
-	static readonly NAME = localize('sqlResultViewName', 'Results');
+export class SqlQueryHistoryView extends ViewPane {
+	static readonly ID = SQL_QUERY_HISTORY_VIEW_ID;
+	static readonly NAME = localize('sqlQueryHistoryViewName', 'Query History');
 
 	private readonly renderDisposables = this._register(new DisposableStore());
 
 	private container!: HTMLElement;
 	private toolbar!: HTMLElement;
-	private summaryElement!: HTMLElement;
 	private contentElement!: HTMLElement;
 	private statusElement!: HTMLElement;
-	private copyCellButton!: HTMLButtonElement;
-	private copyRowButton!: HTMLButtonElement;
-	private copyCsvButton!: HTMLButtonElement;
-	private copyTsvButton!: HTMLButtonElement;
 	private clearButton!: HTMLButtonElement;
-
-	private currentGrid: SqlResultGrid | undefined;
-	private selectedCell: SqlResultCellAddress | undefined;
-	private selectedCellElement: HTMLElement | undefined;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -461,7 +573,11 @@ export class SqlResultView extends ViewPane {
 		@IOpenerService openerService: IOpenerService,
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
-		@ISqlResultService private readonly sqlResultService: ISqlResultService
+		@ISqlQueryHistoryService private readonly historyService: ISqlQueryHistoryService,
+		@ICommandService private readonly commandService: ICommandService,
+		@ISqlQueryService private readonly sqlQueryService: ISqlQueryService,
+		@ISqlEditorEventService private readonly sqlEditorEventService: ISqlEditorEventService,
+		@INotificationService private readonly notificationService: INotificationService
 	) {
 		super(
 			options,
@@ -478,71 +594,25 @@ export class SqlResultView extends ViewPane {
 	}
 
 	protected override renderBody(container: HTMLElement): void {
-		this.container = append(container, $('.sql-result-view'));
-		this.toolbar = append(this.container, $('.sql-result-toolbar'));
-
-		this.summaryElement = append(this.toolbar, $('span.sql-result-summary'));
-
-		this.copyCellButton = append(
-			this.toolbar,
-			$('button.sql-result-button', { type: 'button', title: 'Copy selected cell' }, 'Copy Cell')
-		) as HTMLButtonElement;
-
-		this.copyRowButton = append(
-			this.toolbar,
-			$('button.sql-result-button', { type: 'button', title: 'Copy selected row as TSV' }, 'Copy Row')
-		) as HTMLButtonElement;
-
-		this.copyCsvButton = append(
-			this.toolbar,
-			$('button.sql-result-button', { type: 'button', title: 'Copy all rows as CSV' }, 'Copy CSV')
-		) as HTMLButtonElement;
-
-		this.copyTsvButton = append(
-			this.toolbar,
-			$('button.sql-result-button', { type: 'button', title: 'Copy all rows as TSV' }, 'Copy TSV')
-		) as HTMLButtonElement;
+		this.container = append(container, $('.sql-query-history-view'));
+		this.toolbar = append(this.container, $('.sql-query-history-toolbar'));
 
 		this.clearButton = append(
 			this.toolbar,
-			$('button.sql-result-button', { type: 'button', title: 'Clear result' }, 'Clear')
+			$('button.sql-query-history-button', { type: 'button' }, 'Clear History')
 		) as HTMLButtonElement;
 
-		this.contentElement = append(this.container, $('.sql-result-content', { tabIndex: 0 }));
-		this.statusElement = append(this.container, $('.sql-result-statusbar'));
-
-		this._register(
-			addDisposableListener(this.copyCellButton, EventType.CLICK, () => {
-				this.copySelection(SqlResultCopyMode.Cell, SqlResultCopyFormat.Tsv).catch(() => undefined);
-			})
-		);
-
-		this._register(
-			addDisposableListener(this.copyRowButton, EventType.CLICK, () => {
-				this.copySelection(SqlResultCopyMode.Row, SqlResultCopyFormat.Tsv).catch(() => undefined);
-			})
-		);
-
-		this._register(
-			addDisposableListener(this.copyCsvButton, EventType.CLICK, () => {
-				this.copySelection(SqlResultCopyMode.All, SqlResultCopyFormat.Csv).catch(() => undefined);
-			})
-		);
-
-		this._register(
-			addDisposableListener(this.copyTsvButton, EventType.CLICK, () => {
-				this.copySelection(SqlResultCopyMode.All, SqlResultCopyFormat.Tsv).catch(() => undefined);
-			})
-		);
+		this.contentElement = append(this.container, $('.sql-query-history-content', { tabIndex: 0 }));
+		this.statusElement = append(this.container, $('.sql-query-history-statusbar'));
 
 		this._register(
 			addDisposableListener(this.clearButton, EventType.CLICK, () => {
-				this.sqlResultService.clear();
+				this.historyService.clear();
 			})
 		);
 
-		this._register(this.sqlResultService.onDidChangeResult(state => this.renderState(state)));
-		this.renderState(this.sqlResultService.state);
+		this._register(this.historyService.onDidChangeHistory(() => this.renderHistory()));
+		this.renderHistory();
 	}
 
 	override focus(): void {
@@ -550,235 +620,151 @@ export class SqlResultView extends ViewPane {
 		super.focus();
 	}
 
-	private renderState(state: SqlResultState): void {
+	private renderHistory(): void {
 		this.renderDisposables.clear();
 		clearNode(this.contentElement);
 
-		this.currentGrid = undefined;
-		this.selectedCell = undefined;
-		this.selectedCellElement = undefined;
+		const entries = this.historyService.entries;
+		this.clearButton.disabled = entries.length === 0;
 
-		this.summaryElement.textContent = getSqlResultSummary(state);
-
-		switch (state.kind) {
-			case SqlResultStateKind.Idle:
-				this.renderEmpty();
-				this.setStatus('No result.');
-				break;
-
-			case SqlResultStateKind.Running:
-				this.renderRunning(state);
-				this.setStatus('Running...');
-				break;
-
-			case SqlResultStateKind.Error:
-				this.renderError(state);
-				this.setStatus('Query failed.');
-				break;
-
-			case SqlResultStateKind.Success:
-				this.renderSuccess(state);
-				break;
-		}
-
-		this.updateToolbarState();
-	}
-
-	private renderEmpty(): void {
-		append(this.contentElement, $('.sql-result-empty', undefined, 'Run a SQL query to see results here.'));
-	}
-
-	private renderRunning(state: Extract<SqlResultState, { kind: SqlResultStateKind.Running }>): void {
-		const wrapper = append(this.contentElement, $('.sql-result-message.running'));
-		append(wrapper, $('div', undefined, 'Running query...'));
-		append(wrapper, $('pre.sql-result-sql', undefined, state.query.sql));
-	}
-
-	private renderError(state: Extract<SqlResultState, { kind: SqlResultStateKind.Error }>): void {
-		const wrapper = append(this.contentElement, $('.sql-result-message.error'));
-		append(wrapper, $('div.sql-result-error-title', undefined, state.errorMessage));
-		append(wrapper, $('pre.sql-result-sql', undefined, state.query.sql));
-	}
-
-	private renderSuccess(state: Extract<SqlResultState, { kind: SqlResultStateKind.Success }>): void {
-		const result = state.result;
-
-		if (result.columns.length === 0) {
-			const affectedRows = result.affectedRows ?? 0;
-			append(
-				this.contentElement,
-				$('.sql-result-empty', undefined, `${affectedRows} row(s) affected in ${result.elapsedMs}ms.`)
-			);
-			this.setStatus(`${affectedRows} row(s) affected · ${result.elapsedMs}ms`);
+		if (entries.length === 0) {
+			append(this.contentElement, $('.sql-query-history-empty', undefined, 'No query history yet.'));
+			this.setStatus('No query history.');
 			return;
 		}
 
-		const grid = buildSqlResultGrid(result, SQL_RESULT_MAX_RENDER_ROWS);
-		this.currentGrid = grid;
-		this.setStatus(getSqlResultGridStatus(result, grid));
+		const list = append(this.contentElement, $('.sql-query-history-list', { role: 'list' }));
 
-		const wrapper = append(this.contentElement, $('.sql-result-table-wrapper', { tabIndex: 0 }));
-		const table = append(wrapper, $('table.sql-result-table'));
-
-		const thead = append(table, $('thead'));
-		const headerRow = append(thead, $('tr'));
-		append(headerRow, $('th.sql-result-row-number', undefined, '#'));
-
-		for (const column of grid.columns) {
-			const th = append(headerRow, $('th.sql-result-column-header', { title: column.name }, column.name));
-			th.style.width = `${column.width}px`;
-			th.style.maxWidth = `${column.width}px`;
+		for (const entry of entries) {
+			this.renderEntry(list, entry);
 		}
 
-		const tbody = append(table, $('tbody'));
+		this.setStatus(`${entries.length} query history item(s).`);
+	}
 
-		for (const row of grid.rows) {
-			const tr = append(tbody, $('tr.sql-result-row'));
-			append(tr, $('td.sql-result-row-number', undefined, String(row.index + 1)));
+	private renderEntry(parent: HTMLElement, entry: SqlQueryHistoryEntry): void {
+		const item = append(parent, $('.sql-query-history-item', {
+			role: 'listitem',
+			'data-entry-id': entry.id
+		}));
 
-			for (const cell of row.cells) {
-				const td = append(
-					tr,
-					$('td.sql-result-cell', {
-						title: cell.text,
-						tabIndex: 0,
-						'data-row-index': String(cell.rowIndex),
-						'data-column-index': String(cell.columnIndex)
-					})
-				);
+		item.classList.add(entry.status === SqlQueryHistoryStatus.Success ? 'success' : 'error');
 
-				td.classList.add(cell.className);
-				td.textContent = cell.text;
-			}
-		}
+		const main = append(item, $('.sql-query-history-main'));
+		append(main, $('.sql-query-history-title', { title: entry.sql }, getHistoryEntryLabel(entry)));
+		append(main, $('.sql-query-history-detail', undefined, getHistoryEntryDetail(entry)));
+
+		const actions = append(item, $('.sql-query-history-actions'));
+
+		const openButton = append(
+			actions,
+			$('button.sql-query-history-button', { type: 'button' }, 'Open')
+		) as HTMLButtonElement;
+
+		const rerunButton = append(
+			actions,
+			$('button.sql-query-history-button', { type: 'button' }, 'Rerun')
+		) as HTMLButtonElement;
+
+		const removeButton = append(
+			actions,
+			$('button.sql-query-history-button', { type: 'button' }, 'Remove')
+		) as HTMLButtonElement;
 
 		this.renderDisposables.add(
-			addDisposableListener(wrapper, EventType.CLICK, event => {
-				this.handleGridClick(event);
+			addDisposableListener(openButton, EventType.CLICK, () => {
+				this.openEntry(entry).catch(error => this.showError(error));
 			})
 		);
 
 		this.renderDisposables.add(
-			addDisposableListener(wrapper, EventType.KEY_DOWN, event => {
-				if (event.key === 'Enter') {
-					this.handleGridClick(event);
-				}
+			addDisposableListener(rerunButton, EventType.CLICK, () => {
+				this.rerunEntry(entry).catch(error => this.showError(error));
 			})
 		);
 
-		if (grid.truncatedByBackend || grid.truncatedByPanel) {
-			const message = grid.truncatedByPanel
-				? `Showing first ${grid.renderedRowCount} of ${grid.totalRowCount} row(s).`
-				: `Backend truncated result at ${grid.totalRowCount} row(s).`;
-
-			append(this.contentElement, $('.sql-result-truncated', undefined, message));
-		}
+		this.renderDisposables.add(
+			addDisposableListener(removeButton, EventType.CLICK, () => {
+				this.historyService.remove(entry.id);
+			})
+		);
 	}
 
-	private handleGridClick(event: Event): void {
-		const target = event.target;
-
-		if (!(target instanceof HTMLElement)) {
-			return;
-		}
-
-		const cellElement = target.closest('.sql-result-cell');
-
-		if (!(cellElement instanceof HTMLElement)) {
-			return;
-		}
-
-		const rowIndex = Number(cellElement.dataset.rowIndex);
-		const columnIndex = Number(cellElement.dataset.columnIndex);
-
-		if (!Number.isInteger(rowIndex) || !Number.isInteger(columnIndex)) {
-			return;
-		}
-
-		this.selectCell({ rowIndex, columnIndex }, cellElement);
-	}
-
-	private selectCell(address: SqlResultCellAddress, element: HTMLElement): void {
-		this.selectedCellElement?.classList.remove('selected');
-
-		this.selectedCell = address;
-		this.selectedCellElement = element;
-		this.selectedCellElement.classList.add('selected');
-
-		const cell = this.currentGrid ? getGridCell(this.currentGrid, address) : undefined;
-		const cellLabel = cell ? `Selected row ${address.rowIndex + 1}, column ${address.columnIndex + 1}: ${cell.text}` : '';
-
-		if (cellLabel) {
-			this.setStatus(cellLabel);
-		}
-
-		this.updateToolbarState();
-	}
-
-	private updateToolbarState(): void {
-		const hasGrid = Boolean(this.currentGrid);
-		const hasSelection = hasGrid && Boolean(this.selectedCell);
-
-		this.copyCellButton.disabled = !hasSelection;
-		this.copyRowButton.disabled = !hasSelection;
-		this.copyCsvButton.disabled = !hasGrid;
-		this.copyTsvButton.disabled = !hasGrid;
-	}
-
-	private async copySelection(mode: SqlResultCopyMode, format: SqlResultCopyFormat): Promise<void> {
-		if (!this.currentGrid) {
-			return;
-		}
-
-		const text = copySqlResultGrid(this.currentGrid, {
-			mode,
-			format,
-			selection: this.selectedCell,
-			includeHeader: mode !== SqlResultCopyMode.Cell
+	private async openEntry(entry: SqlQueryHistoryEntry): Promise<void> {
+		await this.commandService.executeCommand(SQL_NEW_QUERY_COMMAND_ID, {
+			connectionId: entry.connectionId,
+			initialSql: entry.sql
 		});
 
-		if (!text) {
-			return;
-		}
-
-		if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-			await navigator.clipboard.writeText(text);
-		}
-
-		this.setStatus(this.getCopyStatus(mode, format));
+		this.setStatus('Opened query from history.');
 	}
 
-	private getCopyStatus(mode: SqlResultCopyMode, format: SqlResultCopyFormat): string {
-		switch (mode) {
-			case SqlResultCopyMode.Cell:
-				return 'Copied selected cell.';
+	private async rerunEntry(entry: SqlQueryHistoryEntry): Promise<void> {
+		const startedAt = Date.now();
 
-			case SqlResultCopyMode.Row:
-				return `Copied selected row as ${format.toUpperCase()}.`;
+		this.sqlEditorEventService.fireQueryStarted({
+			editorId: `history-${entry.id}`,
+			connectionId: entry.connectionId,
+			sql: entry.sql,
+			startedAt
+		});
 
-			case SqlResultCopyMode.All:
-				return `Copied result as ${format.toUpperCase()}.`;
+		try {
+			const result = await this.sqlQueryService.executeQuery({
+				connectionId: entry.connectionId,
+				sql: entry.sql
+			});
+
+			this.sqlEditorEventService.fireQueryCompleted({
+				editorId: `history-${entry.id}`,
+				connectionId: entry.connectionId,
+				sql: entry.sql,
+				startedAt,
+				completedAt: Date.now(),
+				result
+			});
+
+			this.setStatus(`Rerun completed: ${result.rowCount} row(s).`);
+		} catch (error) {
+			const normalizedError = error instanceof Error ? error : new Error(String(error));
+
+			this.sqlEditorEventService.fireQueryFailed({
+				editorId: `history-${entry.id}`,
+				connectionId: entry.connectionId,
+				sql: entry.sql,
+				startedAt,
+				completedAt: Date.now(),
+				error: normalizedError
+			});
+
+			throw normalizedError;
 		}
+	}
+
+	private showError(error: unknown): void {
+		const message = error instanceof Error ? error.message : String(error);
+		this.setStatus(`Error: ${message}`);
+		this.notificationService.error(message);
 	}
 
 	private setStatus(message: string): void {
-		if (this.statusElement) {
-			this.statusElement.textContent = message;
-		}
+		this.statusElement.textContent = message;
 	}
 }
 ```
 
 ---
 
-# 3. 替换 `src/vs/workbench/contrib/sqlResult/browser/media/sqlResult.css`
+# 6. 新增 CSS
 
-```css
-.sql-result-panel {
-	min-height: 0;
-}
+路径：
 
-.sql-result-view {
+```txt id="7kxihq"
+src/vs/workbench/contrib/sqlHistory/browser/media/sqlQueryHistory.css
+```
+
+```css id="a0evxs"
+.sql-query-history-view {
 	box-sizing: border-box;
 	height: 100%;
 	width: 100%;
@@ -789,28 +775,88 @@ export class SqlResultView extends ViewPane {
 	color: var(--vscode-editor-foreground);
 }
 
-.sql-result-toolbar {
+.sql-query-history-toolbar {
 	box-sizing: border-box;
 	min-height: 32px;
 	display: flex;
 	align-items: center;
+	justify-content: flex-end;
 	gap: 8px;
 	padding: 4px 8px;
 	border-bottom: 1px solid var(--vscode-editorGroup-border);
 	background: var(--vscode-sideBar-background);
 }
 
-.sql-result-summary {
+.sql-query-history-content {
 	flex: 1 1 auto;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-size: 12px;
-	opacity: 0.9;
+	min-height: 0;
+	overflow: auto;
+	outline: none;
 }
 
-.sql-result-button {
+.sql-query-history-empty {
+	padding: 12px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.sql-query-history-list {
+	display: flex;
+	flex-direction: column;
+}
+
+.sql-query-history-item {
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px;
+	border-bottom: 1px solid var(--vscode-editorGroup-border);
+}
+
+.sql-query-history-item:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.sql-query-history-item.success {
+	border-left: 3px solid var(--vscode-testing-iconPassed, #73c991);
+}
+
+.sql-query-history-item.error {
+	border-left: 3px solid var(--vscode-testing-iconFailed, #f14c4c);
+}
+
+.sql-query-history-main {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.sql-query-history-title {
+	font-size: 12px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sql-query-history-detail {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sql-query-history-actions {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.sql-query-history-button {
 	height: 24px;
 	padding: 0 10px;
 	border: 1px solid var(--vscode-button-border);
@@ -820,147 +866,16 @@ export class SqlResultView extends ViewPane {
 	font-size: 12px;
 }
 
-.sql-result-button:hover:not(:disabled) {
+.sql-query-history-button:hover:not(:disabled) {
 	background: var(--vscode-button-hoverBackground);
 }
 
-.sql-result-button:disabled {
+.sql-query-history-button:disabled {
 	opacity: 0.45;
 	cursor: default;
 }
 
-.sql-result-content {
-	flex: 1 1 auto;
-	min-height: 0;
-	overflow: auto;
-	outline: none;
-}
-
-.sql-result-empty,
-.sql-result-message {
-	padding: 12px;
-	font-size: 12px;
-	opacity: 0.9;
-}
-
-.sql-result-message.error {
-	color: var(--vscode-errorForeground);
-}
-
-.sql-result-message.running {
-	color: var(--vscode-descriptionForeground);
-}
-
-.sql-result-error-title {
-	font-weight: 600;
-	margin-bottom: 8px;
-}
-
-.sql-result-sql {
-	box-sizing: border-box;
-	margin: 8px 0 0;
-	padding: 8px;
-	white-space: pre-wrap;
-	color: var(--vscode-textPreformat-foreground);
-	background: var(--vscode-textCodeBlock-background);
-	border-radius: 3px;
-	overflow: auto;
-}
-
-.sql-result-table-wrapper {
-	min-height: 0;
-	overflow: auto;
-	outline: none;
-}
-
-.sql-result-table {
-	width: max-content;
-	min-width: 100%;
-	border-collapse: collapse;
-	font-size: 12px;
-}
-
-.sql-result-table th,
-.sql-result-table td {
-	box-sizing: border-box;
-	max-width: 480px;
-	padding: 4px 8px;
-	border-right: 1px solid var(--vscode-editorGroup-border);
-	border-bottom: 1px solid var(--vscode-editorGroup-border);
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	text-align: left;
-}
-
-.sql-result-table th {
-	position: sticky;
-	top: 0;
-	z-index: 1;
-	font-weight: 600;
-	background: var(--vscode-sideBar-background);
-}
-
-.sql-result-column-header {
-	user-select: none;
-}
-
-.sql-result-row:hover {
-	background: var(--vscode-list-hoverBackground);
-}
-
-.sql-result-row-number {
-	width: 52px;
-	max-width: 52px;
-	text-align: right;
-	color: var(--vscode-descriptionForeground);
-	background: var(--vscode-sideBar-background);
-	user-select: none;
-}
-
-.sql-result-cell {
-	cursor: default;
-	outline: none;
-}
-
-.sql-result-cell:hover {
-	background: var(--vscode-list-hoverBackground);
-}
-
-.sql-result-cell.selected {
-	outline: 1px solid var(--vscode-focusBorder);
-	outline-offset: -1px;
-	background: var(--vscode-list-activeSelectionBackground);
-	color: var(--vscode-list-activeSelectionForeground);
-}
-
-.sql-result-cell.kind-null {
-	color: var(--vscode-descriptionForeground);
-	font-style: italic;
-}
-
-.sql-result-cell.kind-number {
-	text-align: right;
-	font-variant-numeric: tabular-nums;
-}
-
-.sql-result-cell.kind-blob {
-	color: var(--vscode-descriptionForeground);
-	font-family: var(--vscode-editor-font-family);
-}
-
-.sql-result-cell.kind-text {
-	text-align: left;
-}
-
-.sql-result-truncated {
-	padding: 8px;
-	font-size: 12px;
-	color: var(--vscode-descriptionForeground);
-	border-top: 1px solid var(--vscode-editorGroup-border);
-}
-
-.sql-result-statusbar {
+.sql-query-history-statusbar {
 	box-sizing: border-box;
 	min-height: 24px;
 	padding: 4px 8px;
@@ -976,271 +891,535 @@ export class SqlResultView extends ViewPane {
 
 ---
 
-# 4. 新增 `src/vs/workbench/contrib/sqlResult/test/sqlResultGridModel.test.ts`
+# 7. 修改 `sqlResult.contribution.ts`
 
-```ts
+路径：
+
+```txt id="umm76x"
+src/vs/workbench/contrib/sqlResult/browser/sqlResult.contribution.ts
+```
+
+在现有文件基础上修改。
+
+## 7.1 增加 imports
+
+在已有 imports 里追加：
+
+```ts id="1di8w9"
+import '../../sqlHistory/browser/media/sqlQueryHistory.css';
+import { ISqlQueryHistoryService, SqlQueryHistoryService } from '../../sqlHistory/common/sqlQueryHistoryService.js';
+import { SqlQueryHistoryBridgeContribution } from '../../sqlHistory/browser/sqlQueryHistoryBridge.js';
+import { SqlQueryHistoryView } from '../../sqlHistory/browser/sqlQueryHistoryView.js';
+```
+
+## 7.2 注册 service
+
+在现有：
+
+```ts id="tb0gma"
+registerSingleton(ISqlResultService, SqlResultService, InstantiationType.Delayed);
+```
+
+后面追加：
+
+```ts id="7mg7fl"
+registerSingleton(ISqlQueryHistoryService, SqlQueryHistoryService, InstantiationType.Delayed);
+```
+
+## 7.3 注册 History View
+
+把现有 `viewsRegistry.registerViews([...], SQL_RESULT_VIEW_CONTAINER);` 替换成：
+
+```ts id="dm9bga"
+viewsRegistry.registerViews(
+	[
+		{
+			id: SQL_RESULT_VIEW_ID,
+			name: localize2('sqlResultView', 'Results'),
+			containerIcon: sqlResultIcon,
+			ctorDescriptor: new SyncDescriptor(SqlResultView),
+			order: 0,
+			canMoveView: false,
+			canToggleVisibility: false
+		},
+		{
+			id: SqlQueryHistoryView.ID,
+			name: localize2('sqlQueryHistoryView', 'Query History'),
+			containerIcon: sqlResultIcon,
+			ctorDescriptor: new SyncDescriptor(SqlQueryHistoryView),
+			order: 1,
+			canMoveView: false,
+			canToggleVisibility: true
+		}
+	],
+	SQL_RESULT_VIEW_CONTAINER
+);
+```
+
+## 7.4 注册 History Bridge
+
+在现有：
+
+```ts id="xiihz2"
+Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).registerWorkbenchContribution2(
+	'workbench.contrib.sqlResultBridge',
+	SqlResultBridgeContribution,
+	WorkbenchPhase.AfterRestored
+);
+```
+
+后面追加：
+
+```ts id="gybvkn"
+Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).registerWorkbenchContribution2(
+	'workbench.contrib.sqlQueryHistoryBridge',
+	SqlQueryHistoryBridgeContribution,
+	WorkbenchPhase.AfterRestored
+);
+```
+
+---
+
+# 8. 新增 `sqlQueryHistoryModel.test.ts`
+
+路径：
+
+```txt id="f8bpqc"
+src/vs/workbench/contrib/sqlHistory/test/sqlQueryHistoryModel.test.ts
+```
+
+```ts id="7r3hkg"
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { SqlCellKind, SqlQueryResult } from '../../../services/sql/common/sqlTypes.js';
+import { SqlCellKind } from '../../../services/sql/common/sqlTypes.js';
 import {
-	buildSqlResultGrid,
-	clampColumnWidth,
-	copySelectedCell,
-	copySqlResultGrid,
-	escapeCsvCell,
-	escapeTsvCell,
-	formatSqlResultCell,
-	getGridCell,
-	getSqlResultGridStatus,
-	serializeTable,
-	SqlResultCopyFormat,
-	SqlResultCopyMode
-} from '../common/sqlResultGridModel.js';
+	addHistoryEntry,
+	createCompletedQueryHistoryEntry,
+	createFailedQueryHistoryEntry,
+	createSqlPreview,
+	deserializeHistory,
+	getHistoryEntryDetail,
+	getHistoryEntryLabel,
+	normalizeHistoryEntries,
+	removeHistoryEntry,
+	serializeHistory,
+	SqlQueryHistoryEntry,
+	SqlQueryHistoryStatus
+} from '../common/sqlQueryHistoryModel.js';
 
-const sampleResult: SqlQueryResult = {
-	columns: [
-		{ name: 'id', ordinal: 0 },
-		{ name: 'name', ordinal: 1 },
-		{ name: 'note', ordinal: 2 }
-	],
-	rows: [
-		[
-			{ kind: SqlCellKind.Integer, value: 1 },
-			{ kind: SqlCellKind.Text, value: 'Alice' },
-			{ kind: SqlCellKind.Text, value: 'hello, "world"' }
-		],
-		[
-			{ kind: SqlCellKind.Integer, value: 2 },
-			{ kind: SqlCellKind.Null, value: null },
-			{ kind: SqlCellKind.Blob, value: { encoding: 'base64', data: 'AQID', byteLength: 3 } }
-		]
-	],
-	rowCount: 2,
-	elapsedMs: 5,
-	truncated: false
+const completedEvent = {
+	editorId: 'editor-1',
+	connectionId: 'local',
+	sql: 'SELECT 1 AS value;',
+	startedAt: 1000,
+	completedAt: 1042,
+	result: {
+		columns: [{ name: 'value', ordinal: 0 }],
+		rows: [[{ kind: SqlCellKind.Integer, value: 1 }]],
+		rowCount: 1,
+		elapsedMs: 12,
+		truncated: false
+	}
 };
 
-test('buildSqlResultGrid keeps column and cell metadata', () => {
-	const grid = buildSqlResultGrid(sampleResult);
+const failedEvent = {
+	editorId: 'editor-1',
+	connectionId: 'local',
+	sql: 'SELECT * FROM missing_table;',
+	startedAt: 2000,
+	completedAt: 2030,
+	error: new Error('no such table: missing_table')
+};
 
-	assert.deepEqual(
-		grid.columns.map(column => column.name),
-		['id', 'name', 'note']
-	);
+test('createCompletedQueryHistoryEntry creates success entry', () => {
+	const entry = createCompletedQueryHistoryEntry(completedEvent);
 
-	assert.equal(grid.rows.length, 2);
-	assert.equal(grid.rows[0].cells[0].text, '1');
-	assert.equal(grid.rows[0].cells[0].className, 'kind-number');
-	assert.equal(grid.rows[1].cells[1].text, 'NULL');
-	assert.equal(grid.rows[1].cells[1].isNull, true);
-	assert.equal(grid.rows[1].cells[2].text, '[blob 3 bytes]');
-	assert.equal(grid.rows[1].cells[2].isBlob, true);
+	assert.equal(entry.connectionId, 'local');
+	assert.equal(entry.sql, 'SELECT 1 AS value;');
+	assert.equal(entry.status, SqlQueryHistoryStatus.Success);
+	assert.equal(entry.rowCount, 1);
+	assert.equal(entry.elapsedMs, 12);
+	assert.equal(entry.durationMs, 42);
+	assert.ok(entry.id);
 });
 
-test('buildSqlResultGrid marks panel truncation', () => {
-	const grid = buildSqlResultGrid(sampleResult, 1);
+test('createFailedQueryHistoryEntry creates error entry', () => {
+	const entry = createFailedQueryHistoryEntry(failedEvent);
 
-	assert.equal(grid.renderedRowCount, 1);
-	assert.equal(grid.totalRowCount, 2);
-	assert.equal(grid.truncatedByPanel, true);
+	assert.equal(entry.connectionId, 'local');
+	assert.equal(entry.status, SqlQueryHistoryStatus.Error);
+	assert.equal(entry.errorMessage, 'no such table: missing_table');
+	assert.equal(entry.durationMs, 30);
 });
 
-test('buildSqlResultGrid rejects invalid maxRows', () => {
-	assert.throws(() => buildSqlResultGrid(sampleResult, 0), /maxRows must be a positive integer/);
+test('createSqlPreview normalizes whitespace and truncates long SQL', () => {
+	assert.equal(createSqlPreview(' SELECT   1 \n AS value; '), 'SELECT 1 AS value;');
+
+	const preview = createSqlPreview('SELECT ' + 'x'.repeat(200), 20);
+	assert.equal(preview.length, 20);
+	assert.ok(preview.endsWith('…'));
 });
 
-test('formatSqlResultCell formats supported cell kinds', () => {
-	assert.equal(formatSqlResultCell({ kind: SqlCellKind.Null, value: null }), 'NULL');
-	assert.equal(formatSqlResultCell({ kind: SqlCellKind.Integer, value: 1 }), '1');
-	assert.equal(formatSqlResultCell({ kind: SqlCellKind.Real, value: 1.25 }), '1.25');
-	assert.equal(formatSqlResultCell({ kind: SqlCellKind.Text, value: 'hello' }), 'hello');
-	assert.equal(
-		formatSqlResultCell({
-			kind: SqlCellKind.Blob,
-			value: { encoding: 'base64', data: 'AQID', byteLength: 3 }
-		}),
-		'[blob 3 bytes]'
-	);
+test('addHistoryEntry prepends and caps entries', () => {
+	const first = createCompletedQueryHistoryEntry(completedEvent);
+	const second = createFailedQueryHistoryEntry(failedEvent);
+
+	const entries = addHistoryEntry([first], second, 1);
+
+	assert.deepEqual(entries.map(entry => entry.id), [second.id]);
 });
 
-test('getGridCell returns selected cell', () => {
-	const grid = buildSqlResultGrid(sampleResult);
+test('normalizeHistoryEntries removes duplicate and invalid entries', () => {
+	const first = createCompletedQueryHistoryEntry(completedEvent);
 
-	assert.equal(getGridCell(grid, { rowIndex: 0, columnIndex: 1 })?.text, 'Alice');
-	assert.equal(getGridCell(grid, { rowIndex: 99, columnIndex: 1 }), undefined);
+	const invalid = {
+		...first,
+		id: '',
+		sql: ''
+	} as SqlQueryHistoryEntry;
+
+	const entries = normalizeHistoryEntries([first, first, invalid]);
+
+	assert.deepEqual(entries.map(entry => entry.id), [first.id]);
 });
 
-test('copySelectedCell copies only selected cell text', () => {
-	const grid = buildSqlResultGrid(sampleResult);
+test('removeHistoryEntry removes matching entry', () => {
+	const first = createCompletedQueryHistoryEntry(completedEvent);
+	const second = createFailedQueryHistoryEntry(failedEvent);
 
-	assert.equal(copySelectedCell(grid, { rowIndex: 0, columnIndex: 1 }), 'Alice');
-	assert.equal(copySelectedCell(grid, undefined), '');
+	const entries = removeHistoryEntry([first, second], first.id);
+
+	assert.deepEqual(entries.map(entry => entry.id), [second.id]);
 });
 
-test('copySqlResultGrid copies selected cell', () => {
-	const grid = buildSqlResultGrid(sampleResult);
+test('serializeHistory and deserializeHistory round trip', () => {
+	const first = createCompletedQueryHistoryEntry(completedEvent);
+	const document = serializeHistory([first]);
 
-	assert.equal(
-		copySqlResultGrid(grid, {
-			mode: SqlResultCopyMode.Cell,
-			format: SqlResultCopyFormat.Tsv,
-			selection: { rowIndex: 0, columnIndex: 2 }
-		}),
-		'hello, "world"'
-	);
+	assert.equal(document.version, 1);
+
+	const entries = deserializeHistory(document);
+
+	assert.equal(entries.length, 1);
+	assert.equal(entries[0].id, first.id);
+	assert.equal(entries[0].sqlPreview, first.sqlPreview);
 });
 
-test('copySqlResultGrid copies selected row as TSV with header', () => {
-	const grid = buildSqlResultGrid(sampleResult);
-
-	assert.equal(
-		copySqlResultGrid(grid, {
-			mode: SqlResultCopyMode.Row,
-			format: SqlResultCopyFormat.Tsv,
-			selection: { rowIndex: 0, columnIndex: 1 }
-		}),
-		'id\tname\tnote\n1\tAlice\thello, "world"'
-	);
+test('deserializeHistory rejects unknown document', () => {
+	assert.deepEqual(deserializeHistory(undefined), []);
+	assert.deepEqual(deserializeHistory({ version: 999, entries: [] }), []);
+	assert.deepEqual(deserializeHistory({ version: 1, entries: 'bad' }), []);
 });
 
-test('copySqlResultGrid copies all rows as CSV', () => {
-	const grid = buildSqlResultGrid(sampleResult);
+test('getHistoryEntryLabel and detail return readable strings', () => {
+	const success = createCompletedQueryHistoryEntry(completedEvent);
+	const failure = createFailedQueryHistoryEntry(failedEvent);
 
-	assert.equal(
-		copySqlResultGrid(grid, {
-			mode: SqlResultCopyMode.All,
-			format: SqlResultCopyFormat.Csv
-		}),
-		'id,name,note\n1,Alice,"hello, ""world"""\n2,NULL,[blob 3 bytes]'
-	);
+	assert.ok(getHistoryEntryLabel(success).includes('OK'));
+	assert.ok(getHistoryEntryLabel(failure).includes('ERR'));
+
+	assert.equal(getHistoryEntryDetail(success), '1 row · 12ms');
+	assert.equal(getHistoryEntryDetail(failure), '30ms · no such table: missing_table');
 });
+```
 
-test('serializeTable supports TSV', () => {
-	assert.equal(
-		serializeTable(
-			[
-				['a', 'b'],
-				['1', 'hello\tworld']
-			],
-			SqlResultCopyFormat.Tsv
-		),
-		'a\tb\n1\thello world'
-	);
-});
+---
 
-test('escapeCsvCell escapes comma quote and newline', () => {
-	assert.equal(escapeCsvCell('hello'), 'hello');
-	assert.equal(escapeCsvCell('hello, world'), '"hello, world"');
-	assert.equal(escapeCsvCell('hello "world"'), '"hello ""world"""');
-	assert.equal(escapeCsvCell('hello\nworld'), '"hello\nworld"');
-});
+# 9. 新增 `sqlQueryHistoryService.test.ts`
 
-test('escapeTsvCell removes tabs and normalizes newlines', () => {
-	assert.equal(escapeTsvCell('hello\tworld'), 'hello world');
-	assert.equal(escapeTsvCell('hello\r\nworld'), 'hello world');
-	assert.equal(escapeTsvCell('hello\rworld'), 'hello world');
-});
+路径：
 
-test('getSqlResultGridStatus describes select result', () => {
-	const grid = buildSqlResultGrid(sampleResult);
+```txt id="8u3hao"
+src/vs/workbench/contrib/sqlHistory/test/sqlQueryHistoryService.test.ts
+```
 
-	assert.equal(getSqlResultGridStatus(sampleResult, grid), '2 row(s) · 3 column(s) · 5ms');
-});
+```ts id="3gmujw"
+import assert from 'node:assert/strict';
+import test from 'node:test';
 
-test('getSqlResultGridStatus describes affected rows result', () => {
-	const result: SqlQueryResult = {
-		columns: [],
-		rows: [],
-		affectedRows: 3,
-		rowCount: 0,
-		elapsedMs: 8,
-		truncated: false
+import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import {
+	IStorageService,
+	IStorageEntry,
+	StorageScope,
+	StorageTarget,
+	IStorageValueChangeEvent,
+	IStorageTargetChangeEvent,
+	IWillSaveStateEvent
+} from '../../../../platform/storage/common/storage.js';
+import { Event } from '../../../../base/common/event.js';
+import { SqlCellKind } from '../../../services/sql/common/sqlTypes.js';
+import { SQL_QUERY_HISTORY_STORAGE_KEY } from '../common/sqlQueryHistory.js';
+import { SqlQueryHistoryService } from '../common/sqlQueryHistoryService.js';
+
+class InMemoryStorageService implements IStorageService {
+	declare readonly _serviceBrand: undefined;
+
+	readonly onDidChangeTarget: Event<IStorageTargetChangeEvent> = Event.None;
+	readonly onWillSaveState: Event<IWillSaveStateEvent> = Event.None;
+
+	private readonly values = new Map<string, unknown>();
+
+	onDidChangeValue(
+		_scope: StorageScope,
+		_key: string | undefined,
+		_disposable: DisposableStore
+	): Event<IStorageValueChangeEvent> {
+		return Event.None;
+	}
+
+	get(key: string, _scope: StorageScope, fallbackValue?: string): string | undefined {
+		const value = this.values.get(key);
+		return typeof value === 'string' ? value : fallbackValue;
+	}
+
+	getBoolean(key: string, _scope: StorageScope, fallbackValue?: boolean): boolean | undefined {
+		const value = this.values.get(key);
+		return typeof value === 'boolean' ? value : fallbackValue;
+	}
+
+	getNumber(key: string, _scope: StorageScope, fallbackValue?: number): number | undefined {
+		const value = this.values.get(key);
+		return typeof value === 'number' ? value : fallbackValue;
+	}
+
+	getObject<T extends object>(key: string, _scope: StorageScope, fallbackValue?: T): T | undefined {
+		const value = this.values.get(key);
+
+		if (typeof value === 'string') {
+			return JSON.parse(value) as T;
+		}
+
+		return value as T ?? fallbackValue;
+	}
+
+	store(key: string, value: unknown, _scope: StorageScope, _target: StorageTarget): void {
+		if (value === undefined || value === null) {
+			this.values.delete(key);
+			return;
+		}
+
+		this.values.set(key, value);
+	}
+
+	storeAll(entries: IStorageEntry[], _external: boolean): void {
+		for (const entry of entries) {
+			this.store(entry.key, entry.value, entry.scope, entry.target);
+		}
+	}
+
+	remove(key: string, _scope: StorageScope): void {
+		this.values.delete(key);
+	}
+
+	keys(_scope: StorageScope, _target: StorageTarget): string[] {
+		return [...this.values.keys()];
+	}
+
+	log(): void {}
+
+	hasScope(): boolean {
+		return true;
+	}
+
+	async switch(): Promise<void> {}
+}
+
+function createCompletedEvent(sql = 'SELECT 1 AS value;') {
+	return {
+		editorId: 'editor-1',
+		connectionId: 'local',
+		sql,
+		startedAt: 1000,
+		completedAt: 1042,
+		result: {
+			columns: [{ name: 'value', ordinal: 0 }],
+			rows: [[{ kind: SqlCellKind.Integer, value: 1 }]],
+			rowCount: 1,
+			elapsedMs: 12,
+			truncated: false
+		}
 	};
+}
 
-	const grid = buildSqlResultGrid(result);
+function createFailedEvent() {
+	return {
+		editorId: 'editor-1',
+		connectionId: 'local',
+		sql: 'SELECT * FROM missing_table;',
+		startedAt: 2000,
+		completedAt: 2030,
+		error: new Error('no such table: missing_table')
+	};
+}
 
-	assert.equal(getSqlResultGridStatus(result, grid), '3 row(s) affected · 8ms');
+test('SqlQueryHistoryService starts empty', () => {
+	const service = new SqlQueryHistoryService(new InMemoryStorageService());
+
+	assert.equal(service.entries.length, 0);
+	service.dispose();
 });
 
-test('clampColumnWidth clamps invalid and out-of-range width', () => {
-	assert.equal(clampColumnWidth(Number.NaN), 160);
-	assert.equal(clampColumnWidth(10), 80);
-	assert.equal(clampColumnWidth(999), 480);
-	assert.equal(clampColumnWidth(200), 200);
+test('SqlQueryHistoryService records completed query', () => {
+	const storage = new InMemoryStorageService();
+	const service = new SqlQueryHistoryService(storage);
+
+	service.addCompletedQuery(createCompletedEvent());
+
+	assert.equal(service.entries.length, 1);
+	assert.equal(service.entries[0].sql, 'SELECT 1 AS value;');
+	assert.equal(service.entries[0].rowCount, 1);
+
+	const stored = storage.getObject<object>(SQL_QUERY_HISTORY_STORAGE_KEY, StorageScope.PROFILE);
+	assert.ok(stored);
+
+	service.dispose();
+});
+
+test('SqlQueryHistoryService records failed query', () => {
+	const service = new SqlQueryHistoryService(new InMemoryStorageService());
+
+	service.addFailedQuery(createFailedEvent());
+
+	assert.equal(service.entries.length, 1);
+	assert.equal(service.entries[0].errorMessage, 'no such table: missing_table');
+
+	service.dispose();
+});
+
+test('SqlQueryHistoryService fires change events', () => {
+	const service = new SqlQueryHistoryService(new InMemoryStorageService());
+	let changeCount = 0;
+
+	const disposable = service.onDidChangeHistory(() => {
+		changeCount++;
+	});
+
+	service.addCompletedQuery(createCompletedEvent());
+
+	assert.equal(changeCount, 1);
+
+	disposable.dispose();
+	service.dispose();
+});
+
+test('SqlQueryHistoryService removes entry', () => {
+	const service = new SqlQueryHistoryService(new InMemoryStorageService());
+
+	service.addCompletedQuery(createCompletedEvent());
+	const id = service.entries[0].id;
+
+	service.remove(id);
+
+	assert.equal(service.entries.length, 0);
+
+	service.dispose();
+});
+
+test('SqlQueryHistoryService clears entries', () => {
+	const service = new SqlQueryHistoryService(new InMemoryStorageService());
+
+	service.addCompletedQuery(createCompletedEvent('SELECT 1;'));
+	service.addCompletedQuery(createCompletedEvent('SELECT 2;'));
+
+	assert.equal(service.entries.length, 2);
+
+	service.clear();
+
+	assert.equal(service.entries.length, 0);
+
+	service.dispose();
+});
+
+test('SqlQueryHistoryService loads persisted entries', () => {
+	const storage = new InMemoryStorageService();
+	const first = new SqlQueryHistoryService(storage);
+
+	first.addCompletedQuery(createCompletedEvent());
+	first.dispose();
+
+	const second = new SqlQueryHistoryService(storage);
+
+	assert.equal(second.entries.length, 1);
+	assert.equal(second.entries[0].sql, 'SELECT 1 AS value;');
+
+	second.dispose();
 });
 ```
 
 ---
 
-# 5. 修改 `package.json`
+# 10. 修改 `package.json`
 
-当前 `test:sql-result` 只跑 `sqlResultModel.test.ts`。
+新增测试脚本：
 
-改成：
-
-```json
-"test:sql-result": "node --test --import tsx src/vs/workbench/contrib/sqlResult/test/sqlResultModel.test.ts src/vs/workbench/contrib/sqlResult/test/sqlResultGridModel.test.ts"
+```json id="prhs4v"
+{
+  "scripts": {
+    "test:sql-history": "node --test --import tsx src/vs/workbench/contrib/sqlHistory/test/sqlQueryHistoryModel.test.ts src/vs/workbench/contrib/sqlHistory/test/sqlQueryHistoryService.test.ts"
+  }
+}
 ```
 
-总测试不用改，因为当前 `test` 已经包含 `test:sql-result`。
+总测试链路加入 `test:sql-history`：
+
+```json id="jfv47e"
+{
+  "scripts": {
+    "test": "pnpm run test:branding && pnpm run test:rust && pnpm run test:sql-services && pnpm run test:sql-domain && pnpm run test:sql-connections && pnpm run test:sql-editor && pnpm run test:sql-result && pnpm run test:sql-history"
+  }
+}
+```
 
 ---
 
-# 6. 验收命令
+# 11. 验收命令
 
-```bash
-pnpm run test:sql-result
+```bash id="3lbw9h"
+pnpm run test:sql-history
 pnpm run test
 pnpm run lint
 pnpm run build
 ```
 
-手动验收：
+---
 
-```txt
+# 12. 手动验收
+
+```txt id="sclsy3"
 1. 启动应用
 2. 添加 SQLite 连接
 3. 打开 SQL Editor
-4. 执行 SELECT 1 AS id, 'Alice' AS name;
-5. SQL Results 展示表格
-6. 点击单元格，单元格高亮
-7. Copy Cell 能复制单元格
-8. Copy Row 能复制表头 + 当前行 TSV
-9. Copy CSV 能复制完整结果 CSV
-10. Copy TSV 能复制完整结果 TSV
-11. NULL 显示为灰色 italic
-12. number 右对齐
-13. blob 显示 [blob N bytes]
-14. statusbar 显示 row / column / elapsed 信息
+4. 执行 SELECT 1 AS value;
+5. SQL Results 正常展示
+6. 打开 SQL Results Panel 下的 Query History View
+7. 能看到刚才的查询
+8. 点击 Open，能重新打开 SQL Editor
+9. 点击 Rerun，能重新执行查询，并更新 Result Panel
+10. 执行错误 SQL，例如 SELECT * FROM missing_table;
+11. Query History 中出现错误记录
+12. 点击 Clear History，历史清空
+13. 重启应用后，历史仍然存在
 ```
 
 ---
 
-# 7. Phase 7 完成后的效果
+# Phase 7.2 完成标准
 
-完成后结果面板会从：
-
-```txt
-简单 HTML table
-只有 Copy CSV / Clear
+```txt id="bpb5ph"
+查询成功/失败都会入历史
+历史本地持久化
+History View 可展示记录
+Open in Editor 可用
+Rerun 可用
+Remove 可用
+Clear History 可用
+测试进入 test 链路
 ```
 
-变成：
+下一阶段：
 
-```txt
-可选中单元格的 Result Grid
-支持 Copy Cell / Copy Row / Copy CSV / Copy TSV
-有结果状态栏
-有 NULL / number / blob / text 基础展示语义
+```txt id="8g1qic"
+Phase 7.3：SQL Editor UX Enhancement
 ```
-
-这一步才是“迁移旧 MVP 产品体验”的正确方向。
-
-下一步建议继续做：
-
-```txt
-Phase 7.2：Query History & Recent SQL
-```
-
-而不是回到多数据库抽象。因为 Result Grid 后，用户马上会需要“刚才执行过什么 SQL、能否重新打开、能否复用”。
