@@ -137,6 +137,10 @@ impl SqlConnectionStore {
     ) -> Result<SqlSavedConnection, String> {
         let connection = normalize_connection_input(&request.input)?;
 
+        if !is_persistable_database_path(&connection.database_path) {
+            return Err("in-memory SQLite connections cannot be saved".to_string());
+        }
+
         let saved = SqlSavedConnection {
             id: connection.id.clone(),
             name: connection.name.clone(),
@@ -147,23 +151,39 @@ impl SqlConnectionStore {
             auto_connect: request.auto_connect,
         };
 
-        if request.open_now {
-            let already_open = {
-                let connections = self.connections()?;
-                connections.contains_key(&saved.id)
-            };
+        let was_open = {
+            let connections = self.connections()?;
+            connections.contains_key(&saved.id)
+        };
 
-            if !already_open {
-                self.open_connection(saved.to_input())?;
-            }
+        if request.open_now && !was_open {
+            self.open_connection(saved.to_input())?;
         }
 
-        {
+        let previous = {
             let mut saved_connections = self.saved_connections()?;
-            saved_connections.insert(saved.id.clone(), saved.clone());
-        }
+            saved_connections.insert(saved.id.clone(), saved.clone())
+        };
 
-        self.flush_saved_connections()?;
+        if let Err(error) = self.flush_saved_connections() {
+            {
+                let mut saved_connections = self.saved_connections()?;
+                match previous {
+                    Some(previous) => {
+                        saved_connections.insert(previous.id.clone(), previous);
+                    }
+                    None => {
+                        saved_connections.remove(&saved.id);
+                    }
+                }
+            }
+
+            if request.open_now && !was_open {
+                let _ = self.close_connection(&saved.id);
+            }
+
+            return Err(error);
+        }
 
         Ok(saved)
     }
@@ -191,14 +211,20 @@ impl SqlConnectionStore {
             return Err("connectionId must not be empty".to_string());
         }
 
-        {
+        let removed = {
             let mut saved_connections = self.saved_connections()?;
-            if saved_connections.remove(connection_id).is_none() {
-                return Err(format!("saved connection '{connection_id}' does not exist"));
-            }
-        }
+            saved_connections.remove(connection_id)
+        };
 
-        self.flush_saved_connections()?;
+        let Some(removed) = removed else {
+            return Err(format!("saved connection '{connection_id}' does not exist"));
+        };
+
+        if let Err(error) = self.flush_saved_connections() {
+            let mut saved_connections = self.saved_connections()?;
+            saved_connections.insert(removed.id.clone(), removed);
+            return Err(error);
+        }
 
         if request.close_if_open {
             let is_open = {
@@ -556,6 +582,10 @@ fn open_sqlite_connection(input: &SqlConnectionInput) -> Result<Connection, Stri
         .map_err(|err| format!("failed to enable sqlite foreign_keys: {err}"))?;
 
     Ok(conn)
+}
+
+fn is_persistable_database_path(database_path: &str) -> bool {
+    database_path.trim() != ":memory:"
 }
 
 fn default_connection_name(database_path: &str) -> String {
@@ -1270,6 +1300,35 @@ mod tests {
         assert_eq!(reloaded.list_saved_connections().unwrap().len(), 0);
 
         let _ = std::fs::remove_dir_all(&missing_dir);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn save_connection_rejects_in_memory_database() {
+        let store = SqlConnectionStore::new();
+        let path = temp_json_file("reject-memory");
+
+        store.initialize_persistence(path.clone()).unwrap();
+
+        let err = store
+            .save_connection(SqlSaveConnectionRequest {
+                input: SqlConnectionInput {
+                    id: Some("memory".to_string()),
+                    name: Some("Memory".to_string()),
+                    kind: SqlConnectionKind::Sqlite,
+                    database_path: ":memory:".to_string(),
+                    read_only: false,
+                    create_if_missing: true,
+                },
+                auto_connect: true,
+                open_now: true,
+            })
+            .unwrap_err();
+
+        assert!(err.contains("in-memory SQLite connections cannot be saved"));
+        assert_eq!(store.list_saved_connections().unwrap().len(), 0);
+        assert_eq!(store.list_connections().unwrap().len(), 0);
+
         let _ = std::fs::remove_file(path);
     }
 

@@ -132,8 +132,14 @@ export function normalizeSqlSaveConnectionRequest(request: SqlSaveConnectionRequ
 		throw new Error('save connection request must be an object');
 	}
 
+	const input = normalizeSqlConnectionInput(request.input);
+
+	if (input.databasePath.trim() === ':memory:') {
+		throw new Error('in-memory SQLite connections cannot be saved');
+	}
+
 	return {
-		input: normalizeSqlConnectionInput(request.input),
+		input,
 		autoConnect: request.autoConnect === true,
 		openNow: request.openNow === true
 	};

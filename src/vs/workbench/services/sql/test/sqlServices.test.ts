@@ -14,6 +14,7 @@ import { SqlCellKind, SqlConnectionKind, SqlTableType } from '../common/sqlTypes
 import {
 	normalizeSqlConnectionInput,
 	normalizeSqlExecuteQueryRequest,
+	normalizeSqlSaveConnectionRequest,
 	SQL_MAX_QUERY_LIMIT
 } from '../common/sqlValidation.js';
 
@@ -525,4 +526,22 @@ test('SqlConnectionService.restoreSavedConnections invokes sql_restore_saved_con
 		command: 'sql_restore_saved_connections',
 		args: {}
 	});
+});
+
+test('normalizeSqlSaveConnectionRequest rejects in-memory SQLite connection', () => {
+	assert.throws(
+		() =>
+			normalizeSqlSaveConnectionRequest({
+				input: {
+					id: 'memory',
+					name: 'Memory',
+					kind: SqlConnectionKind.Sqlite,
+					databasePath: ':memory:',
+					createIfMissing: true
+				},
+				autoConnect: true,
+				openNow: true
+			}),
+		/in-memory SQLite connections cannot be saved/
+	);
 });
