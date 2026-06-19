@@ -50,29 +50,29 @@ test('PostgreSQL driver is planned', () => {
 	assert.throws(() => assertSqlDriverEnabled(SqlConnectionKind.PostgreSql), /planned/);
 });
 
-test('MySQL driver is planned', () => {
+test('MySQL driver is enabled', () => {
 	const mysql = getSqlDriverDescriptor(SqlConnectionKind.MySql);
 
 	assert.equal(mysql.label, 'MySQL');
 	assert.equal(mysql.dialect, SqlDialect.MySql);
-	assert.equal(mysql.availability, SqlDriverAvailability.Planned);
+	assert.equal(mysql.availability, SqlDriverAvailability.Enabled);
 	assert.equal(mysql.defaultPorts?.default, 3306);
 	assert.equal(mysql.capabilities.remote, true);
 	assert.equal(mysql.capabilities.credentials, true);
-	assert.equal(isSqlDriverEnabled(SqlConnectionKind.MySql), false);
-	assert.throws(() => assertSqlDriverEnabled(SqlConnectionKind.MySql), /planned/);
+	assert.equal(isSqlDriverEnabled(SqlConnectionKind.MySql), true);
+	assert.doesNotThrow(() => assertSqlDriverEnabled(SqlConnectionKind.MySql));
 });
 
-test('listEnabledSqlDrivers returns only SQLite', () => {
+test('listEnabledSqlDrivers returns SQLite and MySQL', () => {
 	assert.deepEqual(
 		listEnabledSqlDrivers().map(driver => driver.id),
-		[SqlConnectionKind.Sqlite]
+		[SqlConnectionKind.Sqlite, SqlConnectionKind.MySql]
 	);
 });
 
-test('listPlannedSqlDrivers returns PostgreSQL and MySQL', () => {
+test('listPlannedSqlDrivers returns PostgreSQL only', () => {
 	assert.deepEqual(
 		listPlannedSqlDrivers().map(driver => driver.id),
-		[SqlConnectionKind.PostgreSql, SqlConnectionKind.MySql]
+		[SqlConnectionKind.PostgreSql]
 	);
 });

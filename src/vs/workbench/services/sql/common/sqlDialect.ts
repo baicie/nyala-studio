@@ -1,6 +1,7 @@
 /*---------------------------------------------------------------------------------------------
  * SQL Studio Next - SQL dialect domain helpers.
  * Phase 9 adds foundation for PostgreSQL/MySQL SQL generation.
+ * Phase 9.2 enables MySQL runtime for metadata SQL generation.
  *--------------------------------------------------------------------------------------------*/
 
 import { SqlConnectionKind } from './sqlTypes.js';
@@ -164,4 +165,87 @@ function normalizeOptionalIdentifier(value: string | undefined, fieldName: strin
 
 function assertNever(value: never): never {
 	throw new Error(`Unsupported SQL dialect value: ${String(value)}`);
+}
+
+export function createListDatabasesSql(dialect: SqlDialect): string {
+	switch (dialect) {
+		case SqlDialect.MySql:
+			return 'SHOW DATABASES;';
+
+		case SqlDialect.Sqlite:
+			return 'PRAGMA database_list;';
+
+		case SqlDialect.PostgreSql:
+			return `SELECT datname AS name
+FROM pg_database
+WHERE datistemplate = false
+ORDER BY datname;
+`;
+
+		default:
+			return assertNever(dialect);
+	}
+}
+
+export function createListTablesSql(dialect: SqlDialect, database?: string): string {
+	switch (dialect) {
+		case SqlDialect.MySql:
+			return `SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = ${mysqlStringLiteral(database ?? '')}
+ORDER BY TABLE_TYPE, TABLE_NAME;
+`;
+
+		case SqlDialect.Sqlite:
+			return `SELECT name, type
+FROM sqlite_master
+WHERE type IN ('table', 'view')
+  AND name NOT LIKE 'sqlite_%'
+ORDER BY type, name;
+`;
+
+		case SqlDialect.PostgreSql:
+			return `SELECT table_schema, table_name, table_type
+FROM information_schema.tables
+WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+ORDER BY table_schema, table_type, table_name;
+`;
+
+		default:
+			return assertNever(dialect);
+	}
+}
+
+export function createListColumnsSql(dialect: SqlDialect, schema: string | undefined, tableName: string): string {
+	switch (dialect) {
+		case SqlDialect.MySql:
+			return `SELECT ORDINAL_POSITION, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = ${mysqlStringLiteral(schema ?? '')}
+  AND TABLE_NAME = ${mysqlStringLiteral(tableName)}
+ORDER BY ORDINAL_POSITION;
+`;
+
+		case SqlDialect.Sqlite:
+			return `PRAGMA table_info(${quoteSqlIdentifier(SqlDialect.Sqlite, tableName)});`;
+
+		case SqlDialect.PostgreSql:
+			return `SELECT ordinal_position, column_name, data_type, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = ${postgresStringLiteral(schema ?? 'public')}
+  AND table_name = ${postgresStringLiteral(tableName)}
+ORDER BY ordinal_position;
+`;
+
+		default:
+			return assertNever(dialect);
+	}
+}
+
+function mysqlStringLiteral(value: string): string {
+	return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "''")}'`;
+}
+
+function postgresStringLiteral(value: string): string {
+	return `'${value.replaceAll("'", "''")}'`;
 }

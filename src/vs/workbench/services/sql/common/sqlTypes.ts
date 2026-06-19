@@ -70,6 +70,10 @@ export interface SqlConnectionTestResult {
 	error?: string;
 }
 
+export interface SqlDatabase {
+	name: string;
+}
+
 export const enum SqlTableType {
 	Table = 'table',
 	View = 'view'

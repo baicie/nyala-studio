@@ -1,6 +1,7 @@
 /*---------------------------------------------------------------------------------------------
  * SQL Studio Next - SQL connection form model.
- * Phase 9.1 exposes PostgreSQL as preview only.
+ * Phase 9.2 enables MySQL runtime preview.
+ * PostgreSQL remains preview-only.
  *--------------------------------------------------------------------------------------------*/
 
 import {
@@ -15,7 +16,8 @@ import {
 
 export const SQL_CONNECTION_PREVIEW_KINDS: readonly SqlConnectionKind[] = [
 	SqlConnectionKind.Sqlite,
-	SqlConnectionKind.PostgreSql
+	SqlConnectionKind.PostgreSql,
+	SqlConnectionKind.MySql
 ];
 
 export interface SqlConnectionFormState {
@@ -45,16 +47,7 @@ export interface SqlConnectionFormPreview {
 	readonly canSave: boolean;
 	readonly message: string;
 	readonly summary: string;
-
-	/**
-	 * Safe input for preview/display usage.
-	 * Password is never exposed from preview.
-	 */
 	readonly input: SqlConnectionInput;
-
-	/**
-	 * Backward-compatible alias for callers/tests that explicitly inspect masking.
-	 */
 	readonly maskedInput: SqlConnectionInput;
 }
 
@@ -74,20 +67,10 @@ export function createDefaultSqlConnectionFormState(
 			};
 
 		case SqlConnectionKind.PostgreSql:
-			return {
-				kind,
-				name: undefined,
-				host: 'localhost',
-				port: 5432,
-				database: 'postgres',
-				username: undefined,
-				password: undefined,
-				sslMode: SqlSslMode.Prefer,
-				readOnly: false,
-				createIfMissing: false,
-				saveConnection: false,
-				autoConnect: false
-			};
+			return createNetworkDefaults(kind, 5432, 'postgres');
+
+		case SqlConnectionKind.MySql:
+			return createNetworkDefaults(kind, 3306, 'mysql');
 
 		default:
 			return createDefaultSqlConnectionFormState(SqlConnectionKind.Sqlite);
@@ -124,6 +107,8 @@ export function normalizeSqlConnectionFormState(input: Partial<SqlConnectionForm
 
 	const port = normalizePort(input.port, defaults.port);
 
+	const saveConnection = kind === SqlConnectionKind.MySql && input.saveConnection === true;
+
 	return {
 		...defaults,
 		name: normalizeOptionalString(input.name),
@@ -135,16 +120,15 @@ export function normalizeSqlConnectionFormState(input: Partial<SqlConnectionForm
 		sslMode: normalizeSslMode(input.sslMode),
 		readOnly: false,
 		createIfMissing: false,
-		saveConnection: false,
+		saveConnection,
+		/**
+		 * Phase 9.2 intentionally disallows auto-connect for MySQL because
+		 * password is not persisted until Secret Store arrives.
+		 */
 		autoConnect: false
 	};
 }
 
-/**
- * Creates the raw connection input represented by the form.
- * For PostgreSQL preview this may contain password in memory only.
- * It must not be persisted or logged.
- */
 export function createSqlConnectionInputFromFormState(state: Partial<SqlConnectionFormState>): SqlConnectionInput {
 	const normalized = normalizeSqlConnectionFormState(state);
 
@@ -160,7 +144,7 @@ export function createSqlConnectionInputFromFormState(state: Partial<SqlConnecti
 
 	return {
 		name: normalized.name,
-		kind: SqlConnectionKind.PostgreSql,
+		kind: normalized.kind,
 		host: normalized.host,
 		port: normalized.port,
 		database: normalized.database,
@@ -170,6 +154,10 @@ export function createSqlConnectionInputFromFormState(state: Partial<SqlConnecti
 		readOnly: false,
 		createIfMissing: false
 	};
+}
+
+export function createSafeSqlConnectionInputFromFormState(state: Partial<SqlConnectionFormState>): SqlConnectionInput {
+	return maskSqlConnectionInput(createSqlConnectionInputFromFormState(state));
 }
 
 export function maskSqlConnectionInput(input: SqlConnectionInput): SqlConnectionInput {
@@ -213,22 +201,39 @@ export function createSqlConnectionFormPreview(state: Partial<SqlConnectionFormS
 		database ? undefined : 'database'
 	].filter((value): value is string => Boolean(value));
 
-	const summary = missingFields.length > 0
-		? `PostgreSQL Preview · missing ${missingFields.join(', ')}`
-		: `PostgreSQL Preview · ${host}:${port}/${database}`;
+	if (normalized.kind === SqlConnectionKind.PostgreSql) {
+		return {
+			kind: normalized.kind,
+			label: descriptor.label,
+			availability: descriptor.availability,
+			canConnect: false,
+			canSave: false,
+			message: missingFields.length > 0
+				? `PostgreSQL Preview is missing ${missingFields.join(', ')}. Runtime connection is not enabled yet.`
+				: 'PostgreSQL is preview-only. Runtime connection is not enabled yet.',
+			summary: missingFields.length > 0
+				? `PostgreSQL Preview · missing ${missingFields.join(', ')}`
+				: `PostgreSQL Preview · ${host}:${port}/${database}`,
+			input: maskedInput,
+			maskedInput
+		};
+	}
 
-	const message = missingFields.length > 0
-		? `PostgreSQL Preview is missing ${missingFields.join(', ')}. Runtime connection is not enabled yet.`
-		: 'PostgreSQL is preview-only in Phase 9.1. Runtime connection is not enabled yet.';
+	const canConnect = missingFields.length === 0;
+	const canSave = canConnect && normalized.saveConnection;
 
 	return {
 		kind: normalized.kind,
 		label: descriptor.label,
 		availability: descriptor.availability,
-		canConnect: false,
-		canSave: false,
-		message,
-		summary,
+		canConnect,
+		canSave,
+		message: canConnect
+			? 'MySQL runtime preview is ready.'
+			: `MySQL connection is missing ${missingFields.join(', ')}.`,
+		summary: canConnect
+			? `MySQL · ${host}:${port}/${database}`
+			: `MySQL · missing ${missingFields.join(', ')}`,
 		input: maskedInput,
 		maskedInput
 	};
@@ -244,14 +249,35 @@ export function canSaveSqlConnectionForm(state: Partial<SqlConnectionFormState>)
 
 export function getSqlConnectionFormStatus(state: Partial<SqlConnectionFormState>): string {
 	const preview = createSqlConnectionFormPreview(state);
-
 	return `${preview.summary} · ${preview.message}`;
+}
+
+function createNetworkDefaults(
+	kind: SqlConnectionKind.PostgreSql | SqlConnectionKind.MySql,
+	port: number,
+	database: string
+): SqlConnectionFormState {
+	return {
+		kind,
+		name: undefined,
+		host: 'localhost',
+		port,
+		database,
+		username: undefined,
+		password: undefined,
+		sslMode: SqlSslMode.Prefer,
+		readOnly: false,
+		createIfMissing: false,
+		saveConnection: false,
+		autoConnect: false
+	};
 }
 
 function normalizePreviewKind(kind: SqlConnectionKind | undefined): SqlConnectionKind {
 	switch (kind) {
 		case SqlConnectionKind.Sqlite:
 		case SqlConnectionKind.PostgreSql:
+		case SqlConnectionKind.MySql:
 			return kind;
 
 		default:

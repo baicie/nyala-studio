@@ -18,10 +18,11 @@ import {
 	SqlSslMode
 } from '../../../services/sql/common/sqlTypes.js';
 
-test('SQL_CONNECTION_PREVIEW_KINDS exposes SQLite and PostgreSQL only', () => {
+test('SQL_CONNECTION_PREVIEW_KINDS exposes SQLite PostgreSQL and MySQL', () => {
 	assert.deepEqual(SQL_CONNECTION_PREVIEW_KINDS, [
 		SqlConnectionKind.Sqlite,
-		SqlConnectionKind.PostgreSql
+		SqlConnectionKind.PostgreSql,
+		SqlConnectionKind.MySql
 	]);
 });
 
@@ -44,6 +45,23 @@ test('createDefaultSqlConnectionFormState creates PostgreSQL preview defaults', 
 		host: 'localhost',
 		port: 5432,
 		database: 'postgres',
+		username: undefined,
+		password: undefined,
+		sslMode: SqlSslMode.Prefer,
+		readOnly: false,
+		createIfMissing: false,
+		saveConnection: false,
+		autoConnect: false
+	});
+});
+
+test('createDefaultSqlConnectionFormState creates MySQL defaults', () => {
+	assert.deepEqual(createDefaultSqlConnectionFormState(SqlConnectionKind.MySql), {
+		kind: SqlConnectionKind.MySql,
+		name: undefined,
+		host: 'localhost',
+		port: 3306,
+		database: 'mysql',
 		username: undefined,
 		password: undefined,
 		sslMode: SqlSslMode.Prefer,
@@ -257,7 +275,7 @@ test('getSqlConnectionFormStatus returns preview status', () => {
 			port: 5432,
 			database: 'app'
 		}),
-		'PostgreSQL Preview · localhost:5432/app · PostgreSQL is preview-only in Phase 9.1. Runtime connection is not enabled yet.'
+		'PostgreSQL Preview · localhost:5432/app · PostgreSQL is preview-only. Runtime connection is not enabled yet.'
 	);
 });
 
@@ -321,4 +339,76 @@ test('PostgreSQL preview reports missing host and database', () => {
 		preview.message,
 		'PostgreSQL Preview is missing host, database. Runtime connection is not enabled yet.'
 	);
+});
+
+test('createSqlConnectionFormPreview allows MySQL connect', () => {
+	const preview = createSqlConnectionFormPreview({
+		kind: SqlConnectionKind.MySql,
+		host: 'localhost',
+		port: 3306,
+		database: 'app',
+		username: 'root',
+		password: 'secret'
+	});
+
+	assert.equal(preview.label, 'MySQL');
+	assert.equal(preview.availability, SqlDriverAvailability.Enabled);
+	assert.equal(preview.canConnect, true);
+	assert.equal(preview.canSave, false);
+	assert.equal(preview.summary, 'MySQL · localhost:3306/app');
+	assert.equal(preview.input.password, undefined);
+});
+
+test('canSaveSqlConnectionForm allows MySQL public profile save without auto connect', () => {
+	const preview = createSqlConnectionFormPreview({
+		kind: SqlConnectionKind.MySql,
+		host: 'localhost',
+		port: 3306,
+		database: 'app',
+		saveConnection: true,
+		autoConnect: true
+	});
+
+	assert.equal(preview.canConnect, true);
+	assert.equal(preview.canSave, true);
+
+	const state = normalizeSqlConnectionFormState({
+		kind: SqlConnectionKind.MySql,
+		host: 'localhost',
+		port: 3306,
+		database: 'app',
+		saveConnection: true,
+		autoConnect: true
+	});
+
+	assert.equal(state.saveConnection, true);
+	assert.equal(state.autoConnect, false);
+});
+
+test('MySQL preview reports missing database', () => {
+	const preview = createSqlConnectionFormPreview({
+		kind: SqlConnectionKind.MySql,
+		host: 'localhost',
+		port: 3306,
+		database: ''
+	});
+
+	assert.equal(preview.canConnect, false);
+	assert.equal(preview.summary, 'MySQL · missing database');
+	assert.equal(preview.message, 'MySQL connection is missing database.');
+});
+
+test('MySQL preview input is masked and does not expose password', () => {
+	const preview = createSqlConnectionFormPreview({
+		kind: SqlConnectionKind.MySql,
+		host: 'localhost',
+		port: 3306,
+		database: 'app',
+		username: 'root',
+		password: 'secret'
+	});
+
+	assert.equal(preview.input.password, undefined);
+	assert.equal(preview.maskedInput.password, undefined);
+	assert.deepEqual(preview.input, preview.maskedInput);
 });

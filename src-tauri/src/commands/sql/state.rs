@@ -1,14 +1,19 @@
 use super::driver::{is_persistable_connection, normalize_connection_input};
+use super::mysql_runtime::{
+    execute_mysql_query, list_mysql_columns, list_mysql_databases, list_mysql_tables,
+    open_mysql_pool, test_mysql_connection,
+};
 use super::persistence::{load_saved_connections, save_saved_connections};
 use super::types::{
     SqlCancelQueryRequest, SqlCancelQueryResult, SqlCellValue, SqlColumn, SqlConnection,
-    SqlConnectionInput, SqlConnectionKind, SqlConnectionTestResult, SqlExecuteQueryRequest,
-    SqlListColumnsRequest, SqlQueryResult, SqlRemoveSavedConnectionRequest,
+    SqlConnectionInput, SqlConnectionKind, SqlConnectionTestResult, SqlDatabase,
+    SqlExecuteQueryRequest, SqlListColumnsRequest, SqlQueryResult, SqlRemoveSavedConnectionRequest,
     SqlRestoreSavedConnectionError, SqlRestoreSavedConnectionsResult, SqlResultColumn,
     SqlSaveConnectionRequest, SqlSavedConnection, SqlTable, SqlTableType, DEFAULT_QUERY_ROW_LIMIT,
     MAX_QUERY_ROW_LIMIT, MAX_SQL_BYTES,
 };
 use base64::{engine::general_purpose, Engine as _};
+use mysql::Pool;
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, InterruptHandle, OpenFlags};
 use std::collections::HashMap;
@@ -19,10 +24,19 @@ use std::time::Instant;
 type ConnectionMap = HashMap<String, Arc<SqlConnectionHandle>>;
 type SavedConnectionMap = HashMap<String, SqlSavedConnection>;
 
+enum SqlRuntimeConnection {
+    Sqlite {
+        conn: Mutex<Connection>,
+        interrupt: InterruptHandle,
+    },
+    MySql {
+        pool: Pool,
+    },
+}
+
 struct SqlConnectionHandle {
     info: SqlConnection,
-    conn: Mutex<Connection>,
-    interrupt: InterruptHandle,
+    runtime: SqlRuntimeConnection,
 }
 
 pub struct SqlConnectionStore {
@@ -65,16 +79,27 @@ impl SqlConnectionStore {
 
     #[allow(clippy::unused_self, clippy::needless_pass_by_value)]
     pub fn test_connection(&self, input: SqlConnectionInput) -> SqlConnectionTestResult {
-        match normalize_connection_input(&input)
-            .and_then(|connection| open_sqlite_connection(&input).map(|conn| (connection, conn)))
-        {
-            Ok((connection, conn)) => match conn.query_row("SELECT 1", [], |_| Ok(())) {
-                Ok(()) => SqlConnectionTestResult::ok(connection),
-                Err(err) => {
-                    SqlConnectionTestResult::error(format!("failed to validate connection: {err}"))
+        match normalize_connection_input(&input) {
+            Ok(connection) => {
+                let result = match connection.kind {
+                    SqlConnectionKind::Sqlite => open_sqlite_connection(&input).and_then(|conn| {
+                        conn.query_row("SELECT 1", [], |_| Ok(()))
+                            .map_err(|err| err.to_string())
+                    }),
+                    SqlConnectionKind::MySql => {
+                        open_mysql_pool(&input).and_then(|pool| test_mysql_connection(&pool))
+                    }
+                    SqlConnectionKind::PostgreSql => {
+                        Err("SQL driver 'PostgreSQL' is not enabled yet".to_string())
+                    }
+                };
+
+                match result {
+                    Ok(()) => SqlConnectionTestResult::ok(connection),
+                    Err(error) => SqlConnectionTestResult::error(error),
                 }
-            },
-            Err(err) => SqlConnectionTestResult::error(err),
+            }
+            Err(error) => SqlConnectionTestResult::error(error),
         }
     }
 
@@ -89,13 +114,30 @@ impl SqlConnectionStore {
             }
         }
 
-        let conn = open_sqlite_connection(&input)?;
-        let interrupt = conn.get_interrupt_handle();
+        let runtime = match connection.kind {
+            SqlConnectionKind::Sqlite => {
+                let conn = open_sqlite_connection(&input)?;
+                let interrupt = conn.get_interrupt_handle();
+
+                SqlRuntimeConnection::Sqlite {
+                    conn: Mutex::new(conn),
+                    interrupt,
+                }
+            }
+            SqlConnectionKind::MySql => {
+                let pool = open_mysql_pool(&input)?;
+                test_mysql_connection(&pool)?;
+
+                SqlRuntimeConnection::MySql { pool }
+            }
+            SqlConnectionKind::PostgreSql => {
+                return Err("SQL driver 'PostgreSQL' is not enabled yet".to_string());
+            }
+        };
 
         let handle = Arc::new(SqlConnectionHandle {
             info: connection.clone(),
-            conn: Mutex::new(conn),
-            interrupt,
+            runtime,
         });
 
         let mut connections = self.connections()?;
@@ -128,6 +170,17 @@ impl SqlConnectionStore {
         connections.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
 
         Ok(connections)
+    }
+
+    pub fn list_databases(&self, connection_id: &str) -> Result<Vec<SqlDatabase>, String> {
+        let handle = self.connection(connection_id)?;
+
+        match &handle.runtime {
+            SqlRuntimeConnection::Sqlite { .. } => Ok(vec![SqlDatabase {
+                name: "main".to_string(),
+            }]),
+            SqlRuntimeConnection::MySql { pool } => list_mysql_databases(pool),
+        }
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -292,67 +345,88 @@ impl SqlConnectionStore {
 
     pub fn list_tables(&self, connection_id: &str) -> Result<Vec<SqlTable>, String> {
         let handle = self.connection(connection_id)?;
-        let conn = handle.conn.lock().map_err(|err| err.to_string())?;
 
-        let mut stmt = conn
-            .prepare(
-                "SELECT name, type
-                 FROM sqlite_master
-                 WHERE type IN ('table', 'view')
-                   AND name NOT LIKE 'sqlite_%'
-                 ORDER BY type, name",
-            )
-            .map_err(|err| format!("failed to prepare table metadata query: {err}"))?;
+        match &handle.runtime {
+            SqlRuntimeConnection::Sqlite { conn, .. } => {
+                let conn = conn.lock().map_err(|err| err.to_string())?;
 
-        let rows = stmt
-            .query_map([], |row| {
-                let name = row.get::<_, String>(0)?;
-                let raw_type = row.get::<_, String>(1)?;
-                let table_type = if raw_type.eq_ignore_ascii_case("view") {
-                    SqlTableType::View
-                } else {
-                    SqlTableType::Table
-                };
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT name, type
+                         FROM sqlite_master
+                         WHERE type IN ('table', 'view')
+                           AND name NOT LIKE 'sqlite_%'
+                         ORDER BY type, name",
+                    )
+                    .map_err(|err| format!("failed to prepare table metadata query: {err}"))?;
 
-                Ok(SqlTable {
-                    schema: Some("main".to_string()),
-                    name,
-                    table_type,
-                })
-            })
-            .map_err(|err| format!("failed to query table metadata: {err}"))?;
+                let rows = stmt
+                    .query_map([], |row| {
+                        let name = row.get::<_, String>(0)?;
+                        let raw_type = row.get::<_, String>(1)?;
+                        let table_type = if raw_type.eq_ignore_ascii_case("view") {
+                            SqlTableType::View
+                        } else {
+                            SqlTableType::Table
+                        };
 
-        collect_rows(rows, "failed to read table metadata row")
+                        Ok(SqlTable {
+                            schema: Some("main".to_string()),
+                            name,
+                            table_type,
+                        })
+                    })
+                    .map_err(|err| format!("failed to query table metadata: {err}"))?;
+
+                collect_rows(rows, "failed to read table metadata row")
+            }
+            SqlRuntimeConnection::MySql { pool } => {
+                list_mysql_tables(pool, handle.info.database.as_deref())
+            }
+        }
     }
 
     #[allow(clippy::needless_pass_by_value)]
     pub fn list_columns(&self, request: SqlListColumnsRequest) -> Result<Vec<SqlColumn>, String> {
         let handle = self.connection(&request.connection_id)?;
-        let conn = handle.conn.lock().map_err(|err| err.to_string())?;
 
-        let table_name = quote_sqlite_identifier(&request.table_name)?;
-        let sql = format!("PRAGMA table_info({table_name})");
+        match &handle.runtime {
+            SqlRuntimeConnection::Sqlite { conn, .. } => {
+                let conn = conn.lock().map_err(|err| err.to_string())?;
 
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|err| format!("failed to prepare column metadata query: {err}"))?;
+                let table_name = quote_sqlite_identifier(&request.table_name)?;
+                let sql = format!("PRAGMA table_info({table_name})");
 
-        let rows = stmt
-            .query_map([], |row| {
-                let data_type = row.get::<_, Option<String>>(2)?;
+                let mut stmt = conn
+                    .prepare(&sql)
+                    .map_err(|err| format!("failed to prepare column metadata query: {err}"))?;
 
-                Ok(SqlColumn {
-                    ordinal: row.get::<_, i64>(0)?,
-                    name: row.get::<_, String>(1)?,
-                    data_type: data_type.filter(|value| !value.trim().is_empty()),
-                    not_null: row.get::<_, i64>(3)? != 0,
-                    default_value: row.get::<_, Option<String>>(4)?,
-                    primary_key: row.get::<_, i64>(5)? != 0,
-                })
-            })
-            .map_err(|err| format!("failed to query column metadata: {err}"))?;
+                let rows = stmt
+                    .query_map([], |row| {
+                        let data_type = row.get::<_, Option<String>>(2)?;
 
-        collect_rows(rows, "failed to read column metadata row")
+                        Ok(SqlColumn {
+                            ordinal: row.get::<_, i64>(0)?,
+                            name: row.get::<_, String>(1)?,
+                            data_type: data_type.filter(|value| !value.trim().is_empty()),
+                            not_null: row.get::<_, i64>(3)? != 0,
+                            default_value: row.get::<_, Option<String>>(4)?,
+                            primary_key: row.get::<_, i64>(5)? != 0,
+                        })
+                    })
+                    .map_err(|err| format!("failed to query column metadata: {err}"))?;
+
+                collect_rows(rows, "failed to read column metadata row")
+            }
+            SqlRuntimeConnection::MySql { pool } => list_mysql_columns(
+                pool,
+                request
+                    .schema
+                    .as_deref()
+                    .or(handle.info.database.as_deref()),
+                &request.table_name,
+            ),
+        }
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -378,8 +452,22 @@ impl SqlConnectionStore {
             );
         }
 
+        match &handle.runtime {
+            SqlRuntimeConnection::Sqlite { conn, .. } => {
+                self.execute_sqlite_query(conn, sql, limit)
+            }
+            SqlRuntimeConnection::MySql { pool } => execute_mysql_query(pool, sql, limit),
+        }
+    }
+
+    fn execute_sqlite_query(
+        &self,
+        conn: &Mutex<Connection>,
+        sql: &str,
+        limit: usize,
+    ) -> Result<SqlQueryResult, String> {
         let started_at = Instant::now();
-        let conn = handle.conn.lock().map_err(|err| err.to_string())?;
+        let conn = conn.lock().map_err(|err| err.to_string())?;
 
         let mut stmt = conn
             .prepare(sql)
@@ -459,14 +547,25 @@ impl SqlConnectionStore {
         request: SqlCancelQueryRequest,
     ) -> Result<SqlCancelQueryResult, String> {
         let handle = self.connection(&request.connection_id)?;
-        handle.interrupt.interrupt();
 
-        Ok(SqlCancelQueryResult {
-            cancelled: true,
-            connection_id: request.connection_id,
-            query_id: request.query_id,
-            message: "interrupt signal sent to SQLite connection".to_string(),
-        })
+        match &handle.runtime {
+            SqlRuntimeConnection::Sqlite { interrupt, .. } => {
+                interrupt.interrupt();
+
+                Ok(SqlCancelQueryResult {
+                    cancelled: true,
+                    connection_id: request.connection_id,
+                    query_id: request.query_id,
+                    message: "interrupt signal sent to SQLite connection".to_string(),
+                })
+            }
+            SqlRuntimeConnection::MySql { .. } => Ok(SqlCancelQueryResult {
+                cancelled: false,
+                connection_id: request.connection_id,
+                query_id: request.query_id,
+                message: "MySQL query cancellation is not supported in Phase 9.2".to_string(),
+            }),
+        }
     }
 
     fn connections(&self) -> Result<MutexGuard<'_, ConnectionMap>, String> {

@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+	createListColumnsSql,
+	createListDatabasesSql,
+	createListTablesSql,
 	createTablePreviewSql,
 	formatQualifiedName,
 	getDialectForConnectionKind,
@@ -110,4 +113,31 @@ test('normalizePreviewLimit clamps limit', () => {
 	assert.equal(normalizePreviewLimit(undefined), 100);
 	assert.equal(normalizePreviewLimit(100_000), 10_000);
 	assert.throws(() => normalizePreviewLimit(0), /positive integer/);
+});
+
+test('createListDatabasesSql creates MySQL SQL', () => {
+	assert.equal(createListDatabasesSql(SqlDialect.MySql), 'SHOW DATABASES;');
+});
+
+test('createListTablesSql creates MySQL SQL', () => {
+	assert.equal(
+		createListTablesSql(SqlDialect.MySql, 'app'),
+		`SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'app'
+ORDER BY TABLE_TYPE, TABLE_NAME;
+`
+	);
+});
+
+test('createListColumnsSql creates MySQL SQL', () => {
+	assert.equal(
+		createListColumnsSql(SqlDialect.MySql, 'app', 'users'),
+		`SELECT ORDINAL_POSITION, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = 'app'
+  AND TABLE_NAME = 'users'
+ORDER BY ORDINAL_POSITION;
+`
+	);
 });

@@ -1,7 +1,7 @@
 /*---------------------------------------------------------------------------------------------
  * SQL Studio Next - SQL driver catalog.
  * Phase 9 introduces multi-database foundations.
- * SQLite is enabled. PostgreSQL/MySQL are planned.
+ * SQLite and MySQL are enabled. PostgreSQL is planned.
  *--------------------------------------------------------------------------------------------*/
 
 import { SqlConnectionKind } from './sqlTypes.js';
@@ -85,12 +85,11 @@ export const MYSQL_DRIVER: SqlDriverDescriptor = {
 	id: SqlConnectionKind.MySql,
 	label: 'MySQL',
 	dialect: SqlDialect.MySql,
-	availability: SqlDriverAvailability.Planned,
+	availability: SqlDriverAvailability.Enabled,
 	defaultPorts: {
 		default: 3306,
 		alternatives: []
 	},
-	reason: 'MySQL runtime driver is planned after the SQLite MVP is stable.',
 	capabilities: {
 		fileBased: false,
 		remote: true,

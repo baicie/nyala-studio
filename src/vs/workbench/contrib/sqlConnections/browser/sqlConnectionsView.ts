@@ -55,6 +55,7 @@ import {
 import { SQL_CONNECTIONS_VIEW_ID } from '../common/sqlConnections.js';
 import {
 	createDefaultSqlConnectionFormState,
+	createSafeSqlConnectionInputFromFormState,
 	createSqlConnectionFormPreview,
 	createSqlConnectionInputFromFormState,
 	SQL_CONNECTION_PREVIEW_KINDS,
@@ -90,7 +91,7 @@ export class SqlConnectionsView extends ViewPane {
 
 	private driverSelect!: HTMLSelectElement;
 	private sqliteFieldsElement!: HTMLElement;
-	private postgresPreviewElement!: HTMLElement;
+	private networkFieldsElement!: HTMLElement;
 	private hostInput!: HTMLInputElement;
 	private portInput!: HTMLInputElement;
 	private databaseInput!: HTMLInputElement;
@@ -215,26 +216,39 @@ export class SqlConnectionsView extends ViewPane {
 			return;
 		}
 
-		if (preview.kind !== SqlConnectionKind.Sqlite) {
+		if (preview.kind === SqlConnectionKind.PostgreSql) {
 			this.showInfo(preview.message);
 			return;
 		}
 
-		this.showInfo('Opening SQLite connection...');
+		this.showInfo(preview.kind === SqlConnectionKind.MySql ? 'Opening MySQL connection...' : 'Opening SQLite connection...');
 
 		try {
-			const input: SqlConnectionInput = createSqlConnectionInputFromFormState(formState);
+			const rawInput: SqlConnectionInput = createSqlConnectionInputFromFormState(formState);
+			const safeInput: SqlConnectionInput = createSafeSqlConnectionInputFromFormState(formState);
+			const input = preview.kind === SqlConnectionKind.MySql ? rawInput : safeInput;
 
 			let connectionId: string;
 			let connectionName: string;
 
 			const shouldSave = preview.canSave;
 
-			if (formState.saveConnection && !shouldSave) {
+			if (preview.kind === SqlConnectionKind.Sqlite && formState.saveConnection && !shouldSave) {
 				this.showInfo('In-memory SQLite connections are temporary and will not be saved.');
 			}
 
-			if (shouldSave) {
+			if (shouldSave && preview.kind === SqlConnectionKind.MySql) {
+				const connection = await this.sqlConnectionService.openConnection(rawInput);
+
+				await this.sqlConnectionService.saveConnection({
+					input: safeInput,
+					autoConnect: false,
+					openNow: false
+				});
+
+				connectionId = connection.id;
+				connectionName = connection.name;
+			} else if (shouldSave) {
 				const saved = await this.sqlConnectionService.saveConnection({
 					input,
 					autoConnect: formState.autoConnect,
@@ -273,7 +287,19 @@ export class SqlConnectionsView extends ViewPane {
 		for (const kind of SQL_CONNECTION_PREVIEW_KINDS) {
 			const option = document.createElement('option');
 			option.value = kind;
-			option.textContent = kind === SqlConnectionKind.PostgreSql ? 'PostgreSQL Preview' : 'SQLite';
+
+			switch (kind) {
+				case SqlConnectionKind.Sqlite:
+					option.textContent = 'SQLite';
+					break;
+				case SqlConnectionKind.PostgreSql:
+					option.textContent = 'PostgreSQL Preview';
+					break;
+				case SqlConnectionKind.MySql:
+					option.textContent = 'MySQL Preview';
+					break;
+			}
+
 			this.driverSelect.appendChild(option);
 		}
 
@@ -299,9 +325,9 @@ export class SqlConnectionsView extends ViewPane {
 			})
 		) as HTMLInputElement;
 
-		this.postgresPreviewElement = append(this.form, $('.sql-connections-driver-fields.postgres'));
+		this.networkFieldsElement = append(this.form, $('.sql-connections-driver-fields.network'));
 
-		const hostLabel = append(this.postgresPreviewElement, $('label.sql-connections-field'));
+		const hostLabel = append(this.networkFieldsElement, $('label.sql-connections-field'));
 		append(hostLabel, $('span', undefined, 'Host'));
 		this.hostInput = append(
 			hostLabel,
@@ -311,7 +337,7 @@ export class SqlConnectionsView extends ViewPane {
 			})
 		) as HTMLInputElement;
 
-		const portLabel = append(this.postgresPreviewElement, $('label.sql-connections-field'));
+		const portLabel = append(this.networkFieldsElement, $('label.sql-connections-field'));
 		append(portLabel, $('span', undefined, 'Port'));
 		this.portInput = append(
 			portLabel,
@@ -319,31 +345,31 @@ export class SqlConnectionsView extends ViewPane {
 				type: 'number',
 				min: '1',
 				max: '65535',
-				placeholder: '5432'
+				placeholder: '3306'
 			})
 		) as HTMLInputElement;
 
-		const databaseLabel = append(this.postgresPreviewElement, $('label.sql-connections-field'));
+		const databaseLabel = append(this.networkFieldsElement, $('label.sql-connections-field'));
 		append(databaseLabel, $('span', undefined, 'Database'));
 		this.databaseInput = append(
 			databaseLabel,
 			$('input.sql-connections-input', {
 				type: 'text',
-				placeholder: 'postgres'
+				placeholder: 'mysql'
 			})
 		) as HTMLInputElement;
 
-		const usernameLabel = append(this.postgresPreviewElement, $('label.sql-connections-field'));
+		const usernameLabel = append(this.networkFieldsElement, $('label.sql-connections-field'));
 		append(usernameLabel, $('span', undefined, 'Username'));
 		this.usernameInput = append(
 			usernameLabel,
 			$('input.sql-connections-input', {
 				type: 'text',
-				placeholder: 'postgres'
+				placeholder: 'root'
 			})
 		) as HTMLInputElement;
 
-		const passwordLabel = append(this.postgresPreviewElement, $('label.sql-connections-field'));
+		const passwordLabel = append(this.networkFieldsElement, $('label.sql-connections-field'));
 		append(passwordLabel, $('span', undefined, 'Password'));
 		this.passwordInput = append(
 			passwordLabel,
@@ -353,7 +379,7 @@ export class SqlConnectionsView extends ViewPane {
 			})
 		) as HTMLInputElement;
 
-		const sslLabel = append(this.postgresPreviewElement, $('label.sql-connections-field'));
+		const sslLabel = append(this.networkFieldsElement, $('label.sql-connections-field'));
 		append(sslLabel, $('span', undefined, 'SSL mode'));
 		this.sslModeInput = append(
 			sslLabel,
@@ -410,9 +436,18 @@ export class SqlConnectionsView extends ViewPane {
 
 		this.formDisposables.add(
 			addDisposableListener(this.driverSelect, EventType.CHANGE, () => {
-				this.currentFormKind = this.driverSelect.value === SqlConnectionKind.PostgreSql
-					? SqlConnectionKind.PostgreSql
-					: SqlConnectionKind.Sqlite;
+				switch (this.driverSelect.value) {
+					case SqlConnectionKind.PostgreSql:
+						this.currentFormKind = SqlConnectionKind.PostgreSql;
+						break;
+					case SqlConnectionKind.MySql:
+						this.currentFormKind = SqlConnectionKind.MySql;
+						break;
+					case SqlConnectionKind.Sqlite:
+					default:
+						this.currentFormKind = SqlConnectionKind.Sqlite;
+						break;
+				}
 
 				this.applyFormState(createDefaultSqlConnectionFormState(this.currentFormKind));
 				this.refreshDriverPreview();
@@ -477,8 +512,8 @@ export class SqlConnectionsView extends ViewPane {
 		this.databasePathInput.value = state.databasePath ?? ':memory:';
 
 		this.hostInput.value = state.host ?? 'localhost';
-		this.portInput.value = state.port ? String(state.port) : '5432';
-		this.databaseInput.value = state.database ?? 'postgres';
+		this.portInput.value = state.port ? String(state.port) : '3306';
+		this.databaseInput.value = state.database ?? 'mysql';
 		this.usernameInput.value = state.username ?? '';
 		this.passwordInput.value = state.password ?? '';
 		this.sslModeInput.value = state.sslMode ?? SqlSslMode.Prefer;
@@ -493,18 +528,25 @@ export class SqlConnectionsView extends ViewPane {
 		const formState = this.getFormState();
 		const preview = createSqlConnectionFormPreview(formState);
 		const isSqlite = preview.kind === SqlConnectionKind.Sqlite;
+		const isPostgres = preview.kind === SqlConnectionKind.PostgreSql;
+		const isMysql = preview.kind === SqlConnectionKind.MySql;
 
 		this.sqliteFieldsElement.classList.toggle('hidden', !isSqlite);
-		this.postgresPreviewElement.classList.toggle('hidden', isSqlite);
+		this.networkFieldsElement.classList.toggle('hidden', isSqlite);
 
 		this.readOnlyInput.disabled = !isSqlite;
 		this.createIfMissingInput.disabled = !isSqlite;
-		this.saveConnectionInput.disabled = !isSqlite;
+		this.saveConnectionInput.disabled = isPostgres;
 		this.autoConnectInput.disabled = !isSqlite || !this.saveConnectionInput.checked;
 
 		if (!isSqlite) {
-			this.saveConnectionInput.checked = false;
+			this.readOnlyInput.checked = false;
+			this.createIfMissingInput.checked = false;
 			this.autoConnectInput.checked = false;
+		}
+
+		if (isPostgres) {
+			this.saveConnectionInput.checked = false;
 		}
 
 		this.connectButton.disabled = !preview.canConnect;
@@ -517,9 +559,14 @@ export class SqlConnectionsView extends ViewPane {
 		const message = append(this.driverPreviewElement, $('.sql-connection-driver-preview-message'));
 		message.textContent = preview.message;
 
-		if (!isSqlite) {
+		if (isMysql) {
 			const note = append(this.driverPreviewElement, $('.sql-connection-driver-preview-note'));
-			note.textContent = 'Password is accepted for preview masking only and will not be stored. Runtime PostgreSQL connection is not enabled in this phase.';
+			note.textContent = 'MySQL runtime preview is enabled. Password is only used for the current connection and is not saved.';
+		}
+
+		if (isPostgres) {
+			const note = append(this.driverPreviewElement, $('.sql-connection-driver-preview-note'));
+			note.textContent = 'PostgreSQL remains preview-only. Runtime connection is not enabled in this phase.';
 		}
 	}
 

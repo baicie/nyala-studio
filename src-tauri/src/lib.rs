@@ -663,6 +663,7 @@ pub fn run() {
             commands::sql_open_connection,
             commands::sql_close_connection,
             commands::sql_list_connections,
+            commands::sql_list_databases,
             commands::sql_save_connection,
             commands::sql_list_saved_connections,
             commands::sql_remove_saved_connection,

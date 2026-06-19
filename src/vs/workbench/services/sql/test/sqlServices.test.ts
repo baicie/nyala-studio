@@ -10,7 +10,7 @@ import {
 } from '../browser/sqlCommandExecutor.js';
 import { SqlMetadataService } from '../browser/sqlMetadataService.js';
 import { SqlQueryService } from '../browser/sqlQueryService.js';
-import { SqlCellKind, SqlConnectionKind, SqlTableType } from '../common/sqlTypes.js';
+import { SqlCellKind, SqlConnectionKind, SqlSslMode, SqlTableType } from '../common/sqlTypes.js';
 import {
 	normalizeSqlConnectionInput,
 	normalizeSqlExecuteQueryRequest,
@@ -84,16 +84,24 @@ test('normalizeSqlConnectionInput rejects planned PostgreSQL driver', () => {
 	);
 });
 
-test('normalizeSqlConnectionInput rejects planned MySQL driver', () => {
-	assert.throws(
-		() =>
-			normalizeSqlConnectionInput({
-				kind: SqlConnectionKind.MySql,
-				host: 'localhost',
-				database: 'app'
-			}),
-		/MySQL.*planned/
-	);
+test('normalizeSqlConnectionInput accepts enabled MySQL driver', () => {
+	const result = normalizeSqlConnectionInput({
+		kind: SqlConnectionKind.MySql,
+		host: ' localhost ',
+		port: 3306,
+		database: ' app ',
+		username: ' root ',
+		password: ' secret ',
+		sslMode: SqlSslMode.Prefer
+	});
+
+	assert.equal(result.kind, SqlConnectionKind.MySql);
+	assert.equal(result.host, 'localhost');
+	assert.equal(result.port, 3306);
+	assert.equal(result.database, 'app');
+	assert.equal(result.username, 'root');
+	assert.equal(result.sslMode, SqlSslMode.Prefer);
+	assert.equal(result.readOnly, false);
 });
 
 test('normalizeSqlConnectionInput keeps SQLite path flow', () => {

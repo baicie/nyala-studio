@@ -3,7 +3,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ISqlMetadataService } from '../common/sqlMetadata.js';
-import { SqlColumn, SqlListColumnsRequest, SqlTable } from '../common/sqlTypes.js';
+import { SqlColumn, SqlDatabase, SqlListColumnsRequest, SqlTable } from '../common/sqlTypes.js';
 import { normalizeConnectionId, normalizeSqlListColumnsRequest } from '../common/sqlValidation.js';
 import { ISqlCommandExecutor, TauriSqlCommandExecutor, toSqlServiceError } from './sqlCommandExecutor.js';
 
@@ -11,6 +11,20 @@ export class SqlMetadataService implements ISqlMetadataService {
 	declare readonly _serviceBrand: undefined;
 
 	constructor(private readonly executor: ISqlCommandExecutor = new TauriSqlCommandExecutor()) {}
+
+	async listDatabases(connectionId: string): Promise<SqlDatabase[]> {
+		const normalizedConnectionId = normalizeConnectionId(connectionId);
+
+		try {
+			const databases = await this.executor.execute<SqlDatabase[]>('sql_list_databases', {
+				connectionId: normalizedConnectionId
+			});
+
+			return Array.isArray(databases) ? databases : [];
+		} catch (error) {
+			throw toSqlServiceError('sql_list_databases', error);
+		}
+	}
 
 	async listTables(connectionId: string): Promise<SqlTable[]> {
 		const normalizedConnectionId = normalizeConnectionId(connectionId);

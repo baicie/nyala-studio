@@ -2,6 +2,7 @@ mod connection;
 pub mod dialect;
 mod driver;
 mod metadata;
+mod mysql_runtime;
 mod persistence;
 mod query;
 pub mod state;

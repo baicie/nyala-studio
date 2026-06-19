@@ -38,7 +38,7 @@ pub fn sql_driver_catalog() -> Vec<SqlDriverDescriptor> {
         SqlDriverDescriptor {
             kind: SqlConnectionKind::MySql,
             label: "MySQL",
-            availability: SqlDriverAvailability::Planned,
+            availability: SqlDriverAvailability::Enabled,
             default_port: Some(3306),
             file_based: false,
             remote: true,
@@ -70,8 +70,9 @@ pub fn normalize_connection_input(input: &SqlConnectionInput) -> Result<SqlConne
 
     match input.kind {
         SqlConnectionKind::Sqlite => normalize_sqlite_connection_input(input),
-        SqlConnectionKind::PostgreSql | SqlConnectionKind::MySql => {
-            Err(format!("SQL driver '{:?}' is not enabled yet", input.kind))
+        SqlConnectionKind::MySql => normalize_network_connection_input(input),
+        SqlConnectionKind::PostgreSql => {
+            Err("SQL driver 'PostgreSQL' is not enabled yet".to_string())
         }
     }
 }
@@ -186,9 +187,40 @@ mod tests {
     }
 
     #[test]
-    fn mysql_driver_is_planned() {
-        let err = ensure_driver_enabled(&SqlConnectionKind::MySql).unwrap_err();
-        assert!(err.contains("planned"));
+    fn mysql_driver_is_enabled() {
+        assert_eq!(
+            get_driver_descriptor(&SqlConnectionKind::MySql).label,
+            "MySQL"
+        );
+        assert!(ensure_driver_enabled(&SqlConnectionKind::MySql).is_ok());
+    }
+
+    #[test]
+    fn normalize_mysql_connection_input_creates_network_connection() {
+        let input = SqlConnectionInput {
+            id: Some("mysql-local".to_string()),
+            name: Some("Local MySQL".to_string()),
+            kind: SqlConnectionKind::MySql,
+            database_path: None,
+            host: Some(" localhost ".to_string()),
+            port: None,
+            database: Some(" app ".to_string()),
+            username: Some(" root ".to_string()),
+            password: Some(" secret ".to_string()),
+            ssl_mode: None,
+            read_only: false,
+            create_if_missing: false,
+        };
+
+        let connection = normalize_connection_input(&input).unwrap();
+
+        assert_eq!(connection.id, "mysql-local");
+        assert_eq!(connection.name, "Local MySQL");
+        assert_eq!(connection.kind, SqlConnectionKind::MySql);
+        assert_eq!(connection.host.as_deref(), Some("localhost"));
+        assert_eq!(connection.port, Some(3306));
+        assert_eq!(connection.database.as_deref(), Some("app"));
+        assert_eq!(connection.username.as_deref(), Some("root"));
     }
 
     #[test]
