@@ -38,6 +38,7 @@ import {
 } from '../common/sqlConnectionTreeModel.js';
 import {
 	createCopyQualifiedNameTextFromTreeNode,
+	createCopyTableNameTextFromTreeNode,
 	createCountDraftFromTreeNode,
 	createInsertDraftFromTreeNode,
 	createSelectDraftFromTreeNode,
@@ -427,42 +428,41 @@ export class SqlConnectionsView extends ViewPane {
 		}
 
 		if (isSqlTableLikeNode(node)) {
+			const draftOptions = this.getDraftOptionsForNode(node);
+
 			this.appendActionButton(actions, 'SELECT', 'Generate SELECT query', event => {
 				event.preventDefault();
 				event.stopPropagation();
-				this.openDraft(createSelectDraftFromTreeNode(node, {
-					connectionName: node.connectionId ? this.getConnectionName(node.connectionId) : undefined,
-					columns: this.getColumnsForNode(node)
-				})).catch(error => this.showError(error));
+				this.openDraft(createSelectDraftFromTreeNode(node, draftOptions)).catch(error => this.showError(error));
 			});
 
 			this.appendActionButton(actions, 'COUNT', 'Generate COUNT query', event => {
 				event.preventDefault();
 				event.stopPropagation();
-				this.openDraft(createCountDraftFromTreeNode(node, {
-					columns: this.getColumnsForNode(node)
-				})).catch(error => this.showError(error));
+				this.openDraft(createCountDraftFromTreeNode(node, draftOptions)).catch(error => this.showError(error));
 			});
 
 			if (isSqlMutableTableNode(node)) {
 				this.appendActionButton(actions, 'INSERT', 'Generate INSERT template', event => {
 					event.preventDefault();
 					event.stopPropagation();
-					this.openDraft(createInsertDraftFromTreeNode(node, {
-						columns: this.getColumnsForNode(node)
-					})).catch(error => this.showError(error));
+					this.openDraft(createInsertDraftFromTreeNode(node, draftOptions)).catch(error => this.showError(error));
 				});
 
 				this.appendActionButton(actions, 'UPDATE', 'Generate UPDATE template', event => {
 					event.preventDefault();
 					event.stopPropagation();
-					this.openDraft(createUpdateDraftFromTreeNode(node, {
-						columns: this.getColumnsForNode(node)
-					})).catch(error => this.showError(error));
+					this.openDraft(createUpdateDraftFromTreeNode(node, draftOptions)).catch(error => this.showError(error));
 				});
 			}
 
-			this.appendActionButton(actions, 'Copy', 'Copy qualified name', event => {
+			this.appendActionButton(actions, 'Copy Name', 'Copy table name', event => {
+				event.preventDefault();
+				event.stopPropagation();
+				this.copyTableName(node).catch(error => this.showError(error));
+			});
+
+			this.appendActionButton(actions, 'Copy Full', 'Copy qualified name', event => {
 				event.preventDefault();
 				event.stopPropagation();
 				this.copyQualifiedName(node).catch(error => this.showError(error));
@@ -561,6 +561,16 @@ export class SqlConnectionsView extends ViewPane {
 		return this.state.connections.find(connection => connection.id === connectionId)?.name;
 	}
 
+	private getDraftOptionsForNode(node: SqlConnectionTreeNode): {
+		connectionName?: string;
+		columns: SqlColumn[];
+	} {
+		return {
+			connectionName: node.connectionId ? this.getConnectionName(node.connectionId) : undefined,
+			columns: this.getColumnsForNode(node)
+		};
+	}
+
 	private getColumnsForNode(node: SqlConnectionTreeNode): SqlColumn[] {
 		if (!node.connectionId || !isSqlTableLikeNode(node)) {
 			return [];
@@ -617,6 +627,12 @@ export class SqlConnectionsView extends ViewPane {
 				delete this.state.columnsByTableId[key];
 			}
 		}
+	}
+
+	private async copyTableName(node: SqlConnectionTreeNode): Promise<void> {
+		const text = createCopyTableNameTextFromTreeNode(node);
+		await writeClipboardText(text);
+		this.showInfo(`Copied table name ${text}.`);
 	}
 
 	private async copyQualifiedName(node: SqlConnectionTreeNode): Promise<void> {

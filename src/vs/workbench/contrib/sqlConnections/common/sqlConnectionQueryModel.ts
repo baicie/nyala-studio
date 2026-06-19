@@ -99,7 +99,7 @@ export function createSelectDraftFromTreeNode(
 ): SqlEditorDraft {
 	const target = createTemplateTarget(node, options);
 	const template = createSelectTemplate(target, options.limit);
-	return createTemplateDraft(node, template);
+	return createTemplateDraft(node, template, options);
 }
 
 export function createCountDraftFromTreeNode(
@@ -108,7 +108,7 @@ export function createCountDraftFromTreeNode(
 ): SqlEditorDraft {
 	const target = createTemplateTarget(node, options);
 	const template = createCountTemplate(target);
-	return createTemplateDraft(node, template);
+	return createTemplateDraft(node, template, options);
 }
 
 export function createInsertDraftFromTreeNode(
@@ -117,7 +117,7 @@ export function createInsertDraftFromTreeNode(
 ): SqlEditorDraft {
 	const target = createTemplateTarget(node, options);
 	const template = createInsertTemplate(target);
-	return createTemplateDraft(node, template);
+	return createTemplateDraft(node, template, options);
 }
 
 export function createUpdateDraftFromTreeNode(
@@ -126,7 +126,7 @@ export function createUpdateDraftFromTreeNode(
 ): SqlEditorDraft {
 	const target = createTemplateTarget(node, options);
 	const template = createUpdateTemplate(target);
-	return createTemplateDraft(node, template);
+	return createTemplateDraft(node, template, options);
 }
 
 export function createCopyTableNameTextFromTreeNode(node: SqlConnectionTreeNode): string {
@@ -168,12 +168,16 @@ export function formatSqliteQualifiedName(schema: string | undefined, name: stri
 	});
 }
 
-function createTemplateDraft(node: SqlConnectionTreeNode, template: SqlGeneratedTemplate): SqlEditorDraft {
+function createTemplateDraft(
+	node: SqlConnectionTreeNode,
+	template: SqlGeneratedTemplate,
+	options: SqlEditorDraftOptions
+): SqlEditorDraft {
 	const connectionId = normalizeRequiredString(node.connectionId, 'connectionId');
 
 	return {
 		connectionId,
-		connectionName: undefined,
+		connectionName: normalizeOptionalString(options.connectionName),
 		initialSql: template.sql
 	};
 }

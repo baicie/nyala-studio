@@ -431,3 +431,34 @@ test('table like node guards work', () => {
 		false
 	);
 });
+
+test('template draft helpers preserve connection name', () => {
+	const node = {
+		id: 'table-users',
+		type: SqlConnectionTreeNodeType.Table,
+		label: 'users',
+		connectionId: 'local',
+		schema: 'main',
+		tableName: 'users'
+	};
+
+	assert.equal(
+		createSelectDraftFromTreeNode(node, { connectionName: 'Local SQLite' }).connectionName,
+		'Local SQLite'
+	);
+
+	assert.equal(
+		createCountDraftFromTreeNode(node, { connectionName: 'Local SQLite' }).connectionName,
+		'Local SQLite'
+	);
+
+	assert.equal(
+		createInsertDraftFromTreeNode(node, { connectionName: 'Local SQLite' }).connectionName,
+		'Local SQLite'
+	);
+
+	assert.equal(
+		createUpdateDraftFromTreeNode(node, { connectionName: 'Local SQLite' }).connectionName,
+		'Local SQLite'
+	);
+});
