@@ -32,3 +32,16 @@ test('isSqlDriverEnabled returns true for sqlite', () => {
 test('listEnabledSqlDrivers only includes enabled drivers', () => {
 	assert.deepEqual(listEnabledSqlDrivers(), [SQLITE_DRIVER]);
 });
+
+test('enabled SQL drivers must match currently supported connection kinds', () => {
+	const enabledDrivers = listEnabledSqlDrivers();
+
+	assert.deepEqual(
+		enabledDrivers.map(driver => driver.id),
+		[SqlConnectionKind.Sqlite]
+	);
+
+	for (const driver of enabledDrivers) {
+		assert.equal(driver.availability, SqlDriverAvailability.Enabled);
+	}
+});
