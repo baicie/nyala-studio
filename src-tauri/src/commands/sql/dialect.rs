@@ -3,6 +3,9 @@
 //! Phase 6.6 intentionally supports SQLite only. The Rust side keeps the API
 //! surface minimal until the MySQL/Postgres driver phases wire these helpers into
 //! real commands.
+
+#![allow(dead_code)]
+
 use super::types::SqlConnectionKind;
 
 pub const SQL_DEFAULT_TABLE_PREVIEW_LIMIT: usize = 100;
@@ -32,20 +35,17 @@ impl SqlDialect {
         let normalized_name = normalize_identifier(name, "name")?;
         let normalized_schema = normalize_optional_identifier(schema, "schema")?;
 
-        if normalized_schema
-            .as_deref()
-            .is_none_or(|schema| self.should_omit_schema(schema))
-        {
-            return self.quote_identifier(&normalized_name);
+        match normalized_schema {
+            None => self.quote_identifier(&normalized_name),
+            Some(schema) if self.should_omit_schema(&schema) => {
+                self.quote_identifier(&normalized_name)
+            }
+            Some(schema) => Ok(format!(
+                "{}.{}",
+                self.quote_identifier(&schema)?,
+                self.quote_identifier(&normalized_name)?
+            )),
         }
-
-        let schema = normalized_schema.expect("schema must exist after is_none_or false");
-
-        Ok(format!(
-            "{}.{}",
-            self.quote_identifier(&schema)?,
-            self.quote_identifier(&normalized_name)?
-        ))
     }
 
     pub fn create_table_preview_sql(

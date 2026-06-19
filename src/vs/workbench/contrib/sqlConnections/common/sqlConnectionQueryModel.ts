@@ -4,6 +4,8 @@
 
 import {
 	createTablePreviewSql,
+	formatQualifiedName,
+	quoteSqlIdentifier,
 	SqlDialect,
 	SQL_DEFAULT_TABLE_PREVIEW_LIMIT,
 	SQL_MAX_TABLE_PREVIEW_LIMIT
@@ -83,7 +85,7 @@ export function createTablePreviewDraft(
  * New code should use quoteSqlIdentifier(SqlDialect.Sqlite, value).
  */
 export function quoteSqliteIdentifier(value: string): string {
-	return `"${normalizeRequiredString(value, 'identifier').replaceAll('"', '""')}"`;
+	return quoteSqlIdentifier(SqlDialect.Sqlite, value);
 }
 
 /**
@@ -91,14 +93,10 @@ export function quoteSqliteIdentifier(value: string): string {
  * New code should use formatQualifiedName(SqlDialect.Sqlite, ...).
  */
 export function formatSqliteQualifiedName(schema: string | undefined, name: string): string {
-	const normalizedName = normalizeRequiredString(name, 'name');
-	const normalizedSchema = normalizeOptionalString(schema);
-
-	if (!normalizedSchema || normalizedSchema === 'main') {
-		return quoteSqliteIdentifier(normalizedName);
-	}
-
-	return `${quoteSqliteIdentifier(normalizedSchema)}.${quoteSqliteIdentifier(normalizedName)}`;
+	return formatQualifiedName(SqlDialect.Sqlite, {
+		schema,
+		name
+	});
 }
 
 function normalizeRequiredString(value: string | undefined, fieldName: string): string {
