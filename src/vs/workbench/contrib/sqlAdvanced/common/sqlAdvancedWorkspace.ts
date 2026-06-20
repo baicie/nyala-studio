@@ -29,7 +29,7 @@ export interface SqlWorkspaceProject {
 	readonly updatedAt: number;
 }
 
-export function createDefaultWorkspaceProject(name = 'SQL Studio Workspace'): SqlWorkspaceProject {
+export function createDefaultWorkspaceProject(name = 'Nyala Workspace'): SqlWorkspaceProject {
 	return {
 		version: 1,
 		name: normalizeRequiredString(name, 'name'),
@@ -51,7 +51,7 @@ export function normalizeWorkspaceProject(raw: unknown): SqlWorkspaceProject {
 
 	return {
 		version: 1,
-		name: normalizeRequiredString(value.name ?? 'SQL Studio Workspace', 'name'),
+		name: normalizeRequiredString(value.name ?? 'Nyala Workspace', 'name'),
 		rootUri: normalizeOptionalString(value.rootUri),
 		connections: normalizeConnectionRefs(value.connections ?? []),
 		queries: normalizeQueryFiles(value.queries ?? []),

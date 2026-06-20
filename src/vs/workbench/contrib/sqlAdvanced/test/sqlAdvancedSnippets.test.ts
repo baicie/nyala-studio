@@ -6,7 +6,8 @@ import {
 	applySnippetVariables,
 	createSnippetFromSelection,
 	listBuiltinSnippets,
-	mergeSnippets
+	mergeSnippets,
+	renderSnippetWithDefaults
 } from '../common/sqlAdvancedSnippets.js';
 
 test('listBuiltinSnippets filters by dialect', () => {
@@ -83,4 +84,21 @@ test('builtin select snippet can be rendered with defaults', () => {
 FROM users
 LIMIT 100;`
 	);
+});
+
+test('every builtin snippet renders without unresolved variables', () => {
+	for (const snippet of listBuiltinSnippets()) {
+		const rendered = renderSnippetWithDefaults(snippet);
+
+		assert.doesNotMatch(rendered, /\{\{/);
+		assert.ok(rendered.trim().endsWith(';'));
+	}
+});
+
+test('explain snippet uses dialect-specific prefix', () => {
+	const snippet = listBuiltinSnippets().find(item => item.id === 'builtin.explain');
+
+	assert.ok(snippet);
+	assert.match(renderSnippetWithDefaults(snippet, SqlConnectionKind.Sqlite), /^EXPLAIN QUERY PLAN/);
+	assert.match(renderSnippetWithDefaults(snippet, SqlConnectionKind.MySql), /^EXPLAIN SELECT/);
 });

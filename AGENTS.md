@@ -1,13 +1,13 @@
-# AGENTS.md — SQL Studio Next
+# AGENTS.md — Nyala Studio
 
 ## Project Identity
 
-This repository is **SQL Studio Next**, a SideX hard fork intended to become a VS Code-like SQL workbench.
+This repository is **Nyala Studio**, a SideX hard fork intended to become a VS Code-like SQL workbench.
 
 The product goal is not to build a generic code editor. The goal is:
 
 ```txt
-SQL Studio Next =
+Nyala Studio =
   SideX / VS Code-style Workbench shell
   + Tauri Rust backend
   + SQL connections
@@ -29,7 +29,7 @@ The immediate minimum viable goal is:
 
 ```txt
 Launch app
-  -> show SQL Studio branded workbench
+  -> show Nyala branded workbench
   -> add/open SQLite connection
   -> list database tables
   -> open SQL editor
@@ -57,7 +57,7 @@ Always prioritize work in this order:
 
 ### Phase 1 — Product Branding
 
-Replace remaining SideX branding with SQL Studio Next / Nyala.
+Replace remaining SideX and SQL Studio branding with Nyala / Nyala Studio.
 
 Allowed changes:
 
@@ -77,9 +77,9 @@ updater config
 Expected target:
 
 ```txt
-productName: SQL Studio Next
+productName: Nyala Studio
 identifier: com.baicie.sqlstudio
-window title: SQL Studio
+window title: Nyala
 ```
 
 The upstream SideX updater endpoint must not be used in this fork.
@@ -575,7 +575,7 @@ Do not duplicate SQL result/connection types across contributions.
 
 ## UI Rules
 
-### SQL Studio Is a Workbench, Not a SPA
+### Nyala Is a Workbench, Not a SPA
 
 Do not build product UI as independent pages.
 
@@ -782,7 +782,7 @@ Use concise conventional commit messages.
 Examples:
 
 ```txt
-chore: rename app branding to SQL Studio
+chore: rename app branding to Nyala Studio
 feat(sql): add SQLite query command bridge
 feat(sql): add SQL connection service
 feat(sql): add SQL connections view
@@ -839,7 +839,7 @@ These are later phases.
 The MVP is complete when:
 
 ```txt
-1. App launches as SQL Studio, not SideX.
+1. App launches as Nyala, not SideX or SQL Studio.
 2. A SQLite connection can be added.
 3. Tables can be listed.
 4. A SQL editor can be opened.

@@ -279,6 +279,7 @@ fn elapsed_ms(started_at: Instant) -> u64 {
 mod tests {
     use super::*;
     use mysql::Value;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn mysql_value_to_cell_handles_null() {
@@ -314,5 +315,94 @@ mod tests {
         assert!(is_mysql_select_like("SHOW DATABASES"));
         assert!(is_mysql_select_like("describe users"));
         assert!(!is_mysql_select_like("insert into users values (1)"));
+    }
+
+    #[test]
+    #[ignore = "requires NYALA_TEST_MYSQL_HOST and NYALA_TEST_MYSQL_DATABASE"]
+    fn mysql_live_preview_flow() -> Result<(), String> {
+        let host = required_test_env("NYALA_TEST_MYSQL_HOST")?;
+        let database = required_test_env("NYALA_TEST_MYSQL_DATABASE")?;
+        let port = std::env::var("NYALA_TEST_MYSQL_PORT")
+            .ok()
+            .map(|value| {
+                value
+                    .parse::<u16>()
+                    .map_err(|err| format!("invalid NYALA_TEST_MYSQL_PORT: {err}"))
+            })
+            .transpose()?
+            .unwrap_or(3306);
+
+        let input = SqlConnectionInput {
+            id: Some("nyala-mysql-integration".to_string()),
+            name: Some("Nyala MySQL Integration".to_string()),
+            kind: super::super::types::SqlConnectionKind::MySql,
+            database_path: None,
+            host: Some(host),
+            port: Some(port),
+            database: Some(database.clone()),
+            username: std::env::var("NYALA_TEST_MYSQL_USERNAME").ok(),
+            password: std::env::var("NYALA_TEST_MYSQL_PASSWORD").ok(),
+            ssl_mode: Some(SqlSslMode::Prefer),
+            read_only: false,
+            create_if_missing: false,
+        };
+
+        let pool = open_mysql_pool(&input)?;
+        test_mysql_connection(&pool)?;
+
+        let databases = list_mysql_databases(&pool)?;
+        if !databases.iter().any(|item| item.name == database) {
+            return Err(format!("configured database '{database}' was not listed"));
+        }
+
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("system clock error: {err}"))?
+            .as_millis();
+        let table_name = format!("nyala_integration_{suffix}");
+        let create_sql = format!(
+            "CREATE TABLE `{table_name}` (id BIGINT PRIMARY KEY, name VARCHAR(64) NOT NULL)"
+        );
+        let drop_sql = format!("DROP TABLE IF EXISTS `{table_name}`");
+
+        execute_mysql_query(&pool, &create_sql, 100)?;
+
+        let verification = (|| -> Result<(), String> {
+            let tables = list_mysql_tables(&pool, Some(&database))?;
+            if !tables.iter().any(|table| table.name == table_name) {
+                return Err(format!("integration table '{table_name}' was not listed"));
+            }
+
+            let columns = list_mysql_columns(&pool, Some(&database), &table_name)?;
+            if columns.len() != 2 || columns[0].name != "id" || columns[1].name != "name" {
+                return Err(format!("unexpected integration columns: {columns:?}"));
+            }
+
+            let result = execute_mysql_query(&pool, "SELECT 1 AS value", 100)?;
+            if result.row_count != 1
+                || result.columns.first().map(|column| column.name.as_str()) != Some("value")
+            {
+                return Err(format!("unexpected SELECT 1 result: {result:?}"));
+            }
+
+            Ok(())
+        })();
+
+        let cleanup = execute_mysql_query(&pool, &drop_sql, 100).map(|_| ());
+        verification?;
+        cleanup
+    }
+
+    fn required_test_env(name: &str) -> Result<String, String> {
+        std::env::var(name)
+            .map(|value| value.trim().to_string())
+            .map_err(|_| format!("{name} must be set for the ignored MySQL integration test"))
+            .and_then(|value| {
+                if value.is_empty() {
+                    Err(format!("{name} must not be empty"))
+                } else {
+                    Ok(value)
+                }
+            })
     }
 }

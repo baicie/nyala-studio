@@ -87,7 +87,6 @@ export class SqlEditorInput extends EditorInput {
 
 	override copy(): EditorInput {
 		return new SqlEditorInput({
-			id: this.id,
 			connectionId: this.connectionId,
 			connectionName: this.connectionName,
 			initialSql: this.initialSql

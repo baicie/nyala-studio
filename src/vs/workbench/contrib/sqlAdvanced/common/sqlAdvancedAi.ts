@@ -57,7 +57,7 @@ export function createAiPrompt(request: SqlAiRequest): string {
 
 	switch (request.kind) {
 		case SqlAiTaskKind.Assistant:
-			return `You are SQL Studio SQL assistant.
+			return `You are the Nyala SQL assistant.
 Dialect: ${context.dialect}
 Connection: ${context.connectionName ?? 'unknown'}
 Current SQL:
@@ -171,7 +171,8 @@ function createDeterministicGeneratedSql(context: SqlAiContext): string {
 	const firstTable = context.schema?.[0];
 
 	if (!firstTable) {
-		return 'SELECT 1 AS value;';
+		const request = context.userPrompt?.trim().replace(/[\r\n]+/g, ' ');
+		return request ? `-- ${request}\nSELECT 1 AS value;` : 'SELECT 1 AS value;';
 	}
 
 	const tableName = firstTable.schema ? `${firstTable.schema}.${firstTable.name}` : firstTable.name;

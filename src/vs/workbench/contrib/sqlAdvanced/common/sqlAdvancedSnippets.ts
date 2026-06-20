@@ -17,6 +17,17 @@ export interface SqlSnippetVariableMap {
 	readonly [key: string]: string | undefined;
 }
 
+const DEFAULT_SNIPPET_VARIABLES: SqlSnippetVariableMap = {
+	table: 'users',
+	limit: '100',
+	columns: 'id, name',
+	values: ':id, :name',
+	assignments: 'name = :name',
+	condition: 'id = :id',
+	explainPrefix: 'EXPLAIN QUERY PLAN',
+	sql: 'SELECT * FROM users'
+};
+
 export const BUILTIN_SQL_SNIPPETS: readonly SqlSnippet[] = [
 	{
 		id: 'builtin.select.all',
@@ -93,6 +104,16 @@ export function applySnippetVariables(body: string, variables: SqlSnippetVariabl
 	return body.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_match, name: string) => {
 		const value = variables[name];
 		return value === undefined ? `{{${name}}}` : value;
+	});
+}
+
+export function renderSnippetWithDefaults(
+	snippet: SqlSnippet,
+	dialect: SqlConnectionKind = SqlConnectionKind.Sqlite
+): string {
+	return applySnippetVariables(snippet.body, {
+		...DEFAULT_SNIPPET_VARIABLES,
+		explainPrefix: dialect === SqlConnectionKind.Sqlite ? 'EXPLAIN QUERY PLAN' : 'EXPLAIN'
 	});
 }
 

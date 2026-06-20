@@ -1,6 +1,10 @@
-# SQL Studio Next
+# Nyala Studio
 
-SQL Studio Next is a VS Code-like SQL workbench built on a Tauri-based workbench shell.
+**Local-first SQL Workbench**
+
+Nyala Studio is a local-first SQL database workbench built on a Tauri-based VS Code-like workbench shell.
+
+中文：Nyala Studio，本地优先的 SQL 数据库工作台。
 
 The project is a product hard fork of SideX. The goal is not to build a generic code editor. The goal is to build a local-first database workbench with:
 
@@ -19,7 +23,7 @@ The immediate MVP target is:
 
 ```txt
 Launch app
-  -> show SQL Studio branded workbench
+  -> show Nyala branded workbench
   -> add/open SQLite connection
   -> list database tables
   -> open SQL editor
@@ -31,7 +35,7 @@ Launch app
 
 ### Phase 1 — Product Branding
 
-- Rename app metadata to SQL Studio Next
+- Rename app metadata to Nyala Studio
 - Replace Tauri product name and bundle identifier
 - Remove upstream updater endpoint
 - Replace visible SideX menu labels
@@ -110,6 +114,18 @@ pnpm run rust:clippy
 pnpm run test
 ```
 
+Run the opt-in MySQL Preview integration test against a disposable test database:
+
+```powershell
+$env:NYALA_TEST_MYSQL_HOST = '127.0.0.1'
+$env:NYALA_TEST_MYSQL_DATABASE = 'nyala_test'
+$env:NYALA_TEST_MYSQL_USERNAME = 'root'
+$env:NYALA_TEST_MYSQL_PASSWORD = 'password'
+pnpm run test:mysql-integration
+```
+
+The integration test creates and removes one uniquely named table. Do not point it at a database where the test account must remain read-only.
+
 ## Project Layout
 
 ```txt
@@ -148,7 +164,7 @@ SQL-specific Rust code should live under:
 src-tauri/src/commands/sql/
 ```
 
-Do not build SQL Studio as a React Router-style SPA. This project should keep the VS Code-style Workbench model:
+Do not build Nyala as a React Router-style SPA. This project should keep the VS Code-style Workbench model:
 
 ```txt
 Activity Bar
@@ -163,6 +179,6 @@ Contributions
 
 ## Upstream Attribution
 
-SQL Studio Next is based on SideX, which is a Tauri port of Code - OSS / VS Code workbench concepts.
+Nyala Studio is based on SideX, which is a Tauri port of Code - OSS / VS Code workbench concepts.
 
 The upstream project and Code - OSS are MIT licensed. See `LICENSE` for details.

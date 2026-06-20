@@ -22,7 +22,7 @@ test('createAiPrompt creates assistant prompt', () => {
 		}
 	});
 
-	assert.match(prompt, /SQL Studio SQL assistant/);
+	assert.match(prompt, /Nyala SQL assistant/);
 	assert.match(prompt, /SELECT \* FROM users/);
 });
 
@@ -54,6 +54,18 @@ test('createGenerateQueryRequest creates deterministic SQL', () => {
 	assert.equal(response.sql, `SELECT id, name
 FROM users
 LIMIT 100;`);
+});
+
+test('deterministic query without schema preserves the user request as context', () => {
+	const response = createDeterministicAiResponse(
+		createGenerateQueryRequest({
+			dialect: SqlDialect.Sqlite,
+			userPrompt: 'list recent orders'
+		})
+	);
+
+	assert.equal(response.sql, `-- list recent orders
+SELECT 1 AS value;`);
 });
 
 test('createOptimizeQueryRequest keeps source SQL', () => {

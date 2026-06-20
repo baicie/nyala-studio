@@ -56,7 +56,7 @@ impl UpdateObserver for EventEmitter {
 /// Initializes the [`UpdateManager`] during Tauri setup.
 ///
 /// Pulls feed endpoints and the Minisign public key from the bundled
-/// `tauri.conf.json`. SQL Studio Next currently ships without an updater
+/// `tauri.conf.json`. Nyala Studio currently ships without an updater
 /// endpoint, so this can safely initialize into a disabled/no-endpoint state.
 pub fn initialize(app: &AppHandle) -> UpdateResult<()> {
     let config = read_config(app);

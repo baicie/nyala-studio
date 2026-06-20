@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "SQL Studio Next",
+  "productName": "Nyala Studio",
   "version": "0.1.0",
   "identifier": "com.baicie.sqlstudio",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "SQL Studio",
+        "title": "Nyala",
         "width": 1280,
         "height": 800,
         "minWidth": 800,
@@ -42,8 +42,8 @@
     "targets": "all",
     "copyright": "Copyright © 2026 baicie. All rights reserved.",
     "category": "DeveloperTool",
-    "shortDescription": "A VS Code-like SQL workbench.",
-    "longDescription": "SQL Studio Next is a fast, local-first SQL workbench built on a Tauri-based VS Code-style workbench.",
+    "shortDescription": "Local-first SQL Workbench.",
+    "longDescription": "Nyala Studio is a local-first SQL database workbench built on a Tauri-based VS Code-style workbench.",
     "resources": [
       "extension-host/*",
       "shell-integration/*"

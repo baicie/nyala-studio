@@ -28,7 +28,7 @@ class SqlProductHomeAction extends Action2 {
 	constructor() {
 		super({
 			id: SQL_PRODUCT_HOME_COMMAND_ID,
-			title: localize2('sqlProductHome', 'SQL Studio: Home'),
+			title: localize2('sqlProductHome', 'Nyala: Home'),
 			category: Categories.View,
 			f1: true,
 			menu: {
@@ -49,7 +49,7 @@ class SqlProductNewQueryAction extends Action2 {
 	constructor() {
 		super({
 			id: SQL_PRODUCT_NEW_QUERY_COMMAND_ID,
-			title: localize2('sqlProductNewQuery', 'SQL Studio: New Query'),
+			title: localize2('sqlProductNewQuery', 'Nyala: New Query'),
 			category: Categories.View,
 			f1: true,
 			menu: {
@@ -72,7 +72,7 @@ class SqlProductOpenResultsAction extends Action2 {
 	constructor() {
 		super({
 			id: SQL_PRODUCT_OPEN_RESULTS_COMMAND_ID,
-			title: localize2('sqlProductOpenResults', 'SQL Studio: Open Results'),
+			title: localize2('sqlProductOpenResults', 'Nyala: Open Results'),
 			category: Categories.View,
 			f1: true,
 			menu: {
@@ -92,7 +92,7 @@ class SqlProductOpenPreferencesAction extends Action2 {
 	constructor() {
 		super({
 			id: SQL_PRODUCT_OPEN_PREFERENCES_COMMAND_ID,
-			title: localize2('sqlProductOpenPreferences', 'SQL Studio: Preferences'),
+			title: localize2('sqlProductOpenPreferences', 'Nyala: Preferences'),
 			category: Categories.View,
 			f1: true,
 			menu: {
@@ -112,7 +112,7 @@ class SqlProductResetPreferencesAction extends Action2 {
 	constructor() {
 		super({
 			id: SQL_PRODUCT_RESET_PREFERENCES_COMMAND_ID,
-			title: localize2('sqlProductResetPreferences', 'SQL Studio: Reset Preferences'),
+			title: localize2('sqlProductResetPreferences', 'Nyala: Reset Preferences'),
 			category: Categories.View,
 			f1: true,
 			menu: {
@@ -126,7 +126,7 @@ class SqlProductResetPreferencesAction extends Action2 {
 		const notificationService = accessor.get(INotificationService);
 
 		preferencesService.reset();
-		notificationService.info('SQL Studio preferences reset.');
+		notificationService.info('Nyala preferences reset.');
 	}
 }
 
@@ -134,7 +134,7 @@ class SqlProductToggleRestoreLayoutAction extends Action2 {
 	constructor() {
 		super({
 			id: SQL_PRODUCT_TOGGLE_RESTORE_LAYOUT_COMMAND_ID,
-			title: localize2('sqlProductToggleRestoreLayout', 'SQL Studio: Toggle Restore Layout On Startup'),
+			title: localize2('sqlProductToggleRestoreLayout', 'Nyala: Toggle Restore Layout On Startup'),
 			category: Categories.View,
 			f1: true,
 			menu: {
@@ -157,7 +157,7 @@ class SqlProductToggleWelcomeQueryAction extends Action2 {
 	constructor() {
 		super({
 			id: SQL_PRODUCT_TOGGLE_WELCOME_QUERY_COMMAND_ID,
-			title: localize2('sqlProductToggleWelcomeQuery', 'SQL Studio: Toggle Welcome Query On First Launch'),
+			title: localize2('sqlProductToggleWelcomeQuery', 'Nyala: Toggle Welcome Query On First Launch'),
 			category: Categories.View,
 			f1: true,
 			menu: {

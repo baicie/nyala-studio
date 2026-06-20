@@ -1,19 +1,22 @@
-//! Product constants for SQL Studio Next.
+//! Product constants for Nyala Studio.
 //!
 //! Keep user-visible branding in one place so future refactors do not
 //! accidentally regress back to upstream `SideX` names.
 #![allow(clippy::doc_markdown)]
 
 #[allow(dead_code)]
-pub(crate) const PRODUCT_NAME: &str = "SQL Studio Next";
+pub(crate) const PRODUCT_NAME: &str = "Nyala Studio";
 #[allow(dead_code)]
-pub(crate) const APP_TITLE: &str = "SQL Studio";
+pub(crate) const APP_TITLE: &str = "Nyala";
 #[allow(dead_code)]
 pub(crate) const APP_IDENTIFIER: &str = "com.baicie.sqlstudio";
 
+#[allow(dead_code)]
 pub(crate) const APP_MENU_ID: &str = "sql_studio_menu";
-pub(crate) const APP_MENU_LABEL: &str = "SQL Studio";
-pub(crate) const ABOUT_MENU_LABEL: &str = "About SQL Studio";
+#[allow(dead_code)]
+pub(crate) const APP_MENU_LABEL: &str = "Nyala";
+#[allow(dead_code)]
+pub(crate) const ABOUT_MENU_LABEL: &str = "About Nyala";
 
 pub(crate) const STORAGE_DB_FILE_NAME: &str = "sql_studio_storage.db";
 pub(crate) const STATE_DB_FILE_NAME: &str = "sql_studio_state.db";
@@ -28,7 +31,7 @@ pub(crate) const LEGACY_STATE_DB_FILE_NAME: &str = "sidex_state.db";
 /// Value exposed to child shells via the `TERM_PROGRAM` env var.
 ///
 /// Mirrors [`APP_TITLE`] so terminal-aware tooling (e.g. shell prompts,
-/// `iterm2`/`tmux` integrations) shows the SQL Studio brand.
+/// `iterm2`/`tmux` integrations) shows the Nyala brand.
 pub(crate) const TERMINAL_PROGRAM_NAME: &str = APP_TITLE;
 
 pub(crate) const NATIVE_MENU_EVENT: &str = "sql-studio-native-menu";
@@ -41,7 +44,7 @@ pub(crate) const LEGACY_NATIVE_MENU_EVENT: &str = "sidex-native-menu";
 
 pub(crate) const UPDATE_STATE_EVENT: &str = "sql-studio://update/state-change";
 #[allow(dead_code)]
-pub(crate) const UPDATE_USER_AGENT_NAME: &str = "sql-studio-next";
+pub(crate) const UPDATE_USER_AGENT_NAME: &str = "nyala";
 
 pub(crate) fn update_user_agent(version: &str, os: &str) -> String {
     format!("{UPDATE_USER_AGENT_NAME}/{version} ({os})")
@@ -65,7 +68,12 @@ mod tests {
     }
 
     #[test]
-    fn product_identity_uses_sql_studio_branding() {
+    fn product_identity_uses_nyala_branding() {
+        assert_eq!(PRODUCT_NAME, "Nyala Studio");
+        assert_eq!(APP_TITLE, "Nyala");
+        assert_eq!(APP_MENU_LABEL, "Nyala");
+        assert_eq!(ABOUT_MENU_LABEL, "About Nyala");
+
         let values = [
             ("PRODUCT_NAME", PRODUCT_NAME),
             ("APP_TITLE", APP_TITLE),
@@ -101,7 +109,7 @@ mod tests {
     #[test]
     fn terminal_program_name_mirrors_app_title() {
         assert_eq!(TERMINAL_PROGRAM_NAME, APP_TITLE);
-        assert!(TERMINAL_PROGRAM_NAME.contains("SQL Studio"));
+        assert_eq!(TERMINAL_PROGRAM_NAME, "Nyala");
     }
 
     #[test]
@@ -116,9 +124,6 @@ mod tests {
 
     #[test]
     fn update_user_agent_uses_product_name() {
-        assert_eq!(
-            update_user_agent("0.1.0", "macos"),
-            "sql-studio-next/0.1.0 (macos)"
-        );
+        assert_eq!(update_user_agent("0.1.0", "macos"), "nyala/0.1.0 (macos)");
     }
 }

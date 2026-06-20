@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  SideX — Tauri-based VSCode port
+ *  Nyala Studio — local-first SQL workbench
  *  Entry point. Globals set by inline script in index.html.
  *--------------------------------------------------------------------------------------------*/
 
@@ -14,7 +14,7 @@ async function sidexOpenFolder() {
 			navigateToFolder(URI.file(selected).toString());
 		}
 	} catch (e) {
-		console.error('[SideX] Failed to open folder picker:', e);
+		console.error('[Nyala] Failed to open folder picker:', e);
 	}
 }
 (window as any).__sidex_openFolder = sidexOpenFolder;
@@ -31,19 +31,19 @@ async function boot() {
 
 	await Promise.all([
 		import('./vs/workbench/workbench.common.main.js').catch(e => {
-			console.error('[SideX] Barrel "common" failed:', e);
+			console.error('[Nyala] Barrel "common" failed:', e);
 			throw e;
 		}),
 		import('./vs/workbench/browser/web.main.js').catch(e => {
-			console.error('[SideX] Barrel "web.main" failed:', e);
+			console.error('[Nyala] Barrel "web.main" failed:', e);
 			throw e;
 		}),
 		import('./vs/workbench/browser/parts/dialogs/dialog.web.contribution.js').catch(e => {
-			console.error('[SideX] Barrel "web-dialog" failed:', e);
+			console.error('[Nyala] Barrel "web-dialog" failed:', e);
 			throw e;
 		}),
 		import('./vs/workbench/workbench.web.main.js').catch(e => {
-			console.error('[SideX] Barrel "web-services" failed:', e);
+			console.error('[Nyala] Barrel "web-services" failed:', e);
 			throw e;
 		})
 	]);
@@ -74,7 +74,7 @@ async function boot() {
 			fileSystem: new SideXFileSystemProvider()
 		};
 
-		console.log('[SideX] Rust bridge services initialized');
+	console.log('[Nyala] Rust bridge services initialized');
 	}
 
 	const { create } = await import('./vs/workbench/browser/web.factory.js');
@@ -97,7 +97,7 @@ async function boot() {
 
 	const options: any = {
 		initialColorTheme: {
-			themeType: 'dark'
+			themeType: 'light'
 		},
 
 		additionalTrustedDomains: ['https://github.com', 'https://*.github.com', 'https://*.githubusercontent.com'],
@@ -115,16 +115,16 @@ async function boot() {
 			}
 		},
 		windowIndicator: {
-			label: folderParam ? decodeURIComponent(folderParam.split('/').pop() || 'SideX') : 'SideX',
-			tooltip: 'SideX — Tauri Code Editor',
+			label: folderParam ? decodeURIComponent(folderParam.split('/').pop() || 'Nyala') : 'Nyala',
+			tooltip: 'Nyala Studio — Local-first SQL Workbench',
 			command: undefined
 		},
 		productConfiguration: {
-			nameShort: 'SideX',
-			nameLong: 'SideX',
-			applicationName: 'sidex',
-			dataFolderName: '.sidex',
-			version: '1.110.0',
+			nameShort: 'Nyala',
+			nameLong: 'Nyala Studio',
+			applicationName: 'nyala',
+			dataFolderName: '.nyala',
+			version: '0.1.0',
 			linkProtectionTrustedDomains: ['https://github.com', 'https://*.github.com', 'https://*.githubusercontent.com']
 		},
 		settingsSyncOptions: {
@@ -135,7 +135,7 @@ async function boot() {
 			'workbench.startupEditor': 'welcomePage',
 			'workbench.enableExperiments': false,
 			'workbench.iconTheme': 'vs-seti',
-			'workbench.colorTheme': 'Dark Modern',
+			'workbench.colorTheme': 'Light Modern',
 			'editor.experimentalGpuAcceleration': 'auto',
 			'workbench.productIconTheme': 'Default',
 			'workbench.editor.showTabs': 'multiple',
@@ -220,7 +220,7 @@ async function boot() {
 	updateNativeMenuLabels();
 
 	console.log(
-		'[SideX] Workbench created' + (folderParam ? ` (folder: ${folderParam})` : ' (no folder)'),
+		'[Nyala] Workbench created' + (folderParam ? ` (folder: ${folderParam})` : ' (no folder)'),
 		'workspace:',
 		workspace
 	);
@@ -314,7 +314,7 @@ function setupWindowsEditorNewlineKeybindings() {
 
 		const commandId = event.shiftKey ? 'editor.action.insertLineBefore' : 'editor.action.insertLineAfter';
 		commandService.executeCommand(commandId).catch(error => {
-			console.error(`[SideX] Failed to execute ${commandId}:`, error);
+			console.error(`[Nyala] Failed to execute ${commandId}:`, error);
 		});
 	});
 }
@@ -402,14 +402,14 @@ function setupMenuActions() {
 
 		const commandId = menuToCommand[menuId];
 		if (!commandId) {
-			console.warn(`[SideX] Unknown menu action: ${menuId}`);
+			console.warn(`[Nyala] Unknown menu action: ${menuId}`);
 			return;
 		}
 		try {
 			const event = new CustomEvent('sidex-command', { detail: { commandId } });
 			window.dispatchEvent(event);
 		} catch (e) {
-			console.error(`[SideX] Failed to execute menu command ${commandId}:`, e);
+			console.error(`[Nyala] Failed to execute menu command ${commandId}:`, e);
 		}
 	};
 
@@ -439,10 +439,10 @@ function setupMenuActions() {
 			if (commandService) {
 				await commandService.executeCommand(commandId);
 			} else {
-				console.warn(`[SideX] Command service not ready, queuing: ${commandId}`);
+				console.warn(`[Nyala] Command service not ready, queuing: ${commandId}`);
 			}
 		} catch (err) {
-			console.error(`[SideX] Command ${commandId} failed:`, err);
+			console.error(`[Nyala] Command ${commandId} failed:`, err);
 		}
 	});
 }
@@ -545,16 +545,16 @@ async function updateNativeMenuLabels() {
 		const { invoke } = await import('@tauri-apps/api/core');
 		await invoke('update_menu_labels', { labels });
 	} catch (e) {
-		console.warn('[SideX] Could not update native menu labels:', e);
+		console.warn('[Nyala] Could not update native menu labels:', e);
 	}
 }
 
 boot().catch(err => {
-	console.error('[SideX] Fatal:', err);
+	console.error('[Nyala] Fatal:', err);
 	const container = document.createElement('div');
 	container.style.cssText = 'padding:40px;color:#ccc;font-family:system-ui';
 	const h2 = document.createElement('h2');
-	h2.textContent = 'SideX failed to start';
+	h2.textContent = 'Nyala failed to start';
 	const pre = document.createElement('pre');
 	pre.style.cssText = 'color:#f88;white-space:pre-wrap';
 	pre.textContent = (err as Error)?.stack || String(err);

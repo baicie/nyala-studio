@@ -73,7 +73,7 @@ export interface SqlProductProfile {
 }
 
 export const SQL_STUDIO_PRODUCT_PROFILE: SqlProductProfile = {
-	name: 'SQL Studio Next',
+	name: 'Nyala Studio',
 	primaryViewContainers: [
 		SQL_CONNECTIONS_VIEWLET_ID,
 		SQL_RESULT_VIEWLET_ID
@@ -94,7 +94,7 @@ export function assertNoLegacyWorkbenchSurface(ids: readonly string[]): void {
 	const legacy = ids.filter(isLegacyWorkbenchViewlet);
 
 	if (legacy.length > 0) {
-		throw new Error(`Legacy workbench surface should not be exposed in SQL Studio MVP: ${legacy.join(', ')}`);
+		throw new Error(`Legacy workbench surface should not be exposed in the Nyala MVP: ${legacy.join(', ')}`);
 	}
 }
 

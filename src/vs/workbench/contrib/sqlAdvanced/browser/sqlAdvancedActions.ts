@@ -8,7 +8,7 @@ import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/c
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
-import { SqlDialect } from '../../../services/sql/common/sqlDialect.js';
+import { getDialectForConnectionKind, SqlDialect } from '../../../services/sql/common/sqlDialect.js';
 import {
 	SQL_AI_ASSISTANT_COMMAND_ID,
 	SQL_AI_EXPLAIN_ERROR_COMMAND_ID,
@@ -20,11 +20,12 @@ import {
 	SQL_OPEN_WORKSPACE_COMMAND_ID
 } from '../common/sqlAdvanced.js';
 import { ISqlAdvancedService } from '../common/sqlAdvancedService.js';
-import { applySnippetVariables } from '../common/sqlAdvancedSnippets.js';
+import { renderSnippetWithDefaults } from '../common/sqlAdvancedSnippets.js';
 import { SqlAiTaskKind } from '../common/sqlAdvancedAi.js';
 import { SqlEditorPane } from '../../sqlEditor/browser/sqlEditorPane.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 
 class ExplainPlanAction extends Action2 {
 	constructor() {
@@ -55,7 +56,7 @@ class InsertSnippetAction extends Action2 {
 	constructor() {
 		super({
 			id: SQL_INSERT_SNIPPET_COMMAND_ID,
-			title: localize2('sqlInsertSnippet', 'SQL: Insert SELECT Snippet'),
+			title: localize2('sqlInsertSnippet', 'SQL: Insert Snippet'),
 			category: Categories.View,
 			f1: true,
 			menu: { id: MenuId.CommandPalette }
@@ -65,17 +66,22 @@ class InsertSnippetAction extends Action2 {
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const advancedService = accessor.get(ISqlAdvancedService);
 		const commandService = accessor.get(ICommandService);
-		const snippet = advancedService.listSnippets().find(item => item.id === 'builtin.select.all');
+		const quickInputService = accessor.get(IQuickInputService);
+		const picked = await quickInputService.pick(
+			advancedService.listSnippets().map(snippet => ({
+				label: snippet.name,
+				description: snippet.description,
+				snippet
+			})),
+			{ placeHolder: 'Select a SQL snippet' }
+		);
 
-		const initialSql = snippet
-			? applySnippetVariables(snippet.body, {
-				table: 'users',
-				limit: '100'
-			})
-			: 'SELECT 1 AS value;';
+		if (!picked) {
+			return;
+		}
 
 		await commandService.executeCommand(SQL_NEW_QUERY_COMMAND_ID, {
-			initialSql
+			initialSql: renderSnippetWithDefaults(picked.snippet)
 		});
 	}
 }
@@ -187,18 +193,48 @@ class AiOptimizeQueryAction extends Action2 {
 async function openAiResult(accessor: ServicesAccessor, kind: SqlAiTaskKind): Promise<void> {
 	const advancedService = accessor.get(ISqlAdvancedService);
 	const commandService = accessor.get(ICommandService);
+	const editorService = accessor.get(IEditorService);
+	const quickInputService = accessor.get(IQuickInputService);
+	const pane = editorService.activeEditorPane;
+	const editorContext = pane instanceof SqlEditorPane ? pane.getAssistantContext() : undefined;
+	const dialect = editorContext?.connectionKind
+		? getDialectForConnectionKind(editorContext.connectionKind)
+		: SqlDialect.Sqlite;
+
+	let userPrompt: string | undefined;
+	let errorMessage: string | undefined;
+
+	if (kind === SqlAiTaskKind.Assistant || kind === SqlAiTaskKind.GenerateQuery) {
+		userPrompt = await quickInputService.input({
+			prompt: kind === SqlAiTaskKind.GenerateQuery ? 'Describe the SQL query to generate' : 'How should Nyala help with this SQL?',
+			placeHolder: 'Enter a request for the SQL assistant'
+		});
+
+		if (!userPrompt?.trim()) {
+			return;
+		}
+	}
+
+	if (kind === SqlAiTaskKind.ExplainError) {
+		errorMessage = await quickInputService.input({
+			prompt: 'Paste the SQL error to explain',
+			placeHolder: 'Database error message'
+		});
+
+		if (!errorMessage?.trim()) {
+			return;
+		}
+	}
 
 	const response = await advancedService.completeAi({
 		kind,
 		context: {
-			dialect: SqlDialect.Sqlite,
-			userPrompt: 'Help me write a SQL query.',
-			schema: [
-				{
-					name: 'users',
-					columns: ['id', 'name', 'created_at']
-				}
-			]
+			dialect,
+			connectionName: editorContext?.connectionName,
+			sql: editorContext?.sql,
+			selectedSql: editorContext?.selectedSql,
+			userPrompt: userPrompt?.trim(),
+			errorMessage: errorMessage?.trim()
 		}
 	});
 

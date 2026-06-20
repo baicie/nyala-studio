@@ -87,7 +87,7 @@ export class SqlProductPreferencesView extends ViewPane {
 
 		const preferences = this.preferencesService.preferences;
 
-		append(this.contentElement, $('h3.sql-product-preferences-title', undefined, 'SQL Studio Preferences'));
+		append(this.contentElement, $('h3.sql-product-preferences-title', undefined, 'Nyala Preferences'));
 
 		this.renderBooleanPreference(preferences, 'restoreSqlLayoutOnStartup');
 		this.renderBooleanPreference(preferences, 'openWelcomeQueryOnFirstLaunch');

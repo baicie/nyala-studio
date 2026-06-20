@@ -3,7 +3,7 @@
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>SideX</title>
+		<title>Nyala</title>
 		<script>
 			// VS Code globals — must be set before any module loads
 			globalThis._VSCODE_FILE_ROOT = window.location.origin + '/src/';
@@ -30,22 +30,22 @@
 			} catch (_) {
 				globalThis.__SIDEX_ARCH__ = 'x64';
 			}
-			globalThis._VSCODE_PACKAGE_JSON = { version: '1.110.0', name: 'sidex' };
+			globalThis._VSCODE_PACKAGE_JSON = { version: '0.1.0', name: 'nyala' };
 			globalThis._VSCODE_PRODUCT_JSON = {
-				nameShort: 'SideX',
-				nameLong: 'SideX',
-				applicationName: 'sidex',
-				dataFolderName: '.sidex',
-				urlProtocol: 'sidex',
-				version: '1.110.0',
+				nameShort: 'Nyala',
+				nameLong: 'Nyala Studio',
+				applicationName: 'nyala',
+				dataFolderName: '.nyala',
+				urlProtocol: 'nyala',
+				version: '0.1.0',
 				commit: '',
 				date: new Date().toISOString(),
 				quality: 'stable',
-				reportIssueUrl: 'https://github.com/sidenai/sidex/issues/new',
+				reportIssueUrl: 'https://github.com/baicie/sql-studio-next/issues/new',
 				licenseName: 'MIT',
-				licenseUrl: 'https://github.com/sidenai/sidex/blob/main/LICENSE',
+				licenseUrl: 'https://github.com/baicie/sql-studio-next/blob/mvp/LICENSE',
 				extensionsGallery: {
-					serviceUrl: 'https://marketplace.siden.ai/api/gallery',
+					serviceUrl: 'https://open-vsx.org/vscode/gallery',
 					itemUrl: 'https://open-vsx.org/vscode/item',
 					resourceUrlTemplate: 'https://open-vsx.org/vscode/unpkg/{publisher}/{name}/{version}/{path}',
 					controlUrl: '',
@@ -64,8 +64,8 @@
 				width: 100%;
 				height: 100%;
 				overflow: hidden;
-				background-color: #111111;
-				color: #c0c0c0;
+				background-color: #ffffff;
+				color: #3b3b3b;
 				font-family:
 					-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans',
 					'Helvetica Neue', sans-serif;

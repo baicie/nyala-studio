@@ -66,7 +66,7 @@ export function createConnectionQueryDraft(connectionId: string, connectionName?
 	return {
 		connectionId: normalizedConnectionId,
 		connectionName: normalizedConnectionName,
-		initialSql: `-- SQL Studio Query
+		initialSql: `-- Nyala Query
 -- Connection: ${normalizedConnectionName ?? normalizedConnectionId}
 
 SELECT 1 AS value;

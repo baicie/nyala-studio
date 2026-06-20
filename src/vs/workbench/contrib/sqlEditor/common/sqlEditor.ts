@@ -13,7 +13,7 @@ export const SQL_EXECUTE_SELECTION_COMMAND_ID = 'sql.executeSelection';
 export const SQL_EXECUTE_CURRENT_STATEMENT_COMMAND_ID = 'sql.executeCurrentStatement';
 export const SQL_FORMAT_QUERY_COMMAND_ID = 'sql.formatQuery';
 
-export const SQL_EDITOR_DEFAULT_QUERY = `-- SQL Studio Query
+export const SQL_EDITOR_DEFAULT_QUERY = `-- Nyala Query
 SELECT 1 AS value;
 `;
 

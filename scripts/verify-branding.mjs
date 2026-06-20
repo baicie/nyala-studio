@@ -22,6 +22,9 @@ const productRs = await readFile('src-tauri/src/product.rs', 'utf8');
 const libRs = await readFile('src-tauri/src/lib.rs', 'utf8');
 const updateManagerRs = await readFile('crates/sidex-update/src/manager.rs', 'utf8');
 const sidexBridgeTs = await readFile('src/vs/sidex-bridge.ts', 'utf8');
+const indexHtml = await readFile('index.html', 'utf8');
+const mainTs = await readFile('src/main.ts', 'utf8');
+const readme = await readFile('README.md', 'utf8');
 
 assert(packageJson.name === 'sql-studio-next', `package.json name must be sql-studio-next, got ${packageJson.name}`);
 
@@ -30,8 +33,8 @@ assert(packageJson.version === '0.1.0', `package.json version must be 0.1.0, got
 assert(packageJson.packageManager?.startsWith('pnpm@'), 'packageManager must use pnpm');
 
 assert(
-	tauriConfig.productName === 'SQL Studio Next',
-	`tauri productName must be SQL Studio Next, got ${tauriConfig.productName}`
+	tauriConfig.productName === 'Nyala Studio',
+	`tauri productName must be Nyala Studio, got ${tauriConfig.productName}`
 );
 
 assert(
@@ -40,8 +43,13 @@ assert(
 );
 
 assert(
-	tauriConfig.app?.windows?.[0]?.title === 'SQL Studio',
-	`main window title must be SQL Studio, got ${tauriConfig.app?.windows?.[0]?.title}`
+	tauriConfig.app?.windows?.[0]?.title === 'Nyala',
+	`main window title must be Nyala, got ${tauriConfig.app?.windows?.[0]?.title}`
+);
+
+assert(
+	tauriConfig.bundle?.shortDescription === 'Local-first SQL Workbench.',
+	`bundle tagline must be Local-first SQL Workbench, got ${tauriConfig.bundle?.shortDescription}`
 );
 
 const updaterEndpoints = tauriConfig.plugins?.updater?.endpoints ?? [];
@@ -105,10 +113,10 @@ assert(
 	'product.rs must define TERMINAL_PROGRAM_NAME'
 );
 
-// product.rs must reference SQL Studio in the module doc
+// product.rs must define the Nyala product identity
 assert(
-	productRs.includes('SQL Studio'),
-	'product.rs must contain SQL Studio product branding'
+	productRs.includes('PRODUCT_NAME: &str = "Nyala Studio"') && productRs.includes('APP_TITLE: &str = "Nyala"'),
+	'product.rs must contain Nyala product branding'
 );
 
 // lib.rs app menu must not expose "About SideX"
@@ -155,5 +163,25 @@ assertStringDoesNotContain(
 	'SideX —',
 	'sidex-bridge header must not expose legacy SideX branding'
 );
+
+// ── Web entrypoint branding ─────────────────────────────────────────────────
+
+assert(indexHtml.includes('<title>Nyala</title>'), 'index.html title must be Nyala');
+assert(indexHtml.includes("nameShort: 'Nyala'"), 'index.html product nameShort must be Nyala');
+assert(indexHtml.includes("nameLong: 'Nyala Studio'"), 'index.html product nameLong must be Nyala Studio');
+assert(indexHtml.includes("applicationName: 'nyala'"), 'index.html applicationName must be nyala');
+assertStringDoesNotContain(indexHtml, '<title>SideX</title>', 'index.html must not expose SideX title');
+assertStringDoesNotContain(indexHtml, "nameShort: 'SideX'", 'index.html must not expose SideX product name');
+assertStringDoesNotContain(indexHtml, 'marketplace.siden.ai', 'index.html must not use the upstream gallery');
+
+assert(mainTs.includes("nameShort: 'Nyala'"), 'main.ts product nameShort must be Nyala');
+assert(mainTs.includes("nameLong: 'Nyala Studio'"), 'main.ts product nameLong must be Nyala Studio');
+assert(mainTs.includes('Nyala Studio — Local-first SQL Workbench'), 'main.ts must expose the Nyala tagline');
+assertStringDoesNotContain(mainTs, "nameShort: 'SideX'", 'main.ts must not expose SideX product name');
+assertStringDoesNotContain(mainTs, 'SideX failed to start', 'startup error must use Nyala branding');
+
+assert(readme.startsWith('# Nyala Studio'), 'README must use the Nyala Studio heading');
+assert(readme.includes('Local-first SQL Workbench'), 'README must include the English tagline');
+assert(readme.includes('Nyala Studio，本地优先的 SQL 数据库工作台'), 'README must include the Chinese tagline');
 
 console.log('Branding verification passed.');

@@ -484,7 +484,7 @@ pub fn run() {
                 product::LEGACY_STATE_DB_FILE_NAME,
             );
             let state_db = sidex_db::Database::open(&state_db_path)
-                .expect("failed to initialize SQL Studio state database");
+                .expect("failed to initialize Nyala state database");
             app.manage(Arc::new(SidexDbState::new(state_db)));
 
             let process_store = app.state::<Arc<ProcessStore>>();
@@ -658,7 +658,7 @@ pub fn run() {
             commands::storage_set,
             commands::storage_delete,
             commands::storage_list,
-            // SQL Studio database bridge
+            // Nyala database bridge
             commands::sql_test_connection,
             commands::sql_open_connection,
             commands::sql_close_connection,

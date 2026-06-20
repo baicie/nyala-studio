@@ -21,7 +21,7 @@ import { IInstantiationService } from '../../../../platform/instantiation/common
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { ISqlConnectionService } from '../../../services/sql/common/sqlConnection.js';
 import { ISqlQueryService } from '../../../services/sql/common/sqlQuery.js';
-import { SqlConnection } from '../../../services/sql/common/sqlTypes.js';
+import { SqlConnection, SqlConnectionKind } from '../../../services/sql/common/sqlTypes.js';
 import { SqlEditorInput } from '../common/sqlEditorInput.js';
 import { SQL_EDITOR_PANE_ID } from '../common/sqlEditor.js';
 import {
@@ -38,6 +38,13 @@ import { shouldAutoSaveSqlEditorDraft } from '../../sqlProduct/common/sqlProduct
 import { formatSql } from '../../sqlAdvanced/common/sqlAdvancedFormatter.js';
 import { createExplainSql } from '../../sqlAdvanced/common/sqlAdvancedExplain.js';
 import { getDialectForConnectionKind } from '../../../services/sql/common/sqlDialect.js';
+
+export interface SqlEditorAssistantContext {
+	readonly connectionKind?: SqlConnectionKind;
+	readonly connectionName?: string;
+	readonly sql: string;
+	readonly selectedSql?: string;
+}
 
 export class SqlEditorPane extends EditorPane {
 	static readonly ID = SQL_EDITOR_PANE_ID;
@@ -228,6 +235,18 @@ export class SqlEditorPane extends EditorPane {
 
 	override getControl(): ICodeEditor | undefined {
 		return this.editor;
+	}
+
+	getAssistantContext(): SqlEditorAssistantContext {
+		const connection = this.getSelectedConnection();
+		const selectedSql = this.getSelectedSql();
+
+		return {
+			connectionKind: connection?.kind,
+			connectionName: connection?.name,
+			sql: this.getAllSql(),
+			selectedSql: selectedSql.trim() ? selectedSql : undefined
+		};
 	}
 
 	async executeQuery(sourceOrSelectionOnly: SqlEditorExecutionSource | boolean): Promise<void> {
