@@ -6,14 +6,21 @@
  * implementing `ISqlAiProvider` and passing it to `SqlAiService`. The
  * service never executes SQL: callers receive a `SqlAiResponse` whose
  * `sql` field is always a draft that must be confirmed by the user.
+ *
+ * `validateSqlAiRequest` is the workbench-side boundary guard. It runs
+ * before the provider gets a chance to see the request so that a bad
+ * `kind` or missing / malformed `dialect` cannot produce a
+ * `Dialect: undefined` prompt or crash the deterministic provider.
  *--------------------------------------------------------------------------------------------*/
 
+import { SqlDialect } from '../common/sqlDialect.js';
 import { ISqlAiService } from '../common/sqlAi.js';
 import {
 	DeterministicSqlAiProvider,
 	ISqlAiProvider,
 	SqlAiRequest,
-	SqlAiResponse
+	SqlAiResponse,
+	SqlAiTaskKind
 } from '../../../contrib/sqlAdvanced/common/sqlAdvancedAi.js';
 
 export class SqlAiService implements ISqlAiService {
@@ -27,14 +34,47 @@ export class SqlAiService implements ISqlAiService {
 	}
 }
 
-export function validateSqlAiRequest(request: SqlAiRequest): void {
-	if (!request || typeof request !== 'object') {
+export function validateSqlAiRequest(request: unknown): asserts request is SqlAiRequest {
+	if (!isRecord(request)) {
 		throw new Error('AI request is required.');
 	}
-	if (!request.kind) {
+
+	if (!isSqlAiTaskKind(request.kind)) {
 		throw new Error('AI request kind is required.');
 	}
-	if (!request.context) {
+
+	if (!isRecord(request.context)) {
 		throw new Error('AI context is required.');
+	}
+
+	if (!isSqlDialect(request.context.dialect)) {
+		throw new Error('AI context dialect is required.');
+	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === 'object';
+}
+
+function isSqlAiTaskKind(value: unknown): value is SqlAiTaskKind {
+	switch (value) {
+		case SqlAiTaskKind.Assistant:
+		case SqlAiTaskKind.ExplainError:
+		case SqlAiTaskKind.GenerateQuery:
+		case SqlAiTaskKind.OptimizeQuery:
+			return true;
+		default:
+			return false;
+	}
+}
+
+function isSqlDialect(value: unknown): value is SqlDialect {
+	switch (value) {
+		case SqlDialect.Sqlite:
+		case SqlDialect.MySql:
+		case SqlDialect.PostgreSql:
+			return true;
+		default:
+			return false;
 	}
 }

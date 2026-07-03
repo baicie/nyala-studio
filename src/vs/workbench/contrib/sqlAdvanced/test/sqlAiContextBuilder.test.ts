@@ -43,3 +43,17 @@ test('createSqlAiMarkdown includes sql draft when present', () => {
 	assert.ok(markdown.includes('```sql'));
 	assert.ok(markdown.includes('SELECT 1;'));
 });
+
+test('buildSchemaContext drops blank names and trims schema context', () => {
+	const users = { schema: ' main ', name: ' users ', tableType: SqlTableType.Table };
+	const blank = { schema: 'main', name: '   ', tableType: SqlTableType.Table };
+
+	const context = buildSchemaContext([blank, users], {
+		[getAiTableKey({ schema: 'main', name: 'users' })]: [
+			{ name: ' id ', ordinal: 0, notNull: true, primaryKey: true },
+			{ name: ' ', ordinal: 1, notNull: false, primaryKey: false }
+		]
+	});
+
+	assert.deepEqual(context, [{ schema: 'main', name: 'users', columns: ['id'] }]);
+});

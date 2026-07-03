@@ -24,3 +24,48 @@ test('validateSqlAiRequest rejects invalid request', () => {
 	assert.throws(() => validateSqlAiRequest(undefined as never), /required/);
 	assert.throws(() => validateSqlAiRequest({ kind: SqlAiTaskKind.Assistant } as never), /context/);
 });
+
+test('validateSqlAiRequest rejects unsupported kind and missing dialect', () => {
+	assert.throws(
+		() => validateSqlAiRequest({ kind: 'bad', context: { dialect: SqlDialect.Sqlite } }),
+		/kind/
+	);
+
+	assert.throws(
+		() => validateSqlAiRequest({ kind: SqlAiTaskKind.GenerateQuery, context: {} }),
+		/dialect/
+	);
+
+	assert.throws(
+		() => validateSqlAiRequest({
+			kind: SqlAiTaskKind.GenerateQuery,
+			context: { dialect: 'bad' }
+		}),
+		/dialect/
+	);
+});
+
+test('SqlAiService delegates valid requests to custom provider', async () => {
+	let called = false;
+	const service = new SqlAiService({
+		async complete(request) {
+			called = true;
+			return {
+				kind: request.kind,
+				title: 'Custom',
+				content: 'ok'
+			};
+		}
+	});
+
+	const response = await service.complete({
+		kind: SqlAiTaskKind.Assistant,
+		context: {
+			dialect: SqlDialect.Sqlite,
+			userPrompt: 'help'
+		}
+	});
+
+	assert.equal(called, true);
+	assert.equal(response.title, 'Custom');
+});

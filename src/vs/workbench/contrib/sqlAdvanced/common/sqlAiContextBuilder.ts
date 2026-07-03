@@ -45,15 +45,42 @@ export function buildSchemaContext(
 	tables: readonly SqlTable[],
 	columnsByTableKey: Readonly<Record<string, readonly SqlColumn[]>>
 ): readonly SqlAiSchemaTable[] {
+	const seenTables = new Set<string>();
+
 	return [...tables]
+		.map(table => ({ schema: normalizeOptional(table.schema), name: normalizeOptional(table.name), table }))
+		.filter((entry): entry is { schema: string | undefined; name: string; table: SqlTable } => Boolean(entry.name))
 		.sort((left, right) => (left.schema ?? '').localeCompare(right.schema ?? '') || left.name.localeCompare(right.name))
-		.map(table => ({
-			schema: table.schema,
-			name: table.name,
-			columns: [...(columnsByTableKey[getAiTableKey(table)] ?? [])]
-				.sort((left, right) => left.ordinal - right.ordinal || left.name.localeCompare(right.name))
-				.map(column => column.name)
+		.filter(entry => {
+			const key = getAiTableKey(entry);
+			if (seenTables.has(key)) {
+				return false;
+			}
+			seenTables.add(key);
+			return true;
+		})
+		.map(entry => ({
+			schema: entry.schema,
+			name: entry.name,
+			columns: normalizeColumns(columnsByTableKey[getAiTableKey(entry)] ?? [])
 		}));
+}
+
+function normalizeColumns(columns: readonly SqlColumn[]): string[] {
+	const seen = new Set<string>();
+
+	return [...columns]
+		.map(column => ({ name: normalizeOptional(column.name), ordinal: column.ordinal }))
+		.filter((column): column is { name: string; ordinal: number } => Boolean(column.name))
+		.sort((left, right) => left.ordinal - right.ordinal || left.name.localeCompare(right.name))
+		.filter(column => {
+			if (seen.has(column.name)) {
+				return false;
+			}
+			seen.add(column.name);
+			return true;
+		})
+		.map(column => column.name);
 }
 
 export function getAiTableKey(table: Pick<SqlTable, 'schema' | 'name'>): string {
