@@ -49,49 +49,78 @@ Safety notes:
 
 ## Roadmap
 
-### Phase 1 — Product Branding
+The historical fork-stabilization phases have moved into the SQL MVP productization track.
+The short-term roadmap is now aligned with the actual runtime status:
 
-- Rename app metadata to Nyala Studio
-- Replace Tauri product name and bundle identifier
-- Remove upstream updater endpoint
-- Replace visible SideX menu labels
-- Replace local app data database filenames
-- Add branding regression tests
+### Phase 00 — Runtime Status Alignment
 
-### Phase 2 — SQL Rust Commands
+- Keep README, SQL protocol comments and driver status terminology aligned.
+- Document SQLite as MVP stable.
+- Document MySQL as Preview.
+- Document PostgreSQL as Planned.
+- Add regression checks for stale runtime-status documentation.
 
-- Add SQLite connection command bridge
-- Add query execution command
-- Add table and column metadata commands
-- Add structured SQL error model
+### Phase 01 — Connection MVP Stabilization
 
-### Phase 3 — SQL Workbench Services
+- Stabilize SQLite connection flows.
+- Stabilize MySQL Preview connection flows.
+- Keep PostgreSQL visible only as planned.
+- Preserve runtime-only secrets for test/open flows.
+- Never persist connection passwords.
+- Surface auto-connect restore errors in the UI.
 
-- Add `ISqlConnectionService`
-- Add `ISqlMetadataService`
-- Add `ISqlQueryService`
-- Route all SQL frontend operations through services
+### Phase 02 — Metadata Explorer
 
-### Phase 4 — SQL Connections View
+- List databases where the driver supports it.
+- List tables and views.
+- Expand columns with type, primary-key, nullability and default metadata.
+- Support refresh and per-node metadata error states.
 
-- Add SQL activity bar entry
-- Add connection tree
-- Add SQLite connection flow
-- Add table metadata expansion
+### Phase 03 — SQL Editor Execution Loop
 
-### Phase 5 — SQL Editor
+- Open SQL editor tabs bound to a selected connection.
+- Execute all SQL.
+- Execute selected SQL.
+- Execute the current statement.
+- Support Cmd/Ctrl + Enter shortcuts.
+- Show running, success and error states.
 
-- Add SQL editor input
-- Add SQL editor pane
-- Add execute query command
-- Add Cmd/Ctrl + Enter shortcut
+### Phase 04 — Query Result Panel
 
-### Phase 6 — Query Result Panel
+- Show result columns and rows.
+- Show affected rows for non-result statements.
+- Show elapsed time, row count and truncation state.
+- Render query errors in the result panel.
+- Support basic copy operations.
 
-- Add result panel
-- Add simple result grid
-- Add messages and error display
-- Add elapsed time and row count
+### Phase 05 — History, Formatter, Snippets and Explain
+
+- Persist query history.
+- Restore editor drafts.
+- Provide reusable SQL snippets.
+- Provide SQL formatting.
+- Provide SQLite/MySQL explain-plan helpers.
+
+### Phase 06 — AI Helper Foundation
+
+- Keep deterministic AI provider as the default offline-safe provider.
+- Build AI context from dialect, connection, schema, selected SQL, errors and explain plans.
+- Generate SQL drafts without auto-executing them.
+- Explain SQL errors and optimization opportunities.
+
+### Phase 07 — Plugin API MVP
+
+- Keep plugin loading local-only for the MVP.
+- Register built-in commands and SQL actions through the plugin registry.
+- Prepare view, panel, menu, keybinding and settings contribution points.
+- Add permission-oriented capability declarations.
+
+### Phase 08 — MVP Packaging and Demo Flow
+
+- Provide a repeatable SQLite demo flow.
+- Provide an opt-in MySQL Preview validation flow.
+- Keep the default product experience SQL-first.
+- Run the full check suite before release.
 
 ## Development
 
