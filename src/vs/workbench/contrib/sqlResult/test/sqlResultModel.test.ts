@@ -3,15 +3,25 @@ import test from 'node:test';
 
 import { SqlCellKind, SqlQueryResult } from '../../../services/sql/common/sqlTypes.js';
 import {
+	addSqlResultSnapshot,
 	buildSqlResultDisplayGrid,
+	createCancelledResultSnapshot,
+	createEmptySqlResultPanelState,
+	createErrorResultSnapshot,
 	createErrorSqlResultState,
 	createIdleSqlResultState,
+	createResultSnapshotId,
 	createRunningSqlResultState,
+	createSqlResultPreview,
+	createSuccessResultSnapshot,
 	createSuccessSqlResultState,
 	formatColumnLabel,
 	formatSqlCellValue,
+	getActiveSqlResultSnapshot,
 	getSqlResultSummary,
+	removeSqlResultSnapshot,
 	sqlResultToCsv,
+	SqlResultSnapshotKind,
 	SqlResultStateKind
 } from '../common/sqlResultModel.js';
 import { SqlResultService } from '../common/sqlResultService.js';
@@ -216,4 +226,205 @@ test('SqlResultService emits state changes for query lifecycle', () => {
 		SqlResultStateKind.Success,
 		SqlResultStateKind.Idle
 	]);
+});
+
+const snapshotResult: SqlQueryResult = {
+	columns: [{ name: 'id', ordinal: 0 }],
+	rows: [[{ kind: SqlCellKind.Integer, value: 1 }]],
+	rowCount: 1,
+	elapsedMs: 3,
+	truncated: false
+};
+
+test('createSuccessResultSnapshot builds grid and status', () => {
+	const snapshot = createSuccessResultSnapshot({
+		id: 'r1',
+		editorId: 'e1',
+		connectionId: 'c1',
+		sql: 'select 1',
+		result: snapshotResult,
+		createdAt: 1
+	});
+
+	assert.equal(snapshot.kind, SqlResultSnapshotKind.Success);
+	assert.equal(snapshot.grid.rows.length, 1);
+	assert.ok(snapshot.status.includes('1 row'));
+	assert.equal(snapshot.sql, 'select 1');
+	assert.equal(snapshot.sqlPreview, 'select 1');
+});
+
+test('createErrorResultSnapshot summarizes first line', () => {
+	const snapshot = createErrorResultSnapshot({
+		id: 'r1',
+		editorId: 'e1',
+		connectionId: 'c1',
+		sql: 'select',
+		error: new Error('syntax error\nnear select'),
+		createdAt: 1
+	});
+
+	assert.equal(snapshot.kind, SqlResultSnapshotKind.Error);
+	assert.equal(snapshot.errorMessage, 'syntax error');
+	assert.equal(snapshot.detail, 'syntax error\nnear select');
+	assert.equal(snapshot.title, 'Query Error');
+});
+
+test('createErrorResultSnapshot falls back when no message is available', () => {
+	const snapshot = createErrorResultSnapshot({
+		id: 'r1',
+		editorId: 'e1',
+		connectionId: 'c1',
+		sql: 'select',
+		error: new Error('   \n   '),
+		createdAt: 1
+	});
+
+	assert.equal(snapshot.errorMessage, 'Query failed.');
+});
+
+test('createCancelledResultSnapshot uses fallback message', () => {
+	const snapshot = createCancelledResultSnapshot({
+		id: 'r1',
+		editorId: 'e1',
+		connectionId: 'c1',
+		sql: 'select 1',
+		message: ' ',
+		createdAt: 1
+	});
+
+	assert.equal(snapshot.kind, SqlResultSnapshotKind.Cancelled);
+	assert.equal(snapshot.message, 'Query was cancelled.');
+	assert.equal(snapshot.title, 'Query Cancelled');
+});
+
+test('addSqlResultSnapshot puts newest first and limits size', () => {
+	let state = createEmptySqlResultPanelState();
+	for (let index = 0; index < 3; index++) {
+		state = addSqlResultSnapshot(
+			state,
+			createSuccessResultSnapshot({
+				id: `r${index}`,
+				editorId: 'e',
+				connectionId: 'c',
+				sql: `select ${index}`,
+				result: snapshotResult,
+				createdAt: index
+			}),
+			2
+		);
+	}
+
+	assert.deepEqual(state.snapshots.map(item => item.id), ['r2', 'r1']);
+	assert.equal(state.activeSnapshotId, 'r2');
+});
+
+test('addSqlResultSnapshot deduplicates by id', () => {
+	let state = createEmptySqlResultPanelState();
+	const base = createSuccessResultSnapshot({
+		id: 'r1',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 1',
+		result: snapshotResult,
+		createdAt: 1
+	});
+	const updated = createSuccessResultSnapshot({
+		id: 'r1',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 1 again',
+		result: snapshotResult,
+		createdAt: 2
+	});
+
+	state = addSqlResultSnapshot(state, base);
+	state = addSqlResultSnapshot(state, updated);
+
+	assert.equal(state.snapshots.length, 1);
+	assert.equal(state.snapshots[0].sql, 'select 1 again');
+});
+
+test('addSqlResultSnapshot rejects non-positive maxSnapshots', () => {
+	const snapshot = createSuccessResultSnapshot({
+		id: 'r1',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 1',
+		result: snapshotResult,
+		createdAt: 1
+	});
+
+	assert.throws(
+		() => addSqlResultSnapshot(createEmptySqlResultPanelState(), snapshot, 0),
+		/maxSnapshots must be a positive integer/
+	);
+});
+
+test('removeSqlResultSnapshot moves active snapshot', () => {
+	const r1 = createSuccessResultSnapshot({
+		id: 'r1',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 1',
+		result: snapshotResult,
+		createdAt: 1
+	});
+	const r2 = createSuccessResultSnapshot({
+		id: 'r2',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 2',
+		result: snapshotResult,
+		createdAt: 2
+	});
+
+	let state = addSqlResultSnapshot(addSqlResultSnapshot(createEmptySqlResultPanelState(), r1), r2);
+	state = removeSqlResultSnapshot(state, 'r2');
+
+	assert.equal(state.snapshots.length, 1);
+	assert.equal(state.activeSnapshotId, 'r1');
+	assert.equal(getActiveSqlResultSnapshot(state)?.id, 'r1');
+});
+
+test('removeSqlResultSnapshot ignores empty snapshotId', () => {
+	const snapshot = createSuccessResultSnapshot({
+		id: 'r1',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 1',
+		result: snapshotResult,
+		createdAt: 1
+	});
+
+	const state = addSqlResultSnapshot(createEmptySqlResultPanelState(), snapshot);
+	const next = removeSqlResultSnapshot(state, '   ');
+
+	assert.equal(next, state);
+});
+
+test('getActiveSqlResultSnapshot falls back to first snapshot when active id is missing', () => {
+	const r1 = createSuccessResultSnapshot({
+		id: 'r1',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 1',
+		result: snapshotResult,
+		createdAt: 1
+	});
+	const state = { snapshots: [r1], activeSnapshotId: 'does-not-exist' } as const;
+
+	assert.equal(getActiveSqlResultSnapshot(state)?.id, 'r1');
+});
+
+test('createSqlResultPreview compacts whitespace and truncates', () => {
+	assert.equal(createSqlResultPreview(' select\n* from users ', 12), 'select * fr…');
+});
+
+test('createSqlResultPreview returns sql as-is when shorter than maxLength', () => {
+	assert.equal(createSqlResultPreview('select 1', 160), 'select 1');
+});
+
+test('createResultSnapshotId is deterministic for editor and time', () => {
+	assert.equal(createResultSnapshotId('editor', 100), createResultSnapshotId('editor', 100));
+	assert.notEqual(createResultSnapshotId('editor', 100), createResultSnapshotId('editor', 101));
 });
