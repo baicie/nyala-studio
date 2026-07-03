@@ -6,7 +6,8 @@ import {
 	getSqlEditorDescription,
 	getSqlEditorName,
 	normalizeExecutableSql,
-	normalizeSqlEditorOptions
+	normalizeSqlEditorOptions,
+	SqlEditorExecutionSource
 } from '../common/sqlEditorModel.js';
 import { SqlEditorInput } from '../common/sqlEditorInput.js';
 import {
@@ -140,6 +141,7 @@ test('SqlEditorEventService emits query lifecycle events', () => {
 		editorId: 'query-1',
 		connectionId: 'local',
 		sql: 'SELECT 1',
+		source: SqlEditorExecutionSource.All,
 		startedAt: 1
 	});
 
@@ -147,6 +149,7 @@ test('SqlEditorEventService emits query lifecycle events', () => {
 		editorId: 'query-1',
 		connectionId: 'local',
 		sql: 'SELECT 1',
+		source: SqlEditorExecutionSource.All,
 		startedAt: 1,
 		completedAt: 2,
 		result: {
@@ -162,6 +165,7 @@ test('SqlEditorEventService emits query lifecycle events', () => {
 		editorId: 'query-1',
 		connectionId: 'local',
 		sql: 'SELECT FROM',
+		source: SqlEditorExecutionSource.All,
 		startedAt: 1,
 		completedAt: 2,
 		error: new Error('syntax error')

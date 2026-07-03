@@ -7,7 +7,10 @@ import {
 	SqlEditorRunningState
 } from '../common/sqlEditorExecutionController.js';
 import { SqlEditorExecutionSource } from '../common/sqlEditorModel.js';
-import { SqlCellKind } from '../../../services/sql/common/sqlTypes.js';
+import {
+	SqlCellKind,
+	SqlQueryResult
+} from '../../../services/sql/common/sqlTypes.js';
 
 class FakeQueryService {
 	cancelled = false;
@@ -47,6 +50,16 @@ class FakeQueryService {
 		this.cancelCalls++;
 		return this.cancelImpl(request);
 	}
+}
+
+function emptyResult(): SqlQueryResult {
+	return {
+		columns: [],
+		rows: [],
+		rowCount: 0,
+		elapsedMs: 0,
+		truncated: false
+	};
 }
 
 function cast<T>(value: unknown): T {
@@ -256,13 +269,7 @@ test('execute refuses to run a second query while one is in flight', async () =>
 		/already running/
 	);
 
-	resolveExecute({
-		columns: [],
-		rows: [],
-		rowCount: 0,
-		elapsedMs: 0,
-		truncated: false
-	});
+	resolveExecute(emptyResult());
 	await first;
 	assert.equal(controller.state.state, SqlEditorRunningState.Idle);
 });
@@ -314,24 +321,32 @@ test('cancel returns cancelled event while a query is running and canCancel is a
 	assert.equal(service.cancelCalls, 1);
 	assert.equal(controller.state.state, SqlEditorRunningState.Idle);
 
-	resolveExecute({
-		columns: [],
-		rows: [],
-		rowCount: 0,
-		elapsedMs: 0,
-		truncated: false
-	});
-	await executePromise;
+	resolveExecute(emptyResult());
+
+	const executeResult = await executePromise;
+	assert.equal(executeResult.completed, undefined);
+	assert.equal(executeResult.failed, undefined);
+	assert.equal(executeResult.cancelled?.message, 'stopped');
+	assert.equal(controller.state.state, SqlEditorRunningState.Idle);
 });
 
-test('cancel forwards the optional queryId to the query service', async () => {
+test('execute resolves as cancelled instead of completed after a successful cancel', async () => {
 	let resolveExecute: (value: unknown) => void = () => undefined;
+	let time = 100;
+
 	const service = new FakeQueryService({
 		execute: () => new Promise((resolve) => {
 			resolveExecute = resolve;
+		}),
+		cancel: (request) => Promise.resolve({
+			cancelled: true,
+			connectionId: request.connectionId,
+			queryId: request.queryId,
+			message: 'stopped'
 		})
 	});
-	const controller = new SqlEditorExecutionController(cast(service), () => 0);
+
+	const controller = new SqlEditorExecutionController(cast(service), () => time++);
 
 	const executePromise = controller.execute({
 		editorId: 'editor-1',
@@ -340,16 +355,108 @@ test('cancel forwards the optional queryId to the query service', async () => {
 		source: SqlEditorExecutionSource.All
 	});
 
-	await controller.cancel('query-abc');
+	const cancelled = await controller.cancel('query-1');
+	assert.ok(cancelled);
+	assert.equal(controller.state.state, SqlEditorRunningState.Idle);
 
-	resolveExecute({
-		columns: [],
-		rows: [],
-		rowCount: 0,
-		elapsedMs: 0,
-		truncated: false
+	resolveExecute(emptyResult());
+
+	const executeResult = await executePromise;
+	assert.equal(executeResult.completed, undefined);
+	assert.equal(executeResult.failed, undefined);
+	assert.equal(executeResult.cancelled?.message, 'stopped');
+});
+
+test('execute resolves as cancelled instead of failed when cancellation races a thrown error', async () => {
+	let resolveExecute: (value: unknown) => void = () => undefined;
+	let rejectExecute: (reason?: unknown) => void = () => undefined;
+
+	const service = new FakeQueryService({
+		execute: () => new Promise<unknown>((resolve, reject) => {
+			resolveExecute = resolve;
+			rejectExecute = reject;
+		}),
+		cancel: (request) => Promise.resolve({
+			cancelled: true,
+			connectionId: request.connectionId,
+			queryId: request.queryId,
+			message: 'stopped'
+		})
 	});
-	await executePromise;
+
+	const controller = new SqlEditorExecutionController(cast(service), () => 1);
+
+	const executePromise = controller.execute({
+		editorId: 'editor-1',
+		connectionId: 'conn-1',
+		fullSql: 'select 1',
+		source: SqlEditorExecutionSource.All
+	});
+
+	const cancelled = await controller.cancel('query-1');
+	assert.ok(cancelled);
+
+	rejectExecute(new Error('late connection reset'));
+
+	const executeResult = await executePromise;
+	assert.equal(executeResult.failed, undefined);
+	assert.equal(executeResult.cancelled?.message, 'stopped');
+});
+
+test('stale execute completion after cancel does not reset a newer running query', async () => {
+	let resolveFirst: (value: unknown) => void = () => undefined;
+	let resolveSecond: (value: unknown) => void = () => undefined;
+	let call = 0;
+
+	const service = new FakeQueryService({
+		execute: () => new Promise((resolve) => {
+			call++;
+			if (call === 1) {
+				resolveFirst = resolve;
+			} else {
+				resolveSecond = resolve;
+			}
+		}),
+		cancel: (request) => Promise.resolve({
+			cancelled: true,
+			connectionId: request.connectionId,
+			queryId: request.queryId,
+			message: 'stopped'
+		})
+	});
+
+	const controller = new SqlEditorExecutionController(cast(service), () => 1);
+
+	const first = controller.execute({
+		editorId: 'editor-1',
+		connectionId: 'conn-1',
+		fullSql: 'select 1',
+		source: SqlEditorExecutionSource.All
+	});
+
+	await controller.cancel('query-1');
+	assert.equal(controller.state.state, SqlEditorRunningState.Idle);
+
+	const second = controller.execute({
+		editorId: 'editor-1',
+		connectionId: 'conn-1',
+		fullSql: 'select 2',
+		source: SqlEditorExecutionSource.All
+	});
+
+	assert.equal(controller.state.state, SqlEditorRunningState.Running);
+	assert.equal(controller.state.sql, 'select 2');
+
+	resolveFirst(emptyResult());
+
+	await first;
+	assert.equal(controller.state.state, SqlEditorRunningState.Running);
+	assert.equal(controller.state.sql, 'select 2');
+
+	resolveSecond(emptyResult());
+
+	await second;
+	assert.equal(controller.state.state, SqlEditorRunningState.Idle);
 });
 
 test('cancel returns undefined when the underlying service says cancel had no effect', async () => {
@@ -379,14 +486,12 @@ test('cancel returns undefined when the underlying service says cancel had no ef
 	assert.equal(cancelled, undefined);
 	assert.equal(controller.state.state, SqlEditorRunningState.Running);
 
-	resolveExecute({
-		columns: [],
-		rows: [],
-		rowCount: 0,
-		elapsedMs: 0,
-		truncated: false
-	});
-	await executePromise;
+	resolveExecute(emptyResult());
+
+	const executeResult = await executePromise;
+	assert.ok(executeResult.completed);
+	assert.equal(executeResult.cancelled, undefined);
+	assert.equal(executeResult.failed, undefined);
 });
 
 test('cancel refuses to call the service when canCancel is disabled', async () => {
@@ -413,12 +518,6 @@ test('cancel refuses to call the service when canCancel is disabled', async () =
 	assert.equal(cancelled, undefined);
 	assert.equal(service.cancelCalls, 0);
 
-	resolveExecute({
-		columns: [],
-		rows: [],
-		rowCount: 0,
-		elapsedMs: 0,
-		truncated: false
-	});
+	resolveExecute(emptyResult());
 	await executePromise;
 });

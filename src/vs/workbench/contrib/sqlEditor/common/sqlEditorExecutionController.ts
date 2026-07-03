@@ -13,15 +13,32 @@
  * MVP does not run more than one query per editor at a time. Switching to
  * concurrent execution would require reworking the cancel handshake and the
  * state machine; defer until the SQL MVP loop is complete.
+ *
+ * Cancellation race:
+ *   `cancel` is allowed to resolve before the underlying `executeQuery`
+ *   promise settles (for example SQLite returns immediately while the
+ *   Tokio task is still draining). When that happens the original
+ *   `execute()` must not surface a stale Completed/Failed event, and it
+ *   must not disturb the state of a later `execute()` that the user
+ *   started in the meantime. Each `execute()` runs under a `runId`;
+ *   `cancel` stores the cancelled event under that id, and the
+ *   `execute()` awaiter checks the map before reporting a terminal
+ *   event so only the cancelled event reaches the caller.
  *--------------------------------------------------------------------------------------------*/
 
-import { SqlCancelQueryResult, SqlQueryResult } from '../../../services/sql/common/sqlTypes.js';
 import { ISqlQueryService } from '../../../services/sql/common/sqlQuery.js';
+import { SqlCancelQueryResult, SqlQueryResult } from '../../../services/sql/common/sqlTypes.js';
 import {
 	createExecutePayload,
 	findSqlStatementAtOffset,
 	SqlEditorExecutionSource
 } from './sqlEditorModel.js';
+import {
+	SqlEditorQueryCancelledEvent,
+	SqlEditorQueryCompletedEvent,
+	SqlEditorQueryFailedEvent,
+	SqlEditorQueryStartedEvent
+} from './sqlEditorEvents.js';
 
 export const enum SqlEditorRunningState {
 	Idle = 'idle',
@@ -49,66 +66,54 @@ export interface SqlEditorExecutionInput {
 	readonly canCancel?: boolean;
 }
 
-export interface SqlEditorQueryStartedEvent {
-	readonly editorId: string;
-	readonly connectionId: string;
-	readonly sql: string;
-	readonly source: SqlEditorExecutionSource;
-	readonly startedAt: number;
-}
-
-export interface SqlEditorQueryCompletedEvent extends SqlEditorQueryStartedEvent {
-	readonly completedAt: number;
-	readonly result: SqlQueryResult;
-}
-
-export interface SqlEditorQueryFailedEvent extends SqlEditorQueryStartedEvent {
-	readonly completedAt: number;
-	readonly error: Error;
-}
-
-export interface SqlEditorQueryCancelledEvent extends SqlEditorQueryStartedEvent {
-	readonly completedAt: number;
-	readonly message: string;
-}
-
 /**
  * Aggregate of whatever `execute` produced. `started` is always present;
- * exactly one of `completed` or `failed` is returned alongside it.
+ * exactly one of `completed` / `failed` / `cancelled` is returned alongside it.
  */
 export interface SqlEditorExecutionResult {
 	readonly started: SqlEditorQueryStartedEvent;
 	readonly completed?: SqlEditorQueryCompletedEvent;
 	readonly failed?: SqlEditorQueryFailedEvent;
+	readonly cancelled?: SqlEditorQueryCancelledEvent;
+}
+
+interface ActiveSqlEditorRun {
+	readonly id: number;
+	readonly started: SqlEditorQueryStartedEvent;
+	readonly canCancel: boolean;
 }
 
 export class SqlEditorExecutionController {
-	private currentState: SqlEditorExecutionControllerState;
+	private currentState: SqlEditorExecutionControllerState = createIdleState();
+	private activeRun: ActiveSqlEditorRun | undefined;
+	private nextRunId = 1;
+
+	/**
+	 * Cancelled events are stashed here so the original `execute()` promise
+	 * can still resolve as cancelled even when the underlying
+	 * `queryService.executeQuery()` settles after `cancel()` returned.
+	 * Keyed by run id so older runs do not leak.
+	 */
+	private readonly cancelledRuns = new Map<number, SqlEditorQueryCancelledEvent>();
 
 	constructor(
 		private readonly queryService: ISqlQueryService,
 		private readonly now: () => number = () => Date.now()
-	) {
-		this.currentState = {
-			state: SqlEditorRunningState.Idle,
-			editorId: '',
-			canCancel: false
-		};
-	}
+	) {}
 
 	get state(): SqlEditorExecutionControllerState {
 		return this.currentState;
 	}
 
 	async execute(input: SqlEditorExecutionInput): Promise<SqlEditorExecutionResult> {
-		if (this.currentState.state === SqlEditorRunningState.Running) {
+		if (this.activeRun) {
 			throw new Error('A SQL query is already running in this editor.');
 		}
 
 		const sql = resolveSqlToExecute(input);
 		const payload = createExecutePayload(input.connectionId, sql, input.source);
 		const startedAt = this.now();
-		const canCancel = input.canCancel !== false;
+
 		const started: SqlEditorQueryStartedEvent = {
 			editorId: input.editorId,
 			connectionId: payload.connectionId,
@@ -117,6 +122,13 @@ export class SqlEditorExecutionController {
 			startedAt
 		};
 
+		const run: ActiveSqlEditorRun = {
+			id: this.nextRunId++,
+			started,
+			canCancel: input.canCancel !== false
+		};
+
+		this.activeRun = run;
 		this.currentState = {
 			state: SqlEditorRunningState.Running,
 			editorId: input.editorId,
@@ -124,47 +136,61 @@ export class SqlEditorExecutionController {
 			startedAt,
 			sql: payload.sql,
 			source: payload.source,
-			canCancel
+			canCancel: run.canCancel
 		};
 
 		try {
-			const result = await this.queryService.executeQuery({
+			const result: SqlQueryResult = await this.queryService.executeQuery({
 				connectionId: payload.connectionId,
 				sql: payload.sql,
 				limit: input.limit
 			});
+
+			const cancelled = this.takeCancelledRun(run.id);
+			if (cancelled) {
+				return { started, cancelled };
+			}
+
 			const completed: SqlEditorQueryCompletedEvent = {
 				...started,
 				completedAt: this.now(),
 				result
 			};
-			this.reset();
+
+			this.finishRun(run.id);
 			return { started, completed };
 		} catch (error) {
+			const cancelled = this.takeCancelledRun(run.id);
+			if (cancelled) {
+				return { started, cancelled };
+			}
+
 			const failed: SqlEditorQueryFailedEvent = {
 				...started,
 				completedAt: this.now(),
 				error: normalizeError(error)
 			};
-			this.reset();
+
+			this.finishRun(run.id);
 			return { started, failed };
 		}
 	}
 
 	async cancel(queryId?: string): Promise<SqlEditorQueryCancelledEvent | undefined> {
+		const run = this.activeRun;
 		const running = this.currentState;
 
 		if (
-			running.state !== SqlEditorRunningState.Running ||
+			!run ||
 			!running.connectionId ||
 			!running.sql ||
-			!running.source ||
-			!running.startedAt
+			running.source === undefined ||
+			running.startedAt === undefined
 		) {
 			return undefined;
 		}
 
-		if (!running.canCancel) {
+		if (!run.canCancel) {
 			return undefined;
 		}
 
@@ -178,25 +204,34 @@ export class SqlEditorExecutionController {
 		}
 
 		const cancelled: SqlEditorQueryCancelledEvent = {
-			editorId: running.editorId,
-			connectionId: running.connectionId,
-			sql: running.sql,
-			source: running.source,
-			startedAt: running.startedAt,
+			editorId: run.started.editorId,
+			connectionId: run.started.connectionId,
+			sql: run.started.sql,
+			source: run.started.source,
+			startedAt: run.started.startedAt,
 			completedAt: this.now(),
 			message: result.message
 		};
 
-		this.reset();
+		this.cancelledRuns.set(run.id, cancelled);
+		this.finishRun(run.id);
+
 		return cancelled;
 	}
 
-	private reset(): void {
-		this.currentState = {
-			state: SqlEditorRunningState.Idle,
-			editorId: '',
-			canCancel: false
-		};
+	private finishRun(runId: number): void {
+		if (this.activeRun?.id === runId) {
+			this.activeRun = undefined;
+			this.currentState = createIdleState();
+		}
+	}
+
+	private takeCancelledRun(runId: number): SqlEditorQueryCancelledEvent | undefined {
+		const cancelled = this.cancelledRuns.get(runId);
+		if (cancelled) {
+			this.cancelledRuns.delete(runId);
+		}
+		return cancelled;
 	}
 }
 
@@ -216,6 +251,14 @@ export function resolveSqlToExecute(input: SqlEditorExecutionInput): string {
 		default:
 			return assertNever(input.source);
 	}
+}
+
+function createIdleState(): SqlEditorExecutionControllerState {
+	return {
+		state: SqlEditorRunningState.Idle,
+		editorId: '',
+		canCancel: false
+	};
 }
 
 function normalizeError(error: unknown): Error {

@@ -22,6 +22,7 @@ import { IViewDescriptorService } from '../../../common/views.js';
 import { ISqlQueryService } from '../../../services/sql/common/sqlQuery.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
 import { ISqlEditorEventService } from '../../sqlEditor/common/sqlEditorEvents.js';
+import { SqlEditorExecutionSource } from '../../sqlEditor/common/sqlEditorModel.js';
 import {
 	SQL_QUERY_HISTORY_VIEW_ID
 } from '../common/sqlQueryHistory.js';
@@ -189,6 +190,7 @@ export class SqlQueryHistoryView extends ViewPane {
 			editorId: `history-${entry.id}`,
 			connectionId: entry.connectionId,
 			sql: entry.sql,
+			source: SqlEditorExecutionSource.All,
 			startedAt
 		});
 
@@ -202,6 +204,7 @@ export class SqlQueryHistoryView extends ViewPane {
 				editorId: `history-${entry.id}`,
 				connectionId: entry.connectionId,
 				sql: entry.sql,
+				source: SqlEditorExecutionSource.All,
 				startedAt,
 				completedAt: Date.now(),
 				result
@@ -215,6 +218,7 @@ export class SqlQueryHistoryView extends ViewPane {
 				editorId: `history-${entry.id}`,
 				connectionId: entry.connectionId,
 				sql: entry.sql,
+				source: SqlEditorExecutionSource.All,
 				startedAt,
 				completedAt: Date.now(),
 				error: normalizedError

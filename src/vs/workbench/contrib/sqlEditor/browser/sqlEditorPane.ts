@@ -275,6 +275,7 @@ export class SqlEditorPane extends EditorPane {
 				editorId: input.id,
 				connectionId: payload.connectionId,
 				sql: payload.sql,
+				source,
 				startedAt
 			});
 
@@ -289,6 +290,7 @@ export class SqlEditorPane extends EditorPane {
 				editorId: input.id,
 				connectionId: payload.connectionId,
 				sql: payload.sql,
+				source,
 				startedAt,
 				completedAt,
 				result
@@ -308,6 +310,7 @@ export class SqlEditorPane extends EditorPane {
 					editorId: input.id,
 					connectionId: payload.connectionId,
 					sql: payload.sql,
+					source,
 					startedAt,
 					completedAt,
 					error: normalizedError
@@ -371,6 +374,7 @@ export class SqlEditorPane extends EditorPane {
 				editorId: input.id,
 				connectionId: connection.id,
 				sql: explainSql,
+				source: SqlEditorExecutionSource.Statement,
 				startedAt
 			});
 
@@ -385,6 +389,7 @@ export class SqlEditorPane extends EditorPane {
 				editorId: input.id,
 				connectionId: connection.id,
 				sql: explainSql,
+				source: SqlEditorExecutionSource.Statement,
 				startedAt,
 				completedAt,
 				result
@@ -401,6 +406,7 @@ export class SqlEditorPane extends EditorPane {
 					editorId: input.id,
 					connectionId: connection.id,
 					sql: explainSql,
+					source: SqlEditorExecutionSource.Statement,
 					startedAt,
 					completedAt,
 					error: normalizedError
