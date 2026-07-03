@@ -126,16 +126,18 @@ test('createOpenHistorySqlDraft returns trimmed original sql', () => {
 	);
 });
 
-test('createCopyHistorySummary contains status connection duration and sql', () => {
+test('createCopyHistorySummary contains status connection duration sql and detail', () => {
 	const text = createCopyHistorySummary(entries[0]);
 	assert.ok(text.includes('Status: success'));
 	assert.ok(text.includes('Connection: local'));
 	assert.ok(text.includes('Duration: 1ms'));
-	assert.ok(text.includes('SELECT * FROM users'));
+	assert.ok(text.includes('Detail: 2 rows · 1ms'));
+	assert.ok(text.includes('SQL: SELECT * FROM users'));
 });
 
 test('createCopyHistorySummary exposes status for error entries', () => {
 	const text = createCopyHistorySummary(entries[1]);
 	assert.ok(text.includes('Status: error'));
 	assert.ok(text.includes('Connection: mysql'));
+	assert.ok(text.includes('Detail: 1ms · table missing'));
 });

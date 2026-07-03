@@ -28,7 +28,14 @@ test('createExplainSql creates MySQL explain', () => {
 test('createExplainSql creates PostgreSQL explain', () => {
 	assert.equal(
 		createExplainSql(SqlDialect.PostgreSql, 'select * from users;'),
-		'EXPLAIN select * from users;'
+		'EXPLAIN (FORMAT JSON) select * from users;'
+	);
+});
+
+test('createExplainSql forwards SQLITE through the explain foundation', () => {
+	assert.equal(
+		createExplainSql(SqlDialect.Sqlite, '  SELECT * FROM users;  '),
+		'EXPLAIN QUERY PLAN SELECT * FROM users;'
 	);
 });
 

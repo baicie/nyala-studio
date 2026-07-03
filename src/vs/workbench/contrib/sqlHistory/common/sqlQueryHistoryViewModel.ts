@@ -61,6 +61,7 @@ export function createCopyHistorySummary(entry: SqlQueryHistoryEntry): string {
 		`Status: ${entry.status}`,
 		`Connection: ${entry.connectionId}`,
 		`Duration: ${entry.durationMs}ms`,
+		`Detail: ${getHistoryEntryDetail(entry)}`,
 		`SQL: ${entry.sql}`
 	].join('\n');
 }

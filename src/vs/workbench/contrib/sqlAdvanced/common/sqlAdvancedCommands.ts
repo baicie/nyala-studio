@@ -15,6 +15,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { SqlDialect } from '../../../services/sql/common/sqlDialect.js';
+import { createExplainSql as createExplainPlanSql } from './sqlAdvancedExplain.js';
 
 export const enum SqlAdvancedCommandKind {
 	Format = 'format',
@@ -63,25 +64,24 @@ export function createExplainSummaryCommandResult(planText: string): SqlAdvanced
 }
 
 export function createExplainSql(dialect: SqlDialect, sql: string): string {
-	const normalized = sql.trim().replace(/;+$/, '');
+	// Pre-clean before delegating to the explain foundation: the
+	// foundation's own normalizer only strips a single trailing `;`
+	// (it is shared with the explain parser pipeline), so a string
+	// like `select 1;;;;` would otherwise leak extra semicolons into
+	// the command result. We also reject whitespace-only input that
+	// the foundation would otherwise turn into a malformed
+	// `EXPLAIN QUERY PLAN `.
+	const trimmedSource = sql.trim();
+	const sourceWithoutTrailingSemicolons = trimmedSource.replace(/;+\s*$/, '');
+	const compact = sourceWithoutTrailingSemicolons.trim();
 
-	if (!normalized) {
+	if (!compact) {
 		throw new Error('SQL is empty.');
 	}
 
-	switch (dialect) {
-		case SqlDialect.Sqlite:
-			return `EXPLAIN QUERY PLAN ${normalized};`;
-
-		case SqlDialect.MySql:
-			return `EXPLAIN ${normalized};`;
-
-		case SqlDialect.PostgreSql:
-			return `EXPLAIN ${normalized};`;
-
-		default:
-			throw new Error(`Unsupported SQL explain dialect: ${String(dialect)}`);
-	}
+	const explainSql = createExplainPlanSql({ dialect, sql: compact });
+	const withoutTrailingSemicolon = explainSql.replace(/;\s*$/, '');
+	return `${withoutTrailingSemicolon};`;
 }
 
 const EXPLAIN_PLAN_PREVIEW_ROWS = 50;
