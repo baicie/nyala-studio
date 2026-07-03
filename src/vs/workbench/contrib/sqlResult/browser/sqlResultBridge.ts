@@ -17,5 +17,6 @@ export class SqlResultBridgeContribution extends Disposable implements IWorkbenc
 		this._register(sqlEditorEventService.onDidStartQuery(event => sqlResultService.setRunning(event)));
 		this._register(sqlEditorEventService.onDidCompleteQuery(event => sqlResultService.setSuccess(event)));
 		this._register(sqlEditorEventService.onDidFailQuery(event => sqlResultService.setError(event)));
+		this._register(sqlEditorEventService.onDidCancelQuery(event => sqlResultService.setCancelled(event)));
 	}
 }

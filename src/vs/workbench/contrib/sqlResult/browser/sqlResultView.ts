@@ -18,7 +18,11 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
 import { IViewDescriptorService } from '../../../common/views.js';
 import {
+	getActiveSqlResultSnapshot,
 	getSqlResultSummary,
+	SqlResultPanelState,
+	SqlResultSnapshot,
+	SqlResultSnapshotKind,
 	SqlResultState,
 	SqlResultStateKind
 } from '../common/sqlResultModel.js';
@@ -48,6 +52,7 @@ export class SqlResultView extends ViewPane {
 	private summaryElement!: HTMLElement;
 	private contentElement!: HTMLElement;
 	private statusElement!: HTMLElement;
+	private historyElement!: HTMLElement;
 	private copyCellButton!: HTMLButtonElement;
 	private copyRowButton!: HTMLButtonElement;
 	private copyCsvButton!: HTMLButtonElement;
@@ -55,6 +60,8 @@ export class SqlResultView extends ViewPane {
 	private clearButton!: HTMLButtonElement;
 
 	private currentGrid: SqlResultGrid | undefined;
+	private currentSnapshots: readonly SqlResultSnapshot[] = [];
+	private activeSnapshotId: string | undefined;
 	private selectedCell: SqlResultCellAddress | undefined;
 	private selectedCellElement: HTMLElement | undefined;
 
@@ -118,6 +125,7 @@ export class SqlResultView extends ViewPane {
 		) as HTMLButtonElement;
 
 		this.contentElement = append(this.container, $('.sql-result-content', { tabIndex: 0 }));
+		this.historyElement = append(this.container, $('.sql-result-history'));
 		this.statusElement = append(this.container, $('.sql-result-statusbar'));
 
 		this._register(
@@ -155,8 +163,10 @@ export class SqlResultView extends ViewPane {
 		);
 
 		this._register(this.sqlResultService.onDidChangeResult(state => this.renderState(state)));
+		this._register(this.sqlResultService.onDidChangePanelState(state => this.renderPanelState(state)));
 		this._register(this.preferencesService.onDidChangePreferences(() => this.renderState(this.sqlResultService.state)));
 		this.renderState(this.sqlResultService.state);
+		this.renderPanelState(this.sqlResultService.panelState);
 	}
 
 	override focus(): void {
@@ -190,6 +200,11 @@ export class SqlResultView extends ViewPane {
 				this.setStatus('Query failed.');
 				break;
 
+			case SqlResultStateKind.Cancelled:
+				this.renderCancelled(state);
+				this.setStatus('Query cancelled.');
+				break;
+
 			case SqlResultStateKind.Success:
 				this.renderSuccess(state);
 				break;
@@ -202,6 +217,54 @@ export class SqlResultView extends ViewPane {
 		append(this.contentElement, $('.sql-result-empty', undefined, 'Run a SQL query to see results here.'));
 	}
 
+	private renderPanelState(state: SqlResultPanelState): void {
+		this.renderDisposables.clear();
+		clearNode(this.historyElement);
+
+		this.currentSnapshots = state.snapshots;
+		this.activeSnapshotId = getActiveSqlResultSnapshot(state)?.id;
+
+		if (state.snapshots.length === 0) {
+			return;
+		}
+
+		append(this.historyElement, $('div.sql-result-history-title', undefined, 'History'));
+
+		const list = append(this.historyElement, $('ul.sql-result-history-list'));
+
+		for (const snapshot of state.snapshots) {
+			const item = append(list, $('li.sql-result-history-item', { 'data-snapshot-id': snapshot.id }));
+			if (snapshot.id === this.activeSnapshotId) {
+				item.classList.add('active');
+			}
+			item.classList.add(`kind-${snapshot.kind}`);
+
+			append(item, $('span.sql-result-history-kind', undefined, snapshotKindLabel(snapshot.kind)));
+			append(item, $('span.sql-result-history-title', { title: snapshot.title }, snapshot.title));
+			append(item, $('span.sql-result-history-preview', { title: snapshot.sqlPreview }, snapshot.sqlPreview));
+
+			const removeButton = append(
+				item,
+				$('button.sql-result-history-remove', { type: 'button', title: 'Remove from history' }, '×')
+			) as HTMLButtonElement;
+
+			this.renderDisposables.add(
+				addDisposableListener(removeButton, EventType.CLICK, event => {
+					event.stopPropagation();
+					this.sqlResultService.removeSnapshot(snapshot.id);
+				})
+			);
+
+			this.renderDisposables.add(
+				addDisposableListener(item, EventType.CLICK, () => {
+					this.activeSnapshotId = snapshot.id;
+					this.renderPanelState(this.sqlResultService.panelState);
+					this.setStatus(`Activated snapshot ${snapshot.title}.`);
+				})
+			);
+		}
+	}
+
 	private renderRunning(state: Extract<SqlResultState, { kind: SqlResultStateKind.Running }>): void {
 		const wrapper = append(this.contentElement, $('.sql-result-message.running'));
 		append(wrapper, $('div', undefined, 'Running query...'));
@@ -211,6 +274,12 @@ export class SqlResultView extends ViewPane {
 	private renderError(state: Extract<SqlResultState, { kind: SqlResultStateKind.Error }>): void {
 		const wrapper = append(this.contentElement, $('.sql-result-message.error'));
 		append(wrapper, $('div.sql-result-error-title', undefined, state.errorMessage));
+		append(wrapper, $('pre.sql-result-sql', undefined, state.query.sql));
+	}
+
+	private renderCancelled(state: Extract<SqlResultState, { kind: SqlResultStateKind.Cancelled }>): void {
+		const wrapper = append(this.contentElement, $('.sql-result-message.cancelled'));
+		append(wrapper, $('div.sql-result-cancelled-title', undefined, state.message));
 		append(wrapper, $('pre.sql-result-sql', undefined, state.query.sql));
 	}
 
@@ -393,4 +462,15 @@ function toCopyErrorMessage(error: unknown): string {
 	}
 
 	return `Copy failed: ${String(error)}`;
+}
+
+function snapshotKindLabel(kind: SqlResultSnapshotKind): string {
+	switch (kind) {
+		case SqlResultSnapshotKind.Success:
+			return 'Success';
+		case SqlResultSnapshotKind.Error:
+			return 'Error';
+		case SqlResultSnapshotKind.Cancelled:
+			return 'Cancelled';
+	}
 }

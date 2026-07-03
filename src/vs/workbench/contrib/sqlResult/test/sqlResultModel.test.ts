@@ -6,14 +6,18 @@ import {
 	addSqlResultSnapshot,
 	buildSqlResultDisplayGrid,
 	createCancelledResultSnapshot,
+	createCancelledResultSnapshotFromEvent,
+	createCancelledSqlResultState,
 	createEmptySqlResultPanelState,
 	createErrorResultSnapshot,
+	createErrorResultSnapshotFromEvent,
 	createErrorSqlResultState,
 	createIdleSqlResultState,
 	createResultSnapshotId,
 	createRunningSqlResultState,
 	createSqlResultPreview,
 	createSuccessResultSnapshot,
+	createSuccessResultSnapshotFromEvent,
 	createSuccessSqlResultState,
 	formatColumnLabel,
 	formatSqlCellValue,
@@ -24,6 +28,7 @@ import {
 	SqlResultSnapshotKind,
 	SqlResultStateKind
 } from '../common/sqlResultModel.js';
+import { SqlEditorExecutionSource } from '../../sqlEditor/common/sqlEditorModel.js';
 import { SqlResultService } from '../common/sqlResultService.js';
 
 const sampleResult: SqlQueryResult = {
@@ -115,6 +120,83 @@ test('createErrorSqlResultState stores error message', () => {
 	assert.equal(state.kind, SqlResultStateKind.Error);
 	assert.equal(state.errorMessage, 'syntax error');
 	assert.equal(getSqlResultSummary(state), 'Query failed: syntax error');
+});
+
+test('createCancelledSqlResultState stores cancelled message', () => {
+	const state = createCancelledSqlResultState({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT sleep(10)',
+		startedAt: 10,
+		completedAt: 20,
+		message: 'cancelled'
+	});
+
+	assert.equal(state.kind, SqlResultStateKind.Cancelled);
+	assert.equal(state.query.sql, 'SELECT sleep(10)');
+	assert.equal(state.message, 'cancelled');
+	assert.equal(getSqlResultSummary(state), 'Query cancelled: cancelled');
+});
+
+test('createCancelledSqlResultState falls back when message is empty', () => {
+	const state = createCancelledSqlResultState({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT sleep(10)',
+		startedAt: 10,
+		completedAt: 20,
+		message: '   '
+	});
+
+	assert.equal(state.message, 'Query was cancelled.');
+});
+
+test('createSuccessResultSnapshotFromEvent creates success snapshot', () => {
+	const snapshot = createSuccessResultSnapshotFromEvent({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 1,
+		completedAt: 2,
+		result: snapshotResult
+	});
+
+	assert.equal(snapshot.kind, SqlResultSnapshotKind.Success);
+	assert.equal(snapshot.createdAt, 2);
+	assert.equal(snapshot.id, createResultSnapshotId('query-1', 2));
+});
+
+test('createErrorResultSnapshotFromEvent creates error snapshot', () => {
+	const snapshot = createErrorResultSnapshotFromEvent({
+		editorId: 'query-2',
+		connectionId: 'local',
+		sql: 'SELECT FROM',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 3,
+		completedAt: 4,
+		error: new Error('syntax error')
+	});
+
+	assert.equal(snapshot.kind, SqlResultSnapshotKind.Error);
+	assert.equal(snapshot.errorMessage, 'syntax error');
+	assert.equal(snapshot.createdAt, 4);
+});
+
+test('snapshot helpers create terminal snapshots from editor events', () => {
+	const snapshot = createCancelledResultSnapshotFromEvent({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT sleep(10)',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 10,
+		completedAt: 20,
+		message: 'cancelled'
+	});
+
+	assert.equal(snapshot.kind, SqlResultSnapshotKind.Cancelled);
+	assert.equal(snapshot.createdAt, 20);
+	assert.equal(snapshot.message, 'cancelled');
 });
 
 test('formatColumnLabel falls back to ordinal label', () => {
@@ -226,6 +308,125 @@ test('SqlResultService emits state changes for query lifecycle', () => {
 		SqlResultStateKind.Success,
 		SqlResultStateKind.Idle
 	]);
+});
+
+test('SqlResultService records success error and cancelled snapshots', () => {
+	const service = new SqlResultService();
+
+	service.setSuccess({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 1,
+		completedAt: 2,
+		result: snapshotResult
+	});
+
+	service.setError({
+		editorId: 'query-2',
+		connectionId: 'local',
+		sql: 'SELECT FROM',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 3,
+		completedAt: 4,
+		error: new Error('syntax error')
+	});
+
+	service.setCancelled({
+		editorId: 'query-3',
+		connectionId: 'local',
+		sql: 'SELECT sleep(10)',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 5,
+		completedAt: 6,
+		message: 'cancelled'
+	});
+
+	assert.deepEqual(
+		service.panelState.snapshots.map(snapshot => snapshot.kind),
+		[
+			SqlResultSnapshotKind.Cancelled,
+			SqlResultSnapshotKind.Error,
+			SqlResultSnapshotKind.Success
+		]
+	);
+	assert.equal(service.panelState.activeSnapshotId, service.panelState.snapshots[0].id);
+	assert.equal(service.state.kind, SqlResultStateKind.Cancelled);
+});
+
+test('SqlResultService emits panel state change when a snapshot is added', () => {
+	const service = new SqlResultService();
+
+	let lastPanelState = service.panelState;
+	service.onDidChangePanelState(state => {
+		lastPanelState = state;
+	});
+
+	service.setSuccess({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 1,
+		completedAt: 2,
+		result: snapshotResult
+	});
+
+	assert.equal(lastPanelState.snapshots.length, 1);
+	assert.equal(lastPanelState.snapshots[0].kind, SqlResultSnapshotKind.Success);
+});
+
+test('SqlResultService.removeSnapshot updates active snapshot', () => {
+	const service = new SqlResultService();
+
+	service.setSuccess({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 1,
+		completedAt: 2,
+		result: snapshotResult
+	});
+
+	service.setSuccess({
+		editorId: 'query-2',
+		connectionId: 'local',
+		sql: 'SELECT 2',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 3,
+		completedAt: 4,
+		result: snapshotResult
+	});
+
+	const activeId = service.panelState.activeSnapshotId;
+	assert.ok(activeId);
+
+	service.removeSnapshot(activeId!);
+
+	assert.equal(service.panelState.snapshots.find(s => s.id === activeId), undefined);
+	assert.notEqual(service.panelState.activeSnapshotId, activeId);
+});
+
+test('SqlResultService.clear resets both state and panel state', () => {
+	const service = new SqlResultService();
+
+	service.setSuccess({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 1,
+		completedAt: 2,
+		result: snapshotResult
+	});
+
+	service.clear();
+
+	assert.equal(service.state.kind, SqlResultStateKind.Idle);
+	assert.equal(service.panelState.snapshots.length, 0);
+	assert.equal(service.panelState.activeSnapshotId, undefined);
 });
 
 const snapshotResult: SqlQueryResult = {

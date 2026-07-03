@@ -9,6 +9,7 @@ import {
 } from './sqlResultGridModel.js';
 import { SqlCellKind, SqlCellValue, SqlQueryResult, SqlResultColumn } from '../../../services/sql/common/sqlTypes.js';
 import {
+	SqlEditorQueryCancelledEvent,
 	SqlEditorQueryCompletedEvent,
 	SqlEditorQueryFailedEvent,
 	SqlEditorQueryStartedEvent
@@ -19,7 +20,8 @@ export const enum SqlResultStateKind {
 	Idle = 'idle',
 	Running = 'running',
 	Success = 'success',
-	Error = 'error'
+	Error = 'error',
+	Cancelled = 'cancelled'
 }
 
 export interface SqlResultQueryInfo {
@@ -51,7 +53,18 @@ export interface SqlResultErrorState {
 	errorMessage: string;
 }
 
-export type SqlResultState = SqlResultIdleState | SqlResultRunningState | SqlResultSuccessState | SqlResultErrorState;
+export interface SqlResultCancelledState {
+	kind: SqlResultStateKind.Cancelled;
+	query: SqlResultQueryInfo;
+	message: string;
+}
+
+export type SqlResultState =
+	| SqlResultIdleState
+	| SqlResultRunningState
+	| SqlResultSuccessState
+	| SqlResultErrorState
+	| SqlResultCancelledState;
 
 export interface SqlResultDisplayGrid {
 	columns: string[];
@@ -108,6 +121,20 @@ export function createErrorSqlResultState(event: SqlEditorQueryFailedEvent): Sql
 	};
 }
 
+export function createCancelledSqlResultState(event: SqlEditorQueryCancelledEvent): SqlResultCancelledState {
+	return {
+		kind: SqlResultStateKind.Cancelled,
+		query: {
+			editorId: event.editorId,
+			connectionId: event.connectionId,
+			sql: event.sql,
+			startedAt: event.startedAt,
+			completedAt: event.completedAt
+		},
+		message: event.message.trim() || 'Query was cancelled.'
+	};
+}
+
 export function getSqlResultSummary(state: SqlResultState): string {
 	switch (state.kind) {
 		case SqlResultStateKind.Idle:
@@ -118,6 +145,9 @@ export function getSqlResultSummary(state: SqlResultState): string {
 
 		case SqlResultStateKind.Error:
 			return `Query failed: ${state.errorMessage}`;
+
+		case SqlResultStateKind.Cancelled:
+			return `Query cancelled: ${state.message}`;
 
 		case SqlResultStateKind.Success:
 			if (state.result.columns.length === 0) {
@@ -324,6 +354,39 @@ export function createCancelledResultSnapshot(options: {
 		title: 'Query Cancelled',
 		message: options.message.trim() || 'Query was cancelled.'
 	};
+}
+
+export function createSuccessResultSnapshotFromEvent(event: SqlEditorQueryCompletedEvent): SqlResultSuccessSnapshot {
+	return createSuccessResultSnapshot({
+		id: createResultSnapshotId(event.editorId, event.completedAt),
+		editorId: event.editorId,
+		connectionId: event.connectionId,
+		sql: event.sql,
+		result: event.result,
+		createdAt: event.completedAt
+	});
+}
+
+export function createErrorResultSnapshotFromEvent(event: SqlEditorQueryFailedEvent): SqlResultErrorSnapshot {
+	return createErrorResultSnapshot({
+		id: createResultSnapshotId(event.editorId, event.completedAt),
+		editorId: event.editorId,
+		connectionId: event.connectionId,
+		sql: event.sql,
+		error: event.error,
+		createdAt: event.completedAt
+	});
+}
+
+export function createCancelledResultSnapshotFromEvent(event: SqlEditorQueryCancelledEvent): SqlResultCancelledSnapshot {
+	return createCancelledResultSnapshot({
+		id: createResultSnapshotId(event.editorId, event.completedAt),
+		editorId: event.editorId,
+		connectionId: event.connectionId,
+		sql: event.sql,
+		message: event.message,
+		createdAt: event.completedAt
+	});
 }
 
 export function addSqlResultSnapshot(
