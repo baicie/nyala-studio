@@ -462,3 +462,65 @@ test('template draft helpers preserve connection name', () => {
 		'Local SQLite'
 	);
 });
+
+test('createSelectDraftFromTreeNode uses mysql dialect when provided', () => {
+	const draft = createSelectDraftFromTreeNode(
+		{
+			id: 'sql/connection/mysql/table/app/users',
+			type: SqlConnectionTreeNodeType.Table,
+			label: 'users',
+			connectionId: 'mysql',
+			databaseName: 'app',
+			schema: 'app',
+			tableName: 'users'
+		},
+		{
+			dialect: SqlDialect.MySql
+		}
+	);
+
+	assert.equal(
+		draft.initialSql,
+		'SELECT *\nFROM `app`.`users`\nLIMIT 100;\n'
+	);
+});
+
+test('createCountDraftFromTreeNode uses mysql dialect when provided', () => {
+	const draft = createCountDraftFromTreeNode(
+		{
+			id: 'sql/connection/mysql/table/app/users',
+			type: SqlConnectionTreeNodeType.Table,
+			label: 'users',
+			connectionId: 'mysql',
+			schema: 'app',
+			tableName: 'users'
+		},
+		{
+			dialect: SqlDialect.MySql
+		}
+	);
+
+	assert.match(draft.initialSql, /FROM `app`\.`users`/);
+});
+
+test('createInsertDraftFromTreeNode uses mysql dialect when provided', () => {
+	const draft = createInsertDraftFromTreeNode(
+		{
+			id: 'sql/connection/mysql/table/app/users',
+			type: SqlConnectionTreeNodeType.Table,
+			label: 'users',
+			connectionId: 'mysql',
+			schema: 'app',
+			tableName: 'users'
+		},
+		{
+			dialect: SqlDialect.MySql,
+			columns: [
+				{ name: 'id', ordinal: 0, notNull: true, primaryKey: true },
+				{ name: 'email', ordinal: 1, notNull: true }
+			]
+		}
+	);
+
+	assert.match(draft.initialSql, /INSERT INTO `app`\.`users` \(`id`, `email`\)/);
+});

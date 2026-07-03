@@ -388,7 +388,7 @@ test('MySQL connection with explicit databases groups tables under schema', () =
 	assert.equal(userTable?.databaseName, 'app');
 });
 
-test('Empty MySQL connection surfaces a no-metadata empty node', () => {
+test('Empty MySQL connection falls back to the connection database name', () => {
 	const nodes = buildSqlConnectionTree({
 		connections: [
 			{
@@ -407,9 +407,9 @@ test('Empty MySQL connection surfaces a no-metadata empty node', () => {
 	});
 
 	const connection = nodes[0];
-	const empty = connection.children?.find(child => child.type === SqlConnectionTreeNodeType.Empty);
-	assert.ok(empty);
-	assert.equal(empty?.label, 'No metadata loaded');
+	const database = connection.children?.find(child => child.type === SqlConnectionTreeNodeType.Database);
+	assert.ok(database);
+	assert.equal(database?.label, 'app');
 });
 
 test('Per-table column load error is isolated to the failed table', () => {
@@ -481,4 +481,63 @@ test('Connection-level metadata error blocks tables but stays scoped', () => {
 	const error = connection.children?.find(child => child.type === SqlConnectionTreeNodeType.Error);
 	assert.equal(error?.label, 'Failed to load metadata');
 	assert.equal(error?.description, 'database is locked');
+});
+
+test('MySQL derives database nodes from table schemas when database list is empty', () => {
+	const nodes = buildSqlConnectionTree({
+		connections: [
+			{
+				id: 'mysql',
+				name: 'Local MySQL',
+				kind: SqlConnectionKind.MySql,
+				host: 'localhost',
+				port: 3306,
+				database: 'app',
+				readOnly: false
+			}
+		],
+		databasesByConnectionId: {
+			mysql: [] as SqlDatabase[]
+		},
+		tablesByConnectionId: {
+			mysql: [
+				{ schema: 'app', name: 'users', tableType: SqlTableType.Table }
+			]
+		}
+	});
+
+	const connection = nodes[0];
+	const database = connection.children?.find(child => child.type === SqlConnectionTreeNodeType.Database);
+
+	assert.ok(database);
+	assert.equal(database?.label, 'app');
+
+	const tablesGroup = database?.children?.find(child => child.label === 'Tables');
+	assert.ok(tablesGroup);
+	assert.equal(tablesGroup?.children?.[0].label, 'users');
+});
+
+test('MySQL falls back to connection database when databases and table schemas are empty', () => {
+	const nodes = buildSqlConnectionTree({
+		connections: [
+			{
+				id: 'mysql',
+				name: 'Local MySQL',
+				kind: SqlConnectionKind.MySql,
+				host: 'localhost',
+				port: 3306,
+				database: 'app',
+				readOnly: false
+			}
+		],
+		databasesByConnectionId: {
+			mysql: [] as SqlDatabase[]
+		}
+	});
+
+	const connection = nodes[0];
+	const database = connection.children?.find(child => child.type === SqlConnectionTreeNodeType.Database);
+
+	assert.ok(database);
+	assert.equal(database?.label, 'app');
 });

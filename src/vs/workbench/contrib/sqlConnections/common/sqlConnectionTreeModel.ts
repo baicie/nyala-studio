@@ -185,7 +185,11 @@ function buildConnectionNode(
 	const tables = snapshot.tablesByConnectionId?.[connection.id] ?? [];
 	const columnsByTableId = snapshot.columnsByTableId ?? {};
 	const errorsByTableId = snapshot.errorsByTableId ?? {};
-	const databases = resolveDatabases(connection, snapshot.databasesByConnectionId?.[connection.id]);
+	const databases = resolveDatabases(
+		connection,
+		snapshot.databasesByConnectionId?.[connection.id],
+		tables
+	);
 
 	if (connectionError) {
 		children.push({
@@ -417,25 +421,45 @@ function describeColumn(column: SqlColumn): string {
 	return parts.join(' · ');
 }
 
-function normalizeDatabases(connection: SqlConnection, databases: SqlDatabase[] | undefined): SqlDatabase[] {
-	const normalized = [...(databases ?? [])]
-		.filter(item => item.name.trim())
-		.sort((a, b) => a.name.localeCompare(b.name));
+function normalizeDatabases(
+	connection: SqlConnection,
+	databases: SqlDatabase[] | undefined,
+	tables: readonly SqlTable[]
+): SqlDatabase[] {
+	const names = new Set<string>();
 
-	if (normalized.length > 0) {
-		return normalized;
+	for (const database of databases ?? []) {
+		const name = database.name.trim();
+		if (name) {
+			names.add(name);
+		}
 	}
 
 	/**
-	 * When the snapshot provides an empty databases list (for example,
-	 * because listDatabases returned []), fall back to a single synthetic
-	 * `main` database for SQLite so the tree still renders predictably.
+	 * listDatabases is intentionally non-fatal. When it fails or returns an
+	 * empty list, keep the metadata explorer useful by deriving schemas from
+	 * the table metadata already returned by listTables.
 	 */
-	if (connection.kind === SqlConnectionKind.Sqlite) {
-		return [{ name: 'main' }];
+	if (names.size === 0) {
+		for (const table of tables) {
+			const schema = table.schema?.trim();
+			if (schema) {
+				names.add(schema);
+			}
+		}
 	}
 
-	return [];
+	if (names.size === 0 && connection.kind === SqlConnectionKind.Sqlite) {
+		names.add('main');
+	}
+
+	if (names.size === 0 && connection.database?.trim()) {
+		names.add(connection.database.trim());
+	}
+
+	return [...names]
+		.sort((a, b) => a.localeCompare(b))
+		.map(name => ({ name }));
 }
 
 /**
@@ -444,11 +468,15 @@ function normalizeDatabases(connection: SqlConnection, databases: SqlDatabase[] 
  * `connection → tables/views` shape so existing callers (and the existing
  * test suite) keep working without modification.
  */
-function resolveDatabases(connection: SqlConnection, databases: SqlDatabase[] | undefined): SqlDatabase[] | null {
+function resolveDatabases(
+	connection: SqlConnection,
+	databases: SqlDatabase[] | undefined,
+	tables: readonly SqlTable[]
+): SqlDatabase[] | null {
 	if (databases === undefined) {
 		return null;
 	}
-	return normalizeDatabases(connection, databases);
+	return normalizeDatabases(connection, databases, tables);
 }
 
 function compareConnections(left: SqlConnection, right: SqlConnection): number {

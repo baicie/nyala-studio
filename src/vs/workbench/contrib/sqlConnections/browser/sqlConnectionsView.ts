@@ -21,6 +21,7 @@ import { IViewDescriptorService } from '../../../common/views.js';
 import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
 import { ISqlConnectionService } from '../../../services/sql/common/sqlConnection.js';
 import { ISqlMetadataService } from '../../../services/sql/common/sqlMetadata.js';
+import { getDialectForConnectionKind, SqlDialect } from '../../../services/sql/common/sqlDialect.js';
 import {
 	SqlColumn,
 	SqlConnection,
@@ -589,6 +590,8 @@ export class SqlConnectionsView extends ViewPane {
 				 * listDatabases failure is non-fatal: SQLite returns the synthetic
 				 * `main` database when the snapshot does not include one, and a
 				 * backend that refuses listDatabases still allows browsing tables.
+				 * The tree model derives schema nodes from tablesByConnectionId
+				 * when the database list is empty so the explorer stays useful.
 				 */
 				databases = [];
 			}
@@ -597,18 +600,20 @@ export class SqlConnectionsView extends ViewPane {
 
 			this.state.databasesByConnectionId[connection.id] = databases;
 			this.state.tablesByConnectionId[connection.id] = tables;
-			this.state.errorsByTableId = Object.create(null);
+			this.clearTableMetadataForConnection(connection.id);
 
 			for (const table of tables) {
+				const tableKey = getColumnsKey(connection.id, table);
 				try {
 					const columns = await this.sqlMetadataService.listColumns({
 						connectionId: connection.id,
 						schema: table.schema,
 						tableName: table.name
 					});
-					this.state.columnsByTableId[getColumnsKey(connection.id, table)] = columns;
+					this.state.columnsByTableId[tableKey] = columns;
+					delete this.state.errorsByTableId[tableKey];
 				} catch (columnError) {
-					this.state.errorsByTableId[getColumnsKey(connection.id, table)] =
+					this.state.errorsByTableId[tableKey] =
 						columnError instanceof Error ? columnError.message : String(columnError);
 				}
 			}
@@ -850,12 +855,23 @@ export class SqlConnectionsView extends ViewPane {
 
 	private getDraftOptionsForNode(node: SqlConnectionTreeNode): {
 		connectionName?: string;
+		dialect: SqlDialect;
 		columns: SqlColumn[];
 	} {
 		return {
 			connectionName: node.connectionId ? this.getConnectionName(node.connectionId) : undefined,
+			dialect: this.getDialectForNode(node),
 			columns: this.getColumnsForNode(node)
 		};
+	}
+
+	private getDialectForNode(node: SqlConnectionTreeNode): SqlDialect {
+		if (!node.connectionId) {
+			return SqlDialect.Sqlite;
+		}
+
+		const connection = this.state.connections.find(item => item.id === node.connectionId);
+		return connection ? getDialectForConnectionKind(connection.kind) : SqlDialect.Sqlite;
 	}
 
 	private getColumnsForNode(node: SqlConnectionTreeNode): SqlColumn[] {
@@ -888,39 +904,44 @@ export class SqlConnectionsView extends ViewPane {
 		}
 
 		const table = tableFromNode(node);
+		const tableKey = getColumnsKey(node.connectionId, table);
 
 		this.showInfo(`Refreshing ${table.name}...`);
 
-		const columns = await this.sqlMetadataService.listColumns({
-			connectionId: node.connectionId,
-			schema: table.schema,
-			tableName: table.name
-		});
+		try {
+			const columns = await this.sqlMetadataService.listColumns({
+				connectionId: node.connectionId,
+				schema: table.schema,
+				tableName: table.name
+			});
 
-		this.state.columnsByTableId[getColumnsKey(node.connectionId, table)] = columns;
-		this.collapsedNodes.delete(node.id);
-		this.renderTree();
-		this.showInfo(`Refreshed ${table.name}.`);
+			this.state.columnsByTableId[tableKey] = columns;
+			delete this.state.errorsByTableId[tableKey];
+			this.collapsedNodes.delete(node.id);
+			this.renderTree();
+			this.showInfo(`Refreshed ${table.name}.`);
+		} catch (error) {
+			this.state.errorsByTableId[tableKey] =
+				error instanceof Error ? error.message : String(error);
+			delete this.state.columnsByTableId[tableKey];
+			this.collapsedNodes.delete(node.id);
+			this.renderTree();
+			throw error;
+		}
 	}
 
 	private removeMetadataForConnection(connectionId: string): void {
 		delete this.state.databasesByConnectionId[connectionId];
 		delete this.state.tablesByConnectionId[connectionId];
 		delete this.state.errorsByConnectionId[connectionId];
+		this.clearTableMetadataForConnection(connectionId);
+	}
 
+	private clearTableMetadataForConnection(connectionId: string): void {
 		const prefix = getConnectionColumnsKeyPrefix(connectionId);
 
-		for (const key of Object.keys(this.state.columnsByTableId)) {
-			if (key.startsWith(prefix)) {
-				delete this.state.columnsByTableId[key];
-			}
-		}
-
-		for (const key of Object.keys(this.state.errorsByTableId)) {
-			if (key.startsWith(prefix)) {
-				delete this.state.errorsByTableId[key];
-			}
-		}
+		deleteKeysWithPrefix(this.state.columnsByTableId, prefix);
+		deleteKeysWithPrefix(this.state.errorsByTableId, prefix);
 	}
 
 	private async copyTableName(node: SqlConnectionTreeNode): Promise<void> {
@@ -1057,4 +1078,12 @@ async function writeClipboardText(text: string): Promise<void> {
 	}
 
 	throw new Error('Clipboard API is not available.');
+}
+
+function deleteKeysWithPrefix<T>(record: Record<string, T>, prefix: string): void {
+	for (const key of Object.keys(record)) {
+		if (key.startsWith(prefix)) {
+			delete record[key];
+		}
+	}
 }
