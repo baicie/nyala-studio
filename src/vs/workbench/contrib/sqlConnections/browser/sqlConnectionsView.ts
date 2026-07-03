@@ -26,6 +26,7 @@ import {
 	SqlConnection,
 	SqlConnectionInput,
 	SqlConnectionKind,
+	SqlDatabase,
 	SqlSavedConnection,
 	SqlSslMode,
 	SqlTable
@@ -64,9 +65,11 @@ import {
 
 interface SqlConnectionTreeSnapshotState {
 	connections: SqlConnection[];
+	databasesByConnectionId: Record<string, SqlDatabase[]>;
 	tablesByConnectionId: Record<string, SqlTable[]>;
 	columnsByTableId: Record<string, SqlColumn[]>;
 	errorsByConnectionId: Record<string, string>;
+	errorsByTableId: Record<string, string>;
 }
 
 export class SqlConnectionsView extends ViewPane {
@@ -107,9 +110,11 @@ export class SqlConnectionsView extends ViewPane {
 
 	private readonly state: SqlConnectionTreeSnapshotState = {
 		connections: [],
+		databasesByConnectionId: Object.create(null),
 		tablesByConnectionId: Object.create(null),
 		columnsByTableId: Object.create(null),
-		errorsByConnectionId: Object.create(null)
+		errorsByConnectionId: Object.create(null),
+		errorsByTableId: Object.create(null)
 	};
 
 	private savedConnections: SqlSavedConnection[] = [];
@@ -183,9 +188,11 @@ export class SqlConnectionsView extends ViewPane {
 			]);
 
 			this.state.connections = connections;
+			this.state.databasesByConnectionId = Object.create(null);
 			this.state.tablesByConnectionId = Object.create(null);
 			this.state.columnsByTableId = Object.create(null);
 			this.state.errorsByConnectionId = Object.create(null);
+			this.state.errorsByTableId = Object.create(null);
 			this.savedConnections = saved;
 
 			for (const connection of connections) {
@@ -197,9 +204,11 @@ export class SqlConnectionsView extends ViewPane {
 			this.renderSavedConnections();
 		} catch (error) {
 			this.state.connections = [];
+			this.state.databasesByConnectionId = Object.create(null);
 			this.state.tablesByConnectionId = Object.create(null);
 			this.state.columnsByTableId = Object.create(null);
 			this.state.errorsByConnectionId = Object.create(null);
+			this.state.errorsByTableId = Object.create(null);
 			this.savedConnections = [];
 			this.renderTree();
 			this.renderSavedConnections();
@@ -572,17 +581,36 @@ export class SqlConnectionsView extends ViewPane {
 
 	private async loadConnectionMetadata(connection: SqlConnection): Promise<void> {
 		try {
+			let databases: SqlDatabase[] = [];
+			try {
+				databases = await this.sqlMetadataService.listDatabases(connection.id);
+			} catch (databaseError) {
+				/**
+				 * listDatabases failure is non-fatal: SQLite returns the synthetic
+				 * `main` database when the snapshot does not include one, and a
+				 * backend that refuses listDatabases still allows browsing tables.
+				 */
+				databases = [];
+			}
+
 			const tables = await this.sqlMetadataService.listTables(connection.id);
+
+			this.state.databasesByConnectionId[connection.id] = databases;
 			this.state.tablesByConnectionId[connection.id] = tables;
+			this.state.errorsByTableId = Object.create(null);
 
 			for (const table of tables) {
-				const columns = await this.sqlMetadataService.listColumns({
-					connectionId: connection.id,
-					schema: table.schema,
-					tableName: table.name
-				});
-
-				this.state.columnsByTableId[getColumnsKey(connection.id, table)] = columns;
+				try {
+					const columns = await this.sqlMetadataService.listColumns({
+						connectionId: connection.id,
+						schema: table.schema,
+						tableName: table.name
+					});
+					this.state.columnsByTableId[getColumnsKey(connection.id, table)] = columns;
+				} catch (columnError) {
+					this.state.errorsByTableId[getColumnsKey(connection.id, table)] =
+						columnError instanceof Error ? columnError.message : String(columnError);
+				}
 			}
 
 			delete this.state.errorsByConnectionId[connection.id];
@@ -876,6 +904,7 @@ export class SqlConnectionsView extends ViewPane {
 	}
 
 	private removeMetadataForConnection(connectionId: string): void {
+		delete this.state.databasesByConnectionId[connectionId];
 		delete this.state.tablesByConnectionId[connectionId];
 		delete this.state.errorsByConnectionId[connectionId];
 
@@ -884,6 +913,12 @@ export class SqlConnectionsView extends ViewPane {
 		for (const key of Object.keys(this.state.columnsByTableId)) {
 			if (key.startsWith(prefix)) {
 				delete this.state.columnsByTableId[key];
+			}
+		}
+
+		for (const key of Object.keys(this.state.errorsByTableId)) {
+			if (key.startsWith(prefix)) {
+				delete this.state.errorsByTableId[key];
 			}
 		}
 	}
@@ -997,6 +1032,8 @@ function getNodeIcon(node: SqlConnectionTreeNode): string {
 	switch (node.type) {
 		case SqlConnectionTreeNodeType.Connection:
 			return '\u25c9';
+		case SqlConnectionTreeNodeType.Database:
+			return '\u25b8';
 		case SqlConnectionTreeNodeType.Group:
 			return '\u25a3';
 		case SqlConnectionTreeNodeType.Table:

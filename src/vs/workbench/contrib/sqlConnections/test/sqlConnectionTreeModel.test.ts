@@ -9,12 +9,13 @@ import {
 	getColumnsKey,
 	getConnectionColumnsKeyPrefix,
 	getConnectionNodeId,
+	getDatabaseNodeId,
 	getSqlConnectionDriverBadge,
 	getTableNodeId,
 	SqlConnectionTreeNodeType
 } from '../common/sqlConnectionTreeModel.js';
 import { SqlDriverAvailability } from '../../../services/sql/common/sqlDrivers.js';
-import { SqlConnectionKind, SqlTableType } from '../../../services/sql/common/sqlTypes.js';
+import { SqlConnectionKind, SqlDatabase, SqlTableType } from '../../../services/sql/common/sqlTypes.js';
 
 test('buildSqlConnectionTree returns empty node when there are no connections', () => {
 	const nodes = buildSqlConnectionTree({
@@ -304,4 +305,180 @@ test('buildSqlConnectionTree renders driver-aware connection description', () =>
 test('SqlDriverAvailability catalog matches tree badge expectations', () => {
 	assert.equal(SqlDriverAvailability.Enabled, 'enabled');
 	assert.equal(SqlDriverAvailability.Planned, 'planned');
+});
+
+test('getDatabaseNodeId escapes special characters', () => {
+	assert.equal(
+		getDatabaseNodeId('local/db 1', 'app-db'),
+		'sql/connection/local%2Fdb%201/database/app-db'
+	);
+});
+
+test('SQLite connection with explicit databases exposes database node with tables group', () => {
+	const nodes = buildSqlConnectionTree({
+		connections: [
+			{
+				id: 'local',
+				name: 'Local SQLite',
+				kind: SqlConnectionKind.Sqlite,
+				databasePath: '/tmp/app.db',
+				readOnly: false
+			}
+		],
+		databasesByConnectionId: {
+			local: [{ name: 'main' }]
+		},
+		tablesByConnectionId: {
+			local: [
+				{ schema: 'main', name: 'users', tableType: SqlTableType.Table }
+			]
+		}
+	});
+
+	const connection = nodes[0];
+	assert.equal(connection.type, SqlConnectionTreeNodeType.Connection);
+
+	const database = connection.children?.find(child => child.type === SqlConnectionTreeNodeType.Database);
+	assert.ok(database, 'SQLite tree should expose a Database node when databases map is present');
+	assert.equal(database?.label, 'main');
+	assert.equal(database?.description, 'database');
+	assert.equal(database?.databaseName, 'main');
+
+	const tablesGroup = database?.children?.find(child => child.type === SqlConnectionTreeNodeType.Group);
+	assert.ok(tablesGroup);
+	assert.equal(tablesGroup?.description, '1');
+});
+
+test('MySQL connection with explicit databases groups tables under schema', () => {
+	const nodes = buildSqlConnectionTree({
+		connections: [
+			{
+				id: 'mysql',
+				name: 'Local MySQL',
+				kind: SqlConnectionKind.MySql,
+				host: 'localhost',
+				port: 3306,
+				database: 'app',
+				readOnly: false
+			}
+		],
+		databasesByConnectionId: {
+			mysql: [{ name: 'app' }, { name: 'archive' }]
+		},
+		tablesByConnectionId: {
+			mysql: [
+				{ schema: 'app', name: 'users', tableType: SqlTableType.Table },
+				{ schema: 'archive', name: 'audit', tableType: SqlTableType.Table }
+			]
+		}
+	});
+
+	const connection = nodes[0];
+	assert.equal(connection.description, 'MySQL · Preview');
+
+	const databases = connection.children ?? [];
+	assert.equal(databases.length, 2);
+
+	const appDatabase = databases.find(child => child.type === SqlConnectionTreeNodeType.Database && child.label === 'app');
+	assert.ok(appDatabase);
+	assert.equal(appDatabase?.description, 'schema');
+
+	const tablesGroup = appDatabase?.children?.find(child => child.type === SqlConnectionTreeNodeType.Group);
+	const userTable = tablesGroup?.children?.find(child => child.label === 'users');
+	assert.equal(userTable?.databaseName, 'app');
+});
+
+test('Empty MySQL connection surfaces a no-metadata empty node', () => {
+	const nodes = buildSqlConnectionTree({
+		connections: [
+			{
+				id: 'mysql',
+				name: 'Empty MySQL',
+				kind: SqlConnectionKind.MySql,
+				host: 'localhost',
+				port: 3306,
+				database: 'app',
+				readOnly: false
+			}
+		],
+		databasesByConnectionId: {
+			mysql: [] as SqlDatabase[]
+		}
+	});
+
+	const connection = nodes[0];
+	const empty = connection.children?.find(child => child.type === SqlConnectionTreeNodeType.Empty);
+	assert.ok(empty);
+	assert.equal(empty?.label, 'No metadata loaded');
+});
+
+test('Per-table column load error is isolated to the failed table', () => {
+	const usersTable = { schema: 'main', name: 'users', tableType: SqlTableType.Table };
+	const ordersTable = { schema: 'main', name: 'orders', tableType: SqlTableType.Table };
+
+	const usersKey = getColumnsKey('local', usersTable);
+	const ordersKey = getColumnsKey('local', ordersTable);
+
+	const nodes = buildSqlConnectionTree({
+		connections: [
+			{
+				id: 'local',
+				name: 'Local SQLite',
+				kind: SqlConnectionKind.Sqlite,
+				databasePath: '/tmp/app.db',
+				readOnly: false
+			}
+		],
+		databasesByConnectionId: {
+			local: [{ name: 'main' }]
+		},
+		tablesByConnectionId: {
+			local: [usersTable, ordersTable]
+		},
+		columnsByTableId: {
+			[ordersKey]: [
+				{ name: 'id', ordinal: 0, notNull: true, primaryKey: true }
+			]
+		},
+		errorsByTableId: {
+			[usersKey]: 'permission denied'
+		}
+	});
+
+	const connection = nodes[0];
+	const database = connection.children?.find(child => child.type === SqlConnectionTreeNodeType.Database);
+	const tablesGroup = database?.children?.find(child => child.type === SqlConnectionTreeNodeType.Group);
+
+	const failedTable = tablesGroup?.children?.find(child => child.label === 'users');
+	assert.equal(failedTable?.children?.length, 1);
+	const failedChild = failedTable?.children?.[0];
+	assert.equal(failedChild?.type, SqlConnectionTreeNodeType.Error);
+	assert.equal(failedChild?.label, 'Failed to load columns');
+	assert.match(failedChild?.description ?? '', /permission denied/);
+
+	const okTable = tablesGroup?.children?.find(child => child.label === 'orders');
+	assert.equal(okTable?.children?.length, 1);
+	assert.equal(okTable?.children?.[0].type, SqlConnectionTreeNodeType.Column);
+});
+
+test('Connection-level metadata error blocks tables but stays scoped', () => {
+	const nodes = buildSqlConnectionTree({
+		connections: [
+			{
+				id: 'broken',
+				name: 'Broken DB',
+				kind: SqlConnectionKind.Sqlite,
+				databasePath: '/tmp/broken.db',
+				readOnly: false
+			}
+		],
+		errorsByConnectionId: {
+			broken: 'database is locked'
+		}
+	});
+
+	const connection = nodes[0];
+	const error = connection.children?.find(child => child.type === SqlConnectionTreeNodeType.Error);
+	assert.equal(error?.label, 'Failed to load metadata');
+	assert.equal(error?.description, 'database is locked');
 });
