@@ -17,19 +17,35 @@ The project is a product hard fork of SideX. The goal is not to build a generic 
 
 ## Current Status
 
-This repository is currently in the fork stabilization phase.
+This repository is currently in the SQL MVP productization phase.
+
+Runtime driver status:
+
+| Driver | Status | Notes |
+| --- | --- | --- |
+| SQLite | MVP stable | File database, `:memory:`, metadata, query execution, cancellation and read-only mode are enabled. |
+| MySQL | Preview | Connection, metadata and query execution are enabled for local/dev validation. Query cancellation is not supported yet. |
+| PostgreSQL | Planned | Protocol fields exist, but the runtime driver is not enabled yet. |
 
 The immediate MVP target is:
 
 ```txt
-Launch app
-  -> show Nyala branded workbench
-  -> add/open SQLite connection
-  -> list database tables
+Launch Nyala Studio
+  -> show SQL-first workbench
+  -> add/open SQLite or MySQL Preview connection
+  -> list databases, tables, views and columns
   -> open SQL editor
-  -> execute SELECT query
-  -> show result in panel
+  -> execute SELECT / selected SQL / current statement
+  -> show result or error in panel
+  -> save query draft and query history
 ```
+
+Safety notes:
+
+- Saved connections never persist secrets.
+- Read-only connections block obvious DDL/DML statements.
+- MySQL Preview is intended for local/dev validation first.
+- PostgreSQL must be shown as planned until runtime support is added.
 
 ## Roadmap
 

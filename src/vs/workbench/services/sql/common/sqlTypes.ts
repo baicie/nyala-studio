@@ -1,7 +1,10 @@
 /*---------------------------------------------------------------------------------------------
  * SQL Studio Next - SQL service protocol types.
- * Phase 9 introduces multi-database-capable protocol fields.
- * SQLite remains the only enabled runtime driver.
+ *
+ * Runtime status:
+ * - SQLite is the MVP stable runtime driver.
+ * - MySQL is preview-enabled for local/dev validation.
+ * - PostgreSQL protocol fields are reserved, but runtime support is planned.
  *--------------------------------------------------------------------------------------------*/
 
 export const enum SqlConnectionKind {
