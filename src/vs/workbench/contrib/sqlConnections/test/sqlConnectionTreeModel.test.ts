@@ -3,13 +3,17 @@ import test from 'node:test';
 
 import {
 	buildSqlConnectionTree,
+	describeSqlConnection,
+	describeSqlConnectionKind,
 	getColumnNodeId,
 	getColumnsKey,
 	getConnectionColumnsKeyPrefix,
 	getConnectionNodeId,
+	getSqlConnectionDriverBadge,
 	getTableNodeId,
 	SqlConnectionTreeNodeType
 } from '../common/sqlConnectionTreeModel.js';
+import { SqlDriverAvailability } from '../../../services/sql/common/sqlDrivers.js';
 import { SqlConnectionKind, SqlTableType } from '../../../services/sql/common/sqlTypes.js';
 
 test('buildSqlConnectionTree returns empty node when there are no connections', () => {
@@ -187,4 +191,116 @@ test('getConnectionColumnsKeyPrefix matches table key prefix', () => {
 		getConnectionColumnsKeyPrefix('local/db 1'),
 		'sql/connection/local%2Fdb%201/'
 	);
+});
+
+test('describeSqlConnectionKind returns driver label for each kind', () => {
+	assert.equal(describeSqlConnectionKind(SqlConnectionKind.Sqlite), 'SQLite');
+	assert.equal(describeSqlConnectionKind(SqlConnectionKind.MySql), 'MySQL');
+	assert.equal(describeSqlConnectionKind(SqlConnectionKind.PostgreSql), 'PostgreSQL');
+});
+
+test('getSqlConnectionDriverBadge reflects driver availability', () => {
+	assert.equal(getSqlConnectionDriverBadge(SqlConnectionKind.Sqlite), 'Stable');
+	assert.equal(getSqlConnectionDriverBadge(SqlConnectionKind.MySql), 'Stable');
+	assert.equal(getSqlConnectionDriverBadge(SqlConnectionKind.PostgreSql), 'Planned');
+});
+
+test('describeSqlConnection combines kind preview planned and readOnly flags', () => {
+	assert.equal(
+		describeSqlConnection({
+			id: 'local',
+			name: 'Local',
+			kind: SqlConnectionKind.Sqlite,
+			databasePath: '/tmp/app.db',
+			readOnly: false
+		}),
+		'SQLite'
+	);
+
+	assert.equal(
+		describeSqlConnection({
+			id: 'local',
+			name: 'Local',
+			kind: SqlConnectionKind.Sqlite,
+			databasePath: '/tmp/app.db',
+			readOnly: true
+		}),
+		'SQLite · read-only'
+	);
+
+	assert.equal(
+		describeSqlConnection({
+			id: 'mysql',
+			name: 'Local MySQL',
+			kind: SqlConnectionKind.MySql,
+			host: 'localhost',
+			port: 3306,
+			database: 'app',
+			readOnly: false
+		}),
+		'MySQL · Preview'
+	);
+
+	assert.equal(
+		describeSqlConnection({
+			id: 'pg',
+			name: 'Planned PG',
+			kind: SqlConnectionKind.PostgreSql,
+			host: 'localhost',
+			port: 5432,
+			database: 'app',
+			readOnly: false
+		}),
+		'PostgreSQL · Planned'
+	);
+});
+
+test('buildSqlConnectionTree renders driver-aware connection description', () => {
+	const sqliteNodes = buildSqlConnectionTree({
+		connections: [
+			{
+				id: 'local',
+				name: 'Local SQLite',
+				kind: SqlConnectionKind.Sqlite,
+				databasePath: '/tmp/app.db',
+				readOnly: true
+			}
+		]
+	});
+	assert.equal(sqliteNodes[0].description, 'SQLite · read-only');
+
+	const mysqlNodes = buildSqlConnectionTree({
+		connections: [
+			{
+				id: 'mysql',
+				name: 'Local MySQL',
+				kind: SqlConnectionKind.MySql,
+				host: 'localhost',
+				port: 3306,
+				database: 'app',
+				readOnly: false
+			}
+		]
+	});
+	assert.equal(mysqlNodes[0].description, 'MySQL · Preview');
+
+	const postgresqlNodes = buildSqlConnectionTree({
+		connections: [
+			{
+				id: 'pg',
+				name: 'Planned PG',
+				kind: SqlConnectionKind.PostgreSql,
+				host: 'localhost',
+				port: 5432,
+				database: 'app',
+				readOnly: false
+			}
+		]
+	});
+	assert.equal(postgresqlNodes[0].description, 'PostgreSQL · Planned');
+});
+
+test('SqlDriverAvailability catalog matches tree badge expectations', () => {
+	assert.equal(SqlDriverAvailability.Enabled, 'enabled');
+	assert.equal(SqlDriverAvailability.Planned, 'planned');
 });

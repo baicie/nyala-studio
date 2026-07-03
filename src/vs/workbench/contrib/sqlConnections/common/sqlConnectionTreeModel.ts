@@ -2,7 +2,11 @@
  * SQL Studio Next - SQL connection tree model.
  *--------------------------------------------------------------------------------------------*/
 
-import { SqlColumn, SqlConnection, SqlTable, SqlTableType } from '../../../services/sql/common/sqlTypes.js';
+import {
+	getSqlDriverDescriptor,
+	SqlDriverAvailability
+} from '../../../services/sql/common/sqlDrivers.js';
+import { SqlColumn, SqlConnection, SqlConnectionKind, SqlTable, SqlTableType } from '../../../services/sql/common/sqlTypes.js';
 
 export const enum SqlConnectionTreeNodeType {
 	Empty = 'empty',
@@ -145,10 +149,68 @@ function buildConnectionNode(
 		id: getConnectionNodeId(connection.id),
 		type: SqlConnectionTreeNodeType.Connection,
 		label: connection.name,
-		description: connection.readOnly ? 'SQLite · read-only' : 'SQLite',
+		description: describeSqlConnection(connection),
 		connectionId: connection.id,
 		children
 	};
+}
+
+export interface SqlConnectionDescriptionOptions {
+	readonly includePreview?: boolean;
+}
+
+export function describeSqlConnectionKind(kind: SqlConnectionKind): string {
+	switch (kind) {
+		case SqlConnectionKind.Sqlite:
+			return 'SQLite';
+		case SqlConnectionKind.MySql:
+			return 'MySQL';
+		case SqlConnectionKind.PostgreSql:
+			return 'PostgreSQL';
+		default:
+			return String(kind);
+	}
+}
+
+export function getSqlConnectionDriverBadge(kind: SqlConnectionKind): string {
+	const descriptor = getSqlDriverDescriptor(kind);
+	switch (descriptor.availability) {
+		case SqlDriverAvailability.Enabled:
+			return 'Stable';
+		case SqlDriverAvailability.Planned:
+			return 'Planned';
+		case SqlDriverAvailability.Disabled:
+			return 'Disabled';
+		default:
+			return descriptor.availability;
+	}
+}
+
+export function describeSqlConnection(
+	connection: SqlConnection,
+	options: SqlConnectionDescriptionOptions = {}
+): string {
+	const flags: string[] = [describeSqlConnectionKind(connection.kind)];
+
+	if (options.includePreview !== false && connection.kind === SqlConnectionKind.MySql) {
+		const descriptor = getSqlDriverDescriptor(connection.kind);
+		if (descriptor.availability === SqlDriverAvailability.Enabled) {
+			flags.push('Preview');
+		}
+	}
+
+	if (connection.kind === SqlConnectionKind.PostgreSql) {
+		const descriptor = getSqlDriverDescriptor(connection.kind);
+		if (descriptor.availability === SqlDriverAvailability.Planned) {
+			flags.push('Planned');
+		}
+	}
+
+	if (connection.readOnly) {
+		flags.push('read-only');
+	}
+
+	return flags.join(' · ');
 }
 
 function buildTableNodes(
