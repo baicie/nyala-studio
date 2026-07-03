@@ -1,7 +1,10 @@
 /*---------------------------------------------------------------------------------------------
  * SQL Studio Next - SQL connection form model.
- * Phase 9.2 enables MySQL runtime preview.
- * PostgreSQL remains preview-only.
+ *
+ * Runtime status:
+ * - SQLite is MVP stable.
+ * - MySQL is preview-enabled.
+ * - PostgreSQL is planned and runtime-disabled.
  *--------------------------------------------------------------------------------------------*/
 
 import {
@@ -122,8 +125,9 @@ export function normalizeSqlConnectionFormState(input: Partial<SqlConnectionForm
 		createIfMissing: false,
 		saveConnection,
 		/**
-		 * Phase 9.2 intentionally disallows auto-connect for MySQL because
-		 * password is not persisted until Secret Store arrives.
+		 * Runtime availability of a saved MySQL connection does not yet
+		 * include a persisted secret store, so auto-connect is intentionally
+		 * disabled until Secret Store lands.
 		 */
 		autoConnect: false
 	};
@@ -209,11 +213,11 @@ export function createSqlConnectionFormPreview(state: Partial<SqlConnectionFormS
 			canConnect: false,
 			canSave: false,
 			message: missingFields.length > 0
-				? `PostgreSQL Preview is missing ${missingFields.join(', ')}. Runtime connection is not enabled yet.`
-				: 'PostgreSQL is preview-only. Runtime connection is not enabled yet.',
+				? `PostgreSQL Planned is missing ${missingFields.join(', ')}. Runtime connection is not enabled yet.`
+				: 'PostgreSQL is planned. Runtime connection is not enabled yet.',
 			summary: missingFields.length > 0
-				? `PostgreSQL Preview · missing ${missingFields.join(', ')}`
-				: `PostgreSQL Preview · ${host}:${port}/${database}`,
+				? `PostgreSQL Planned · missing ${missingFields.join(', ')}`
+				: `PostgreSQL Planned · ${host}:${port}/${database}`,
 			input: maskedInput,
 			maskedInput
 		};
@@ -229,11 +233,11 @@ export function createSqlConnectionFormPreview(state: Partial<SqlConnectionFormS
 		canConnect,
 		canSave,
 		message: canConnect
-			? 'MySQL runtime preview is ready.'
+			? 'MySQL Preview runtime is ready. Query cancellation is not supported yet.'
 			: `MySQL connection is missing ${missingFields.join(', ')}.`,
 		summary: canConnect
-			? `MySQL · ${host}:${port}/${database}`
-			: `MySQL · missing ${missingFields.join(', ')}`,
+			? `MySQL Preview · ${host}:${port}/${database}`
+			: `MySQL Preview · missing ${missingFields.join(', ')}`,
 		input: maskedInput,
 		maskedInput
 	};

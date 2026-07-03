@@ -24,6 +24,7 @@ test('buildSqlConnectionTree returns empty node when there are no connections', 
 	assert.equal(nodes.length, 1);
 	assert.equal(nodes[0].type, SqlConnectionTreeNodeType.Empty);
 	assert.equal(nodes[0].label, 'No database connections');
+	assert.equal(nodes[0].description, 'Add a SQLite or MySQL Preview connection to start browsing schemas.');
 });
 
 test('buildSqlConnectionTree sorts connections by name', () => {
@@ -199,9 +200,9 @@ test('describeSqlConnectionKind returns driver label for each kind', () => {
 	assert.equal(describeSqlConnectionKind(SqlConnectionKind.PostgreSql), 'PostgreSQL');
 });
 
-test('getSqlConnectionDriverBadge reflects driver availability', () => {
+test('getSqlConnectionDriverBadge reflects product driver status', () => {
 	assert.equal(getSqlConnectionDriverBadge(SqlConnectionKind.Sqlite), 'Stable');
-	assert.equal(getSqlConnectionDriverBadge(SqlConnectionKind.MySql), 'Stable');
+	assert.equal(getSqlConnectionDriverBadge(SqlConnectionKind.MySql), 'Preview');
 	assert.equal(getSqlConnectionDriverBadge(SqlConnectionKind.PostgreSql), 'Planned');
 });
 

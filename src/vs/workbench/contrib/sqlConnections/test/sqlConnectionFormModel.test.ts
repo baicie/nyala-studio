@@ -38,7 +38,7 @@ test('createDefaultSqlConnectionFormState creates SQLite defaults', () => {
 	});
 });
 
-test('createDefaultSqlConnectionFormState creates PostgreSQL preview defaults', () => {
+test('createDefaultSqlConnectionFormState creates PostgreSQL planned defaults', () => {
 	assert.deepEqual(createDefaultSqlConnectionFormState(SqlConnectionKind.PostgreSql), {
 		kind: SqlConnectionKind.PostgreSql,
 		name: undefined,
@@ -94,7 +94,7 @@ test('normalizeSqlConnectionFormState normalizes SQLite fields', () => {
 	});
 });
 
-test('normalizeSqlConnectionFormState disables save and autoConnect for PostgreSQL preview', () => {
+test('normalizeSqlConnectionFormState disables save and autoConnect for PostgreSQL planned driver', () => {
 	const state = normalizeSqlConnectionFormState({
 		kind: SqlConnectionKind.PostgreSql,
 		name: ' PG ',
@@ -145,7 +145,7 @@ test('createSqlConnectionInputFromFormState creates SQLite input', () => {
 	);
 });
 
-test('createSqlConnectionInputFromFormState creates PostgreSQL preview input', () => {
+test('createSqlConnectionInputFromFormState creates PostgreSQL planned input', () => {
 	assert.deepEqual(
 		createSqlConnectionInputFromFormState({
 			kind: SqlConnectionKind.PostgreSql,
@@ -233,10 +233,10 @@ test('createSqlConnectionFormPreview blocks PostgreSQL connect', () => {
 	assert.equal(preview.canSave, false);
 	assert.equal(preview.input.password, undefined);
 	assert.equal(preview.maskedInput.password, undefined);
-	assert.match(preview.message, /preview-only/);
+	assert.match(preview.message, /planned/);
 });
 
-test('canSubmitSqlConnectionForm returns false for PostgreSQL preview', () => {
+test('canSubmitSqlConnectionForm returns false for PostgreSQL planned driver', () => {
 	assert.equal(
 		canSubmitSqlConnectionForm({
 			kind: SqlConnectionKind.PostgreSql,
@@ -275,7 +275,7 @@ test('getSqlConnectionFormStatus returns preview status', () => {
 			port: 5432,
 			database: 'app'
 		}),
-		'PostgreSQL Preview · localhost:5432/app · PostgreSQL is preview-only. Runtime connection is not enabled yet.'
+		'PostgreSQL Planned · localhost:5432/app · PostgreSQL is planned. Runtime connection is not enabled yet.'
 	);
 });
 
@@ -309,7 +309,7 @@ test('undefined SQLite database path still uses default memory database', () => 
 	assert.equal(preview.summary, 'SQLite · :memory:');
 });
 
-test('PostgreSQL preview input is masked and does not expose password', () => {
+test('PostgreSQL planned input is masked and does not expose password', () => {
 	const preview = createSqlConnectionFormPreview({
 		kind: SqlConnectionKind.PostgreSql,
 		host: 'localhost',
@@ -334,10 +334,10 @@ test('PostgreSQL preview reports missing host and database', () => {
 
 	assert.equal(preview.canConnect, false);
 	assert.equal(preview.canSave, false);
-	assert.equal(preview.summary, 'PostgreSQL Preview · missing host, database');
+	assert.equal(preview.summary, 'PostgreSQL Planned · missing host, database');
 	assert.equal(
 		preview.message,
-		'PostgreSQL Preview is missing host, database. Runtime connection is not enabled yet.'
+		'PostgreSQL Planned is missing host, database. Runtime connection is not enabled yet.'
 	);
 });
 
@@ -355,7 +355,8 @@ test('createSqlConnectionFormPreview allows MySQL connect', () => {
 	assert.equal(preview.availability, SqlDriverAvailability.Enabled);
 	assert.equal(preview.canConnect, true);
 	assert.equal(preview.canSave, false);
-	assert.equal(preview.summary, 'MySQL · localhost:3306/app');
+	assert.equal(preview.message, 'MySQL Preview runtime is ready. Query cancellation is not supported yet.');
+	assert.equal(preview.summary, 'MySQL Preview · localhost:3306/app');
 	assert.equal(preview.input.password, undefined);
 });
 
@@ -394,7 +395,7 @@ test('MySQL preview reports missing database', () => {
 	});
 
 	assert.equal(preview.canConnect, false);
-	assert.equal(preview.summary, 'MySQL · missing database');
+	assert.equal(preview.summary, 'MySQL Preview · missing database');
 	assert.equal(preview.message, 'MySQL connection is missing database.');
 });
 

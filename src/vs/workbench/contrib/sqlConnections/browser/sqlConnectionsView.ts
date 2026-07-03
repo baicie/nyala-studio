@@ -293,7 +293,7 @@ export class SqlConnectionsView extends ViewPane {
 					option.textContent = 'SQLite';
 					break;
 				case SqlConnectionKind.PostgreSql:
-					option.textContent = 'PostgreSQL Preview';
+					option.textContent = 'PostgreSQL Planned';
 					break;
 				case SqlConnectionKind.MySql:
 					option.textContent = 'MySQL Preview';
@@ -561,12 +561,12 @@ export class SqlConnectionsView extends ViewPane {
 
 		if (isMysql) {
 			const note = append(this.driverPreviewElement, $('.sql-connection-driver-preview-note'));
-			note.textContent = 'MySQL runtime preview is enabled. Password is only used for the current connection and is not saved.';
+			note.textContent = 'MySQL Preview is enabled. Password is only used for the current connection and is not saved.';
 		}
 
 		if (isPostgres) {
 			const note = append(this.driverPreviewElement, $('.sql-connection-driver-preview-note'));
-			note.textContent = 'PostgreSQL remains preview-only. Runtime connection is not enabled in this phase.';
+			note.textContent = 'PostgreSQL is planned. Runtime connection is not enabled yet.';
 		}
 	}
 

@@ -46,7 +46,7 @@ export function buildSqlConnectionTree(snapshot: SqlConnectionTreeSnapshot): Sql
 				id: 'sql.empty',
 				type: SqlConnectionTreeNodeType.Empty,
 				label: 'No database connections',
-				description: 'Add a SQLite connection to start browsing schemas.'
+				description: 'Add a SQLite or MySQL Preview connection to start browsing schemas.'
 			}
 		];
 	}
@@ -172,15 +172,38 @@ export function describeSqlConnectionKind(kind: SqlConnectionKind): string {
 	}
 }
 
+/**
+ * Product-facing driver badge.
+ *
+ * Runtime availability (SqlDriverDescriptor.availability) describes the
+ * SQL backend status, but the product-facing badge is what the user sees:
+ * SQLite is stable, MySQL is preview-enabled, PostgreSQL is planned.
+ * Do not collapse MySQL into Stable just because its runtime is enabled.
+ */
 export function getSqlConnectionDriverBadge(kind: SqlConnectionKind): string {
+	if (kind === SqlConnectionKind.Sqlite) {
+		return 'Stable';
+	}
+
+	if (kind === SqlConnectionKind.MySql) {
+		return 'Preview';
+	}
+
+	if (kind === SqlConnectionKind.PostgreSql) {
+		return 'Planned';
+	}
+
 	const descriptor = getSqlDriverDescriptor(kind);
 	switch (descriptor.availability) {
 		case SqlDriverAvailability.Enabled:
 			return 'Stable';
+
 		case SqlDriverAvailability.Planned:
 			return 'Planned';
+
 		case SqlDriverAvailability.Disabled:
 			return 'Disabled';
+
 		default:
 			return descriptor.availability;
 	}
@@ -191,19 +214,11 @@ export function describeSqlConnection(
 	options: SqlConnectionDescriptionOptions = {}
 ): string {
 	const flags: string[] = [describeSqlConnectionKind(connection.kind)];
+	const badge = getSqlConnectionDriverBadge(connection.kind);
+	const includePreview = options.includePreview !== false;
 
-	if (options.includePreview !== false && connection.kind === SqlConnectionKind.MySql) {
-		const descriptor = getSqlDriverDescriptor(connection.kind);
-		if (descriptor.availability === SqlDriverAvailability.Enabled) {
-			flags.push('Preview');
-		}
-	}
-
-	if (connection.kind === SqlConnectionKind.PostgreSql) {
-		const descriptor = getSqlDriverDescriptor(connection.kind);
-		if (descriptor.availability === SqlDriverAvailability.Planned) {
-			flags.push('Planned');
-		}
+	if (badge !== 'Stable' && (includePreview || badge !== 'Preview')) {
+		flags.push(badge);
 	}
 
 	if (connection.readOnly) {

@@ -41,4 +41,30 @@ assertNotIncludes(
 	'SQLite remains the only enabled runtime driver'
 );
 
+assertIncludes(
+	'src/vs/workbench/contrib/sqlConnections/common/sqlConnectionFormModel.ts',
+	'MySQL Preview'
+);
+assertIncludes(
+	'src/vs/workbench/contrib/sqlConnections/common/sqlConnectionFormModel.ts',
+	'PostgreSQL Planned'
+);
+assertNotIncludes(
+	'src/vs/workbench/contrib/sqlConnections/common/sqlConnectionFormModel.ts',
+	'PostgreSQL Preview'
+);
+assertNotIncludes(
+	'src/vs/workbench/contrib/sqlConnections/common/sqlConnectionFormModel.ts',
+	'preview-only'
+);
+
+assertIncludes(
+	'src/vs/workbench/contrib/sqlConnections/common/sqlConnectionTreeModel.ts',
+	'MySQL Preview'
+);
+assertIncludes(
+	'src/vs/workbench/contrib/sqlConnections/common/sqlConnectionTreeModel.ts',
+	'Add a SQLite or MySQL Preview connection'
+);
+
 console.log('SQL runtime status is aligned.');

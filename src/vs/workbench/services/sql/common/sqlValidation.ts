@@ -55,10 +55,10 @@ export function normalizeSqlConnectionInput(
 	const normalized = toConnectionInput(profile);
 
 	/**
-	 * Phase 9.2 enables MySQL runtime. PostgreSQL remains planned.
-	 * assertSqlDriverEnabled() already rejects planned drivers, but keep this
-	 * explicit guard to prevent accidental remote driver activation by changing
-	 * catalog metadata only.
+	 * Phase 9 enables MySQL runtime preview.
+	 * PostgreSQL remains planned. assertSqlDriverEnabled() already rejects
+	 * planned drivers, but keep this explicit guard to prevent accidental
+	 * remote driver activation by changing catalog metadata only.
 	 */
 	if (normalized.kind !== SqlConnectionKind.Sqlite && normalized.kind !== SqlConnectionKind.MySql) {
 		throw new Error(`SQL driver '${normalized.kind}' is not enabled yet.`);
