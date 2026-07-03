@@ -1,27 +1,81 @@
 /*---------------------------------------------------------------------------------------------
  * SQL Studio Next - lightweight plugin API.
- * No remote plugin loading in Phase 10.
+ *
+ * Phase 07 MVP manifest schema:
+ * - capabilities are declared (readMetadata / executeRead / executeWrite /
+ *   filesystem.read / filesystem.write / network.request / agent.tool) but
+ *   not enforced in MVP. Bridge consumers should still surface the declared
+ *   capabilities so later phases can apply policy without rewriting plugins.
+ * - activationEvents are strings (`onSqlEditor`, etc.). They are stored as-is
+ *   in MVP so contribution wiring can opt into `*` / `onCommand:foo` /
+ *   `onView:bar` activation without changing this registry.
+ * - Every registered command / sqlAction records its `pluginId` so the
+ *   Workbench bridge can attribute contributions back to a manifest.
+ * - sqlActions must reference an existing command. Missing-command detection
+ *   is centralized here so the bridge layer does not need to know about it.
+ * - Manifests are normalized at registration time: strings trimmed, blank
+ *   values rejected, capability / activation lists deduped. That keeps the
+ *   bridge output deterministic and unit-test friendly.
+ *
+ * No remote plugin loading. Built-in plugins register through
+ * `builtinSqlPlugins.ts` only.
  *--------------------------------------------------------------------------------------------*/
+
+export const enum SqlStudioPluginCapability {
+	DatabaseReadMetadata = 'database.readMetadata',
+	DatabaseExecuteRead = 'database.executeRead',
+	DatabaseExecuteWrite = 'database.executeWrite',
+	FilesystemRead = 'filesystem.read',
+	FilesystemWrite = 'filesystem.write',
+	NetworkRequest = 'network.request',
+	AgentTool = 'agent.tool'
+}
 
 export interface SqlStudioPluginManifest {
 	readonly id: string;
 	readonly name: string;
 	readonly version: string;
+	readonly activationEvents?: readonly string[];
+	readonly capabilities?: readonly SqlStudioPluginCapability[];
 	readonly contributes?: {
 		readonly commands?: readonly SqlStudioPluginCommandContribution[];
 		readonly sqlActions?: readonly SqlStudioPluginSqlActionContribution[];
+		readonly views?: readonly SqlStudioPluginViewContribution[];
+		readonly panels?: readonly SqlStudioPluginPanelContribution[];
 	};
 }
 
 export interface SqlStudioPluginCommandContribution {
 	readonly id: string;
 	readonly title: string;
+	readonly category?: string;
 }
 
 export interface SqlStudioPluginSqlActionContribution {
 	readonly id: string;
 	readonly title: string;
+	readonly command: string;
 	readonly when?: string;
+}
+
+export interface SqlStudioPluginViewContribution {
+	readonly id: string;
+	readonly title: string;
+	readonly when?: string;
+}
+
+export interface SqlStudioPluginPanelContribution {
+	readonly id: string;
+	readonly title: string;
+	readonly when?: string;
+}
+
+export interface SqlStudioPluginCommandContributionWithPlugin extends SqlStudioPluginCommandContribution {
+	readonly pluginId: string;
+}
+
+export interface SqlStudioPluginSqlActionContributionWithPlugin extends SqlStudioPluginSqlActionContribution {
+	readonly pluginId: string;
 }
 
 export interface SqlStudioRegisteredPlugin {
@@ -31,8 +85,8 @@ export interface SqlStudioRegisteredPlugin {
 
 export class SqlStudioPluginRegistry {
 	private readonly plugins = new Map<string, SqlStudioRegisteredPlugin>();
-	private readonly commands = new Map<string, SqlStudioPluginCommandContribution>();
-	private readonly sqlActions = new Map<string, SqlStudioPluginSqlActionContribution>();
+	private readonly commands = new Map<string, SqlStudioPluginCommandContributionWithPlugin>();
+	private readonly sqlActions = new Map<string, SqlStudioPluginSqlActionContributionWithPlugin>();
 
 	registerPlugin(manifest: SqlStudioPluginManifest): SqlStudioRegisteredPlugin {
 		const normalized = normalizePluginManifest(manifest);
@@ -49,11 +103,11 @@ export class SqlStudioPluginRegistry {
 		this.plugins.set(normalized.id, registered);
 
 		for (const command of normalized.contributes?.commands ?? []) {
-			this.registerCommand(command);
+			this.registerCommand(normalized.id, command);
 		}
 
 		for (const action of normalized.contributes?.sqlActions ?? []) {
-			this.registerSqlAction(action);
+			this.registerSqlAction(normalized.id, action);
 		}
 
 		return registered;
@@ -79,32 +133,38 @@ export class SqlStudioPluginRegistry {
 		return [...this.plugins.values()];
 	}
 
-	listCommands(): SqlStudioPluginCommandContribution[] {
+	listCommands(): SqlStudioPluginCommandContributionWithPlugin[] {
 		return [...this.commands.values()];
 	}
 
-	listSqlActions(): SqlStudioPluginSqlActionContribution[] {
+	listSqlActions(): SqlStudioPluginSqlActionContributionWithPlugin[] {
 		return [...this.sqlActions.values()];
 	}
 
-	private registerCommand(command: SqlStudioPluginCommandContribution): void {
+	private registerCommand(pluginId: string, command: SqlStudioPluginCommandContribution): void {
 		const normalized = normalizePluginCommand(command);
 
 		if (this.commands.has(normalized.id)) {
 			throw new Error(`Plugin command '${normalized.id}' is already registered`);
 		}
 
-		this.commands.set(normalized.id, normalized);
+		this.commands.set(normalized.id, { ...normalized, pluginId });
 	}
 
-	private registerSqlAction(action: SqlStudioPluginSqlActionContribution): void {
+	private registerSqlAction(pluginId: string, action: SqlStudioPluginSqlActionContribution): void {
 		const normalized = normalizeSqlAction(action);
 
 		if (this.sqlActions.has(normalized.id)) {
 			throw new Error(`Plugin SQL action '${normalized.id}' is already registered`);
 		}
 
-		this.sqlActions.set(normalized.id, normalized);
+		if (!this.commands.has(normalized.command)) {
+			throw new Error(
+				`Plugin SQL action '${normalized.id}' references unknown command '${normalized.command}'`
+			);
+		}
+
+		this.sqlActions.set(normalized.id, { ...normalized, pluginId });
 	}
 }
 
@@ -113,9 +173,13 @@ export function normalizePluginManifest(manifest: SqlStudioPluginManifest): SqlS
 		id: normalizeRequiredString(manifest.id, 'plugin id'),
 		name: normalizeRequiredString(manifest.name, 'plugin name'),
 		version: normalizeRequiredString(manifest.version, 'plugin version'),
+		activationEvents: normalizeStringArray(manifest.activationEvents),
+		capabilities: normalizeCapabilities(manifest.capabilities),
 		contributes: {
 			commands: (manifest.contributes?.commands ?? []).map(normalizePluginCommand),
-			sqlActions: (manifest.contributes?.sqlActions ?? []).map(normalizeSqlAction)
+			sqlActions: (manifest.contributes?.sqlActions ?? []).map(normalizeSqlAction),
+			views: (manifest.contributes?.views ?? []).map(normalizeView),
+			panels: (manifest.contributes?.panels ?? []).map(normalizePanel)
 		}
 	};
 }
@@ -123,7 +187,8 @@ export function normalizePluginManifest(manifest: SqlStudioPluginManifest): SqlS
 function normalizePluginCommand(command: SqlStudioPluginCommandContribution): SqlStudioPluginCommandContribution {
 	return {
 		id: normalizeRequiredString(command.id, 'command id'),
-		title: normalizeRequiredString(command.title, 'command title')
+		title: normalizeRequiredString(command.title, 'command title'),
+		category: normalizeOptionalString(command.category)
 	};
 }
 
@@ -131,8 +196,33 @@ function normalizeSqlAction(action: SqlStudioPluginSqlActionContribution): SqlSt
 	return {
 		id: normalizeRequiredString(action.id, 'sql action id'),
 		title: normalizeRequiredString(action.title, 'sql action title'),
+		command: normalizeRequiredString(action.command, 'sql action command'),
 		when: normalizeOptionalString(action.when)
 	};
+}
+
+function normalizeView(view: SqlStudioPluginViewContribution): SqlStudioPluginViewContribution {
+	return {
+		id: normalizeRequiredString(view.id, 'view id'),
+		title: normalizeRequiredString(view.title, 'view title'),
+		when: normalizeOptionalString(view.when)
+	};
+}
+
+function normalizePanel(panel: SqlStudioPluginPanelContribution): SqlStudioPluginPanelContribution {
+	return {
+		id: normalizeRequiredString(panel.id, 'panel id'),
+		title: normalizeRequiredString(panel.title, 'panel title'),
+		when: normalizeOptionalString(panel.when)
+	};
+}
+
+export function normalizeCapabilities(values: readonly SqlStudioPluginCapability[] | undefined): SqlStudioPluginCapability[] {
+	return [...new Set(values ?? [])];
+}
+
+export function normalizeStringArray(values: readonly string[] | undefined): string[] {
+	return [...new Set((values ?? []).map(value => value.trim()).filter(Boolean))];
 }
 
 function normalizeRequiredString(value: string, field: string): string {
