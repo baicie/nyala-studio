@@ -3,6 +3,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import './media/sqlConnections.css';
+import './media/driverCardBadge.css';
 
 import { $, addDisposableListener, append, clearNode, EventType } from '../../../../base/browser/dom.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
@@ -20,6 +21,7 @@ import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { IViewDescriptorService } from '../../../common/views.js';
 import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
 import { ISqlConnectionService } from '../../../services/sql/common/sqlConnection.js';
+import { ISqlDriverCatalogService, SqlRuntimeDriverId } from '../../../services/sql/common/sqlDriverCatalog.js';
 import { ISqlMetadataService } from '../../../services/sql/common/sqlMetadata.js';
 import { getDialectForConnectionKind, SqlDialect } from '../../../services/sql/common/sqlDialect.js';
 import {
@@ -63,6 +65,7 @@ import {
 	SQL_CONNECTION_PREVIEW_KINDS,
 	SqlConnectionFormState
 } from '../common/sqlConnectionFormModel.js';
+import { buildSqlDriverStatusBadge, renderSqlDriverStatusBadge } from './driverCardBadge.js';
 
 interface SqlConnectionTreeSnapshotState {
 	connections: SqlConnection[];
@@ -104,6 +107,7 @@ export class SqlConnectionsView extends ViewPane {
 	private sslModeInput!: HTMLSelectElement;
 	private connectButton!: HTMLButtonElement;
 	private driverPreviewElement!: HTMLElement;
+	private driverStatusStripElement!: HTMLElement;
 
 	private currentFormKind: SqlConnectionKind = SqlConnectionKind.Sqlite;
 
@@ -134,6 +138,7 @@ export class SqlConnectionsView extends ViewPane {
 		@IHoverService hoverService: IHoverService,
 		@ISqlConnectionService private readonly sqlConnectionService: ISqlConnectionService,
 		@ISqlMetadataService private readonly sqlMetadataService: ISqlMetadataService,
+		@ISqlDriverCatalogService private readonly sqlDriverCatalogService: ISqlDriverCatalogService,
 		@ICommandService private readonly commandService: ICommandService,
 		@INotificationService private readonly notificationService: INotificationService
 	) {
@@ -153,6 +158,7 @@ export class SqlConnectionsView extends ViewPane {
 
 	protected override renderBody(container: HTMLElement): void {
 		this.body = append(container, $('.sql-connections-view'));
+		this.driverStatusStripElement = append(this.body, $('.sql-driver-status-strip'));
 		this.renderConnectionForm(this.body);
 		this.savedConnectionsElement = append(this.body, $('.sql-saved-connections'));
 		this.messageElement = append(this.body, $('.sql-connections-message'));
@@ -160,9 +166,38 @@ export class SqlConnectionsView extends ViewPane {
 
 		const defaults = createDefaultSqlConnectionFormState(SqlConnectionKind.Sqlite);
 		this.applyFormState(defaults);
+
+		// Phase 00: 启动时预热 catalog，失败也允许使用 fallback。
+		this.sqlDriverCatalogService
+			.getRuntimeStatus()
+			.then(() => this.refreshDriverStatusStrip())
+			.catch(() => this.refreshDriverStatusStrip());
+		this.refreshDriverStatusStrip();
 		this.refreshDriverPreview();
 
 		this.refresh().catch(error => this.showError(error));
+	}
+
+	private refreshDriverStatusStrip(): void {
+		if (!this.driverStatusStripElement) {
+			return;
+		}
+
+		clearNode(this.driverStatusStripElement);
+
+		let entries: ReturnType<ISqlDriverCatalogService['getCachedRuntimeStatus']>;
+		try {
+			entries = this.sqlDriverCatalogService.getCachedRuntimeStatus();
+		} catch {
+			// catalog 尚未就绪：渲染空 strip，等异步初始化完成后补上。
+			return;
+		}
+
+		for (const entry of entries) {
+			const row = append(this.driverStatusStripElement, $('.sql-driver-status-strip-item'));
+			const badge = buildSqlDriverStatusBadge(this.sqlDriverCatalogService, entry.id);
+			row.innerHTML = `${renderSqlDriverStatusBadge(badge)}<span class="sql-driver-status-strip-name">${entry.displayName}</span><span class="sql-driver-status-strip-summary">${entry.summary}</span>`;
+		}
 	}
 
 	override focus(): void {
@@ -298,15 +333,29 @@ export class SqlConnectionsView extends ViewPane {
 			const option = document.createElement('option');
 			option.value = kind;
 
+			const driverId = driverIdForConnectionKind(kind);
+			let statusLabel = '';
+
+			if (driverId !== undefined) {
+				try {
+					const entry = this.sqlDriverCatalogService.findRuntimeStatus(driverId);
+					if (entry) {
+						statusLabel = entry.status.toUpperCase();
+					}
+				} catch {
+					// catalog 尚未就绪：保留空 status，刷新 catalog 后再补。
+				}
+			}
+
 			switch (kind) {
 				case SqlConnectionKind.Sqlite:
-					option.textContent = 'SQLite';
+					option.textContent = statusLabel ? `SQLite · ${statusLabel}` : 'SQLite';
 					break;
 				case SqlConnectionKind.PostgreSql:
-					option.textContent = 'PostgreSQL Planned';
+					option.textContent = statusLabel ? `PostgreSQL · ${statusLabel}` : 'PostgreSQL';
 					break;
 				case SqlConnectionKind.MySql:
-					option.textContent = 'MySQL Preview';
+					option.textContent = statusLabel ? `MySQL · ${statusLabel}` : 'MySQL';
 					break;
 			}
 
@@ -464,6 +513,16 @@ export class SqlConnectionsView extends ViewPane {
 			})
 		);
 
+		this.sqlDriverCatalogService
+			.getRuntimeStatus()
+			.then(() => {
+				this.refreshDriverSelectLabels();
+				this.refreshDriverStatusStrip();
+			})
+			.catch(() => {
+				// catalog 加载失败不影响主流程；status strip / select 使用 fallback 渲染。
+			});
+
 		for (const input of [
 			this.nameInput,
 			this.databasePathInput,
@@ -569,6 +628,17 @@ export class SqlConnectionsView extends ViewPane {
 		const message = append(this.driverPreviewElement, $('.sql-connection-driver-preview-message'));
 		message.textContent = preview.message;
 
+		const driverId = driverIdForConnectionKind(preview.kind);
+		if (driverId !== undefined) {
+			try {
+				const badge = buildSqlDriverStatusBadge(this.sqlDriverCatalogService, driverId);
+				const badgeHost = append(this.driverPreviewElement, $('.sql-connection-driver-preview-badge'));
+				badgeHost.innerHTML = renderSqlDriverStatusBadge(badge);
+			} catch {
+				// catalog 尚未就绪：忽略，避免影响表单主流程。
+			}
+		}
+
 		if (isMysql) {
 			const note = append(this.driverPreviewElement, $('.sql-connection-driver-preview-note'));
 			note.textContent = 'MySQL Preview is enabled. Password is only used for the current connection and is not saved.';
@@ -577,6 +647,42 @@ export class SqlConnectionsView extends ViewPane {
 		if (isPostgres) {
 			const note = append(this.driverPreviewElement, $('.sql-connection-driver-preview-note'));
 			note.textContent = 'PostgreSQL is planned. Runtime connection is not enabled yet.';
+		}
+	}
+
+	private refreshDriverSelectLabels(): void {
+		if (!this.driverSelect) {
+			return;
+		}
+
+		for (const option of Array.from(this.driverSelect.options)) {
+			const kind = option.value as SqlConnectionKind;
+			const driverId = driverIdForConnectionKind(kind);
+
+			if (driverId === undefined) {
+				continue;
+			}
+
+			try {
+				const entry = this.sqlDriverCatalogService.findRuntimeStatus(driverId);
+				if (!entry) {
+					continue;
+				}
+
+				switch (kind) {
+					case SqlConnectionKind.Sqlite:
+						option.textContent = `SQLite · ${entry.status.toUpperCase()}`;
+						break;
+					case SqlConnectionKind.PostgreSql:
+						option.textContent = `PostgreSQL · ${entry.status.toUpperCase()}`;
+						break;
+					case SqlConnectionKind.MySql:
+						option.textContent = `MySQL · ${entry.status.toUpperCase()}`;
+						break;
+				}
+			} catch {
+				// catalog 尚未就绪：保持原 label。
+			}
 		}
 	}
 
@@ -1085,5 +1191,18 @@ function deleteKeysWithPrefix<T>(record: Record<string, T>, prefix: string): voi
 		if (key.startsWith(prefix)) {
 			delete record[key];
 		}
+	}
+}
+
+function driverIdForConnectionKind(kind: SqlConnectionKind): SqlRuntimeDriverId | undefined {
+	switch (kind) {
+		case SqlConnectionKind.Sqlite:
+			return SqlRuntimeDriverId.Sqlite;
+		case SqlConnectionKind.MySql:
+			return SqlRuntimeDriverId.MySql;
+		case SqlConnectionKind.PostgreSql:
+			return SqlRuntimeDriverId.Postgres;
+		default:
+			return undefined;
 	}
 }

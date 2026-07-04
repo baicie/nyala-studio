@@ -1,5 +1,6 @@
 mod commands;
 pub(crate) mod product;
+pub mod runtime_status;
 
 use commands::db_state::SidexDbState;
 use commands::debug::{DapClientStore, DebugAdapterStore};
@@ -672,6 +673,8 @@ pub fn run() {
             commands::sql_list_columns,
             commands::sql_execute_query,
             commands::sql_cancel_query,
+            commands::sql_list_driver_runtime_status,
+            commands::sql_assert_driver_runtime_status,
             // sidex-db state persistence
             commands::db_get_recent_files,
             commands::db_get_recent_workspaces,

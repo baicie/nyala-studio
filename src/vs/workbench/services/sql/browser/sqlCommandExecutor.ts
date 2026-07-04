@@ -17,7 +17,9 @@ export type SqlCommandName =
 	| 'sql_list_tables'
 	| 'sql_list_columns'
 	| 'sql_execute_query'
-	| 'sql_cancel_query';
+	| 'sql_cancel_query'
+	| 'sql_list_driver_runtime_status'
+	| 'sql_assert_driver_runtime_status';
 
 export interface SqlCommandExecutorOptions {
 	readonly allowVoid?: boolean;

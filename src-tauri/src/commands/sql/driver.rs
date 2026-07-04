@@ -1,10 +1,34 @@
 use super::types::{SqlConnection, SqlConnectionInput, SqlConnectionKind, SqlSslMode};
+use crate::runtime_status::{self, DriverId, DriverRuntimeEntry, RuntimeStatus};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SqlDriverAvailability {
-    Enabled,
+    Stable,
+    Preview,
     Planned,
+    Disabled,
+}
+
+impl SqlDriverAvailability {
+    pub fn from_runtime_status(status: RuntimeStatus) -> Self {
+        match status {
+            RuntimeStatus::Stable => SqlDriverAvailability::Stable,
+            RuntimeStatus::Preview => SqlDriverAvailability::Preview,
+            RuntimeStatus::Planned => SqlDriverAvailability::Planned,
+            RuntimeStatus::Disabled => SqlDriverAvailability::Disabled,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn as_token(&self) -> &'static str {
+        match self {
+            SqlDriverAvailability::Stable => "stable",
+            SqlDriverAvailability::Preview => "preview",
+            SqlDriverAvailability::Planned => "planned",
+            SqlDriverAvailability::Disabled => "disabled",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,37 +36,58 @@ pub struct SqlDriverDescriptor {
     pub kind: SqlConnectionKind,
     pub label: &'static str,
     pub availability: SqlDriverAvailability,
+    pub runtime_status: RuntimeStatus,
     pub default_port: Option<u16>,
     pub file_based: bool,
     pub remote: bool,
 }
 
+/// Build a driver descriptor backed by the runtime-status truth-of-record.
+fn build_descriptor_from_runtime(
+    runtime_entry: &DriverRuntimeEntry,
+    kind: SqlConnectionKind,
+    default_port: Option<u16>,
+    file_based: bool,
+    remote: bool,
+) -> SqlDriverDescriptor {
+    SqlDriverDescriptor {
+        kind,
+        label: runtime_entry.display_name,
+        availability: SqlDriverAvailability::from_runtime_status(runtime_entry.status),
+        runtime_status: runtime_entry.status,
+        default_port,
+        file_based,
+        remote,
+    }
+}
+
 pub fn sql_driver_catalog() -> Vec<SqlDriverDescriptor> {
+    let sqlite_entry = runtime_status::lookup(DriverId::Sqlite)
+        .expect("sqlite must be present in runtime status table");
+    let mysql_entry = runtime_status::lookup(DriverId::MySql)
+        .expect("mysql must be present in runtime status table");
+    let postgres_entry = runtime_status::lookup(DriverId::Postgres)
+        .expect("postgres must be present in runtime status table");
+
     vec![
-        SqlDriverDescriptor {
-            kind: SqlConnectionKind::Sqlite,
-            label: "SQLite",
-            availability: SqlDriverAvailability::Enabled,
-            default_port: None,
-            file_based: true,
-            remote: false,
-        },
-        SqlDriverDescriptor {
-            kind: SqlConnectionKind::PostgreSql,
-            label: "PostgreSQL",
-            availability: SqlDriverAvailability::Planned,
-            default_port: Some(5432),
-            file_based: false,
-            remote: true,
-        },
-        SqlDriverDescriptor {
-            kind: SqlConnectionKind::MySql,
-            label: "MySQL",
-            availability: SqlDriverAvailability::Enabled,
-            default_port: Some(3306),
-            file_based: false,
-            remote: true,
-        },
+        build_descriptor_from_runtime(sqlite_entry, SqlConnectionKind::Sqlite, None, true, false),
+        // MySQL is intentionally PREVIEW per Phase 00; this matches the README
+        // runtime status table and is enforced by `verify-sql-runtime-status.mjs`.
+        build_descriptor_from_runtime(
+            mysql_entry,
+            SqlConnectionKind::MySql,
+            Some(3306),
+            false,
+            true,
+        ),
+        // PostgreSQL stays PLANNED per Phase 00; no runtime driver is wired yet.
+        build_descriptor_from_runtime(
+            postgres_entry,
+            SqlConnectionKind::PostgreSql,
+            Some(5432),
+            false,
+            true,
+        ),
     ]
 }
 
@@ -57,9 +102,13 @@ pub fn ensure_driver_enabled(kind: &SqlConnectionKind) -> Result<(), String> {
     let descriptor = get_driver_descriptor(kind);
 
     match descriptor.availability {
-        SqlDriverAvailability::Enabled => Ok(()),
+        SqlDriverAvailability::Stable | SqlDriverAvailability::Preview => Ok(()),
         SqlDriverAvailability::Planned => Err(format!(
             "SQL driver '{}' is planned and is not enabled yet",
+            descriptor.label
+        )),
+        SqlDriverAvailability::Disabled => Err(format!(
+            "SQL driver '{}' is disabled in this build",
             descriptor.label
         )),
     }
@@ -172,27 +221,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sqlite_driver_is_enabled() {
-        assert_eq!(
-            get_driver_descriptor(&SqlConnectionKind::Sqlite).label,
-            "SQLite"
-        );
+    fn sqlite_driver_is_stable() {
+        let descriptor = get_driver_descriptor(&SqlConnectionKind::Sqlite);
+        assert_eq!(descriptor.label, "SQLite");
+        assert_eq!(descriptor.availability, SqlDriverAvailability::Stable);
+        assert_eq!(descriptor.runtime_status, RuntimeStatus::Stable);
         assert!(ensure_driver_enabled(&SqlConnectionKind::Sqlite).is_ok());
     }
 
     #[test]
     fn postgresql_driver_is_planned() {
+        let descriptor = get_driver_descriptor(&SqlConnectionKind::PostgreSql);
+        assert_eq!(descriptor.runtime_status, RuntimeStatus::Planned);
         let err = ensure_driver_enabled(&SqlConnectionKind::PostgreSql).unwrap_err();
         assert!(err.contains("planned"));
     }
 
     #[test]
-    fn mysql_driver_is_enabled() {
-        assert_eq!(
-            get_driver_descriptor(&SqlConnectionKind::MySql).label,
-            "MySQL"
-        );
+    fn mysql_driver_is_preview_per_phase_00() {
+        let descriptor = get_driver_descriptor(&SqlConnectionKind::MySql);
+        assert_eq!(descriptor.label, "MySQL");
+        assert_eq!(descriptor.availability, SqlDriverAvailability::Preview);
+        assert_eq!(descriptor.runtime_status, RuntimeStatus::Preview);
         assert!(ensure_driver_enabled(&SqlConnectionKind::MySql).is_ok());
+    }
+
+    #[test]
+    fn catalog_runtime_status_matches_truth_of_record() {
+        // 关键 invariant：catalog 里的 runtime_status 必须从单一真理之源派生。
+        let sqlite = get_driver_descriptor(&SqlConnectionKind::Sqlite);
+        let mysql = get_driver_descriptor(&SqlConnectionKind::MySql);
+        let postgres = get_driver_descriptor(&SqlConnectionKind::PostgreSql);
+
+        assert_eq!(sqlite.runtime_status, RuntimeStatus::Stable);
+        assert_eq!(mysql.runtime_status, RuntimeStatus::Preview);
+        assert_eq!(postgres.runtime_status, RuntimeStatus::Planned);
     }
 
     #[test]
