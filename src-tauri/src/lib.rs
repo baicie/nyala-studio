@@ -686,6 +686,10 @@ pub fn run() {
             commands::sql_list_connections_v2,
             commands::sql_upsert_connection_v2,
             commands::sql_forget_secrets,
+            // Phase 02 - Metadata Explorer
+            commands::sql_list_schemas,
+            commands::sql_list_tables_v2,
+            commands::sql_list_columns_v2,
             // sidex-db state persistence
             commands::db_get_recent_files,
             commands::db_get_recent_workspaces,
