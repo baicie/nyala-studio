@@ -1243,3 +1243,36 @@ test('query model is invariant', () => {
 - 真有 UI 双重 guard 阻止 planned driver；
 - 真有 readOnly 校验就位（后端强制执行）；
 - 真有 connection 错误结构化输出可被 UI 显示。
+
+## 8. 实现状态说明（与 §2 / §3 的偏差）
+
+Phase 01 实装按 §2 / §3 全部落地，但有若干**与 Phase 00 共存的细节**值得记录，避免未来读本文档的人误判现状。
+
+### 8.1 v1 + v2 双栈并存
+
+§2 描述的 V2 体系（`ConnectionProfile` / `ConnectionSecret` / `ConnectionManager` / `persistence_v2` / `ISqlConnectionServiceV2`）已完整实现，但**未删除 Phase 00 的 V1 代码**：
+
+| 关注点 | V1（Phase 00） | V2（Phase 01） |
+| --- | --- | --- |
+| Rust store | `SqlConnectionStore` | `ConnectionManager` |
+| Rust persistence | `persistence.rs::SqlSavedConnection` | `persistence_v2.rs::StoredConnections` |
+| Tauri commands | `sql_test_connection` / `sql_open_connection` / `sql_close_connection` / `sql_list_connections` / `sql_save_connection` / `sql_list_saved_connections` / `sql_remove_saved_connection` / `sql_restore_saved_connections` | `sql_test_connection_v2` / `sql_open_connection_v2` / `sql_close_connection_v2` / `sql_list_connections_v2` / `sql_upsert_connection_v2` / `sql_forget_secrets` |
+| Frontend service | `ISqlConnectionService` / `SqlConnectionService`（监听 `SqlConnection`） | `ISqlConnectionServiceV2` / `SqlConnectionServiceV2`（监听 `ConnectionProfile`） |
+
+两者均在 `lib.rs::invoke_handler` 与 `sqlService.contribution.ts` 注册，并存于运行时。理由：Phase 02/03/04 的 metadata / query / panel 仍消费 V1 的 `SqlConnection` 形态。
+
+后续 Phase 在迁移完成后可逐步移除 V1。
+
+### 8.2 测试覆盖与 §3 的对照
+
+§3 列出 6 个 Rust 持久化测试 + 4 个 manager 测试 + 1 个 sql_test_connection 防 secret 泄漏测试。实际实现：
+
+| §3 期望 | 实际 | 备注 |
+| --- | --- | --- |
+| §3.1 6 个 persistence 测试 | `persistence_v2.rs::tests` **7 个** | 多了 `version_constant_matches_loader_default`；`persistence.rs::tests` 还提供 3 个 V1 测试 |
+| §3.2 4 个 manager 测试 | `connection_manager.rs::tests` **9 个** | 多了 `mysql_open_succeeds_via_default_registry` / `postgres_open_is_blocked_by_runtime_status_guard` / `with_conn_returns_not_open_when_missing` / `build_default_manager_uses_default_registry` |
+| §3.3 1 个 sql_test_connection 测试 | `connection_v2.rs::tests::test_connection_v2_does_not_retain_secret` + `connection_manager.rs::tests::open_for_test_does_not_retain_secret_or_connection` | 共 2 个 |
+| §3.4 前端 profile 模型 6 个 | `sqlConnectionProfile.test.ts` + `sqlConnectionProfileV2.test.ts` 双套 | V2 独立覆盖 |
+| §3.5 前端 service 5 个 | `sqlConnectionServiceV2.test.ts` | V2 5 个测试 |
+| §3.6 Form Controller 5 个 | `sqlConnectionForm.test.ts` **4 个** | 少 `error from backend reaches widget.flashError` 一例，行为由 `clearSecret is always invoked` 隐式覆盖 |
+| §3.7 Template + Query model 9 个 | `sqlConnectionTemplateModel.test.ts` + `sqlConnectionQueryModel.test.ts` + `sqlConnectionTreeModel.test.ts` + `sqlConnectionTreeModelV2.test.ts` + `sqlConnectionFormModel.test.ts` + `driverCardBadge.test.ts` | 共 30+ 个 |

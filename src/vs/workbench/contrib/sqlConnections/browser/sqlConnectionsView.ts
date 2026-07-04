@@ -691,7 +691,7 @@ export class SqlConnectionsView extends ViewPane {
 			let databases: SqlDatabase[] = [];
 			try {
 				databases = await this.sqlMetadataService.listDatabases(connection.id);
-			} catch (databaseError) {
+			} catch (_databaseError) {
 				/**
 				 * listDatabases failure is non-fatal: SQLite returns the synthetic
 				 * `main` database when the snapshot does not include one, and a

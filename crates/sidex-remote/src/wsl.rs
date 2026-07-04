@@ -117,7 +117,7 @@ pub fn install_server_in_wsl(distro: &str) -> Result<()> {
 
 /// List distros and connect to the named one, returning a [`WslConnection`].
 #[cfg(target_os = "windows")]
-pub async fn connect_distro(name: &str) -> Result<WslConnection> {
+pub fn connect_distro(name: &str) -> Result<WslConnection> {
     let distros = list_distributions()?;
     let distro = distros
         .into_iter()
@@ -131,7 +131,7 @@ pub async fn connect_distro(name: &str) -> Result<WslConnection> {
         _ => WslDistroState::Unregistered,
     };
 
-    let transport = WslTransport::connect(name).await?;
+    let transport = WslTransport::connect(name)?;
     Ok(WslConnection {
         distro,
         state,
@@ -222,7 +222,7 @@ pub(crate) fn parse_wsl_list(text: &str) -> Result<Vec<WslDistro>> {
 #[cfg(target_os = "windows")]
 impl WslTransport {
     /// Connect to a named WSL distribution.
-    pub async fn connect(distro: &str) -> Result<Self> {
+    pub fn connect(distro: &str) -> Result<Self> {
         use std::os::windows::process::CommandExt;
         let output = std::process::Command::new("wsl")
             .args(["-d", distro, "--", "echo", "ok"])

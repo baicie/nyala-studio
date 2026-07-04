@@ -335,7 +335,7 @@ pub fn kill_process_tree(pid: u32) -> PtyResult<()> {
     use std::process::Command;
 
     let result = Command::new("taskkill")
-        .args(&["/F", "/T", "/PID", &pid.to_string()])
+        .args(["/F", "/T", "/PID", &pid.to_string()])
         .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .output();
 

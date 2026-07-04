@@ -368,13 +368,15 @@ test('execute resolves as cancelled instead of completed after a successful canc
 });
 
 test('execute resolves as cancelled instead of failed when cancellation races a thrown error', async () => {
-	let resolveExecute: (value: unknown) => void = () => undefined;
-	let rejectExecute: (reason?: unknown) => void = () => undefined;
+	const executeSignals: { resolve: (value: unknown) => void; reject: (reason?: unknown) => void } = {
+		resolve: () => undefined,
+		reject: () => undefined
+	};
 
 	const service = new FakeQueryService({
 		execute: () => new Promise<unknown>((resolve, reject) => {
-			resolveExecute = resolve;
-			rejectExecute = reject;
+			executeSignals.resolve = resolve;
+			executeSignals.reject = reject;
 		}),
 		cancel: (request) => Promise.resolve({
 			cancelled: true,
@@ -396,7 +398,7 @@ test('execute resolves as cancelled instead of failed when cancellation races a 
 	const cancelled = await controller.cancel('query-1');
 	assert.ok(cancelled);
 
-	rejectExecute(new Error('late connection reset'));
+	executeSignals.reject(new Error('late connection reset'));
 
 	const executeResult = await executePromise;
 	assert.equal(executeResult.failed, undefined);

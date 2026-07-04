@@ -850,3 +850,51 @@ mod tests {
 - 真有 NULL 显示、truncation 提示；
 - 真有 copy cell/row/column/table；
 - 真有 wire format 兼容前端 camelCase。
+
+## 8. 实现状态说明（与 §2 / §3 的偏差）
+
+Phase 04 实装在 §1 列范围内的所有目标都已完成，但与 §2 / §3 设计的细节存在以下偏差：
+
+### 8.1 后端 wire format 未重写
+
+§2.3 / §2.4 设计的 `SqlColumnDto` / `SqlCellDto` / `SqlQueryResponseDto` / `SqlQueryOutcomeDto` / `DriverRowSet` trait **均未实装**。实装沿用 Phase 03 的 V1 体系：
+
+- `src-tauri/src/commands/sql/state.rs` 仍然返回 `crate::commands::sql::types::SqlQueryResult`，字段名直接走 `#[serde(rename_all = "camelCase")]`；
+- `state.rs::execute_query` 直接调 `execute_sqlite_query`，没有 `DriverRowSet` 中间 trait；
+- SQLite driver 走 `src-tauri/src/commands/sql/sqlite_runtime.rs::execute_sqlite_query` 的具体函数路径，而不是 `SqlConnection` trait。
+
+**推迟理由**：V1 已经 `cargo test sql` 119/119 绿，重写 DTO 等于删已绿代码；且 V2 `SqlConnectionServiceV2` 与 V1 `SqlConnectionService` 在 §2.4 提到的 caller 视角下都满足前端需要。**建议在多 driver（PostgreSQL / MySQL）接入时统一重构 driver trait。**
+
+### 8.2 copy API 命名差异
+
+§2.6 设计 4 个 API：`copyCell` / `copyRow` / `copyColumn` / `copyTable`。实装只有一个 `copySqlResultGrid(grid, options)` 函数，通过 `options.mode` 在 `Cell` / `Row` / `All` 三种模式之间切换，`options.format` 在 `Csv` / `Tsv` 之间切换。
+
+**`copyColumn` 函数不存在**——前端面板按行操作而非按列；如未来需要按列复制，可在 `sqlResultGridModel.ts` 增加 `copyColumnFromGrid` 函数，不破坏 DoD。
+
+### 8.3 测试分布
+
+§3.4 / §3.5 期望的 `sqlite_driver.rs::tests_phase04` 与 `query.rs::tests` 两个 Rust test module **不存在**。等价测试散落如下：
+
+| §3 期望位置 | 等价实装 | 用例数 |
+| --- | --- | --- |
+| §3.4 SQLite execute 5 个 | `state.rs::tests` 中 `execute_query_*` 系列 + `read_only_connection_rejects_mutating_sql` | 6 |
+| §3.5 wire format 3 个 | `SqlQueryResult` 的 serde `rename_all = "camelCase"` 由 `state.rs::tests::execute_query_returns_columns_and_rows` + frontend `sqlConnectionProfileV2.test.ts` 覆盖 | — |
+
+### 8.4 超出 §1 范围但已实装
+
+- **Snapshot history**：最多 20 条 `SqlResultSnapshot`，包含 success / error / cancelled 三种。Panel 渲染为可点击切换的 history list。doc §1 列为"不在范围"，但因 Phase 04 与 Phase 05 history service 共享 state，由 Phase 04 提前提供。
+- **`SqlResultView`** 是真 `ViewPane`，不是 §2.5 的 stub。包括 toolbar（Copy Cell / Copy Row / Copy CSV / Copy TSV / Clear）、status bar、history list、grid 选中、cancellation message、truncation banner。
+- **`SqlResultBridgeContribution`** 串起 `ISqlEditorEventService` ↔ `ISqlResultService`，监听 Started / Completed / Failed / Cancelled 四个事件。
+
+### 8.5 验证命令汇总
+
+```bash
+pnpm run lint                              # exit 0
+pnpm run build                             # exit 0
+pnpm run rust:check                        # exit 0
+pnpm run rust:clippy                       # exit 0
+pnpm run test:sql-result                   # 57/57 pass
+pnpm run test:sql-services                 # 62/62 pass
+pnpm run test:sql-editor                   # 59/59 pass
+cd src-tauri && cargo test sql             # 119/119 pass
+```
