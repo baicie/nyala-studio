@@ -13,7 +13,6 @@ import './sidexNullServices.js';
 // SideX: Register Rust-backed bridge services as DI singletons
 import '../platform/sidex/browser/sidexFileSystemProvider.js';
 import '../platform/sidex/browser/sidexSearchProvider.js';
-import '../platform/sidex/browser/sidexSCMProvider.js';
 import '../platform/sidex/browser/sidexSyntaxService.js';
 import '../platform/sidex/browser/sidexLspService.js';
 import '../platform/sidex/browser/sidexDapService.js';
@@ -227,8 +226,15 @@ import './contrib/searchEditor/browser/searchEditor.contribution.js';
 import './contrib/sash/browser/sash.contribution.js';
 
 // SCM
+//
+// The SCM view container is still registered (extensions could still
+// register source control providers via the extension host API), but we
+// do NOT load the Tauri Git provider here. The registered view container
+// is hidden by `hideIfEmpty: true`, so with no providers registered the
+// icon does not appear in the activity bar. We keep the SCM service
+// scaffolding in place so future VS Code-compatible SCM extensions can
+// plug in without re-introducing the upstream wiring.
 import './contrib/scm/browser/scm.contribution.js';
-import './contrib/scm/browser/git.contribution.js';
 
 // Remote Explorer
 import './contrib/remote/browser/remote.contribution.js';
