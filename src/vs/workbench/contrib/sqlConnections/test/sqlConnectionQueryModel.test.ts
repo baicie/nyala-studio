@@ -1,526 +1,91 @@
+/*---------------------------------------------------------------------------------------------
+ * Nyala Studio - SQL connection query model tests (Phase 01).
+ *--------------------------------------------------------------------------------------------*/
+
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-	createConnectionQueryDraft,
-	createCopyQualifiedNameTextFromTreeNode,
-	createCopyTableNameTextFromTreeNode,
-	createCountDraftFromTreeNode,
-	createInsertDraftFromTreeNode,
-	createSelectDraftFromTreeNode,
-	createSqlEditorDraftFromTreeNode,
-	createTablePreviewDraft,
-	createUpdateDraftFromTreeNode,
-	formatSqliteQualifiedName,
-	isSqlMutableTableNode,
-	isSqlTableLikeNode,
-	quoteSqliteIdentifier,
-	SQL_CONNECTION_TABLE_PREVIEW_LIMIT
-} from '../common/sqlConnectionQueryModel.js';
-import { SqlConnectionTreeNodeType } from '../common/sqlConnectionTreeModel.js';
-import { SqlDialect } from '../../../services/sql/common/sqlDialect.js';
-import { SqlTableType } from '../../../services/sql/common/sqlTypes.js';
+import { SqlConnectionQueryModel } from '../browser/sqlConnectionQueryModel.js';
+import { IConnectionWithStatus } from '../../../services/sql/common/sqlConnection.js';
+import { SqlRuntimeDriverId, SqlRuntimeStatus, ISqlDriverCatalogService, SqlRuntimeDriverEntry } from '../../../services/sql/common/sqlDriverCatalog.js';
 
-test('quoteSqliteIdentifier quotes simple identifier', () => {
-	assert.equal(quoteSqliteIdentifier('users'), '"users"');
-});
-
-test('quoteSqliteIdentifier escapes double quotes', () => {
-	assert.equal(quoteSqliteIdentifier('weird"name'), '"weird""name"');
-});
-
-test('quoteSqliteIdentifier rejects empty identifier', () => {
-	assert.throws(() => quoteSqliteIdentifier('  '), /identifier must not be empty/);
-});
-
-test('quoteSqliteIdentifier rejects NUL bytes', () => {
-	assert.throws(() => quoteSqliteIdentifier('bad\0name'), /NUL/);
-});
-
-test('formatSqliteQualifiedName omits main schema', () => {
-	assert.equal(formatSqliteQualifiedName('main', 'users'), '"users"');
-});
-
-test('formatSqliteQualifiedName includes non-main schema', () => {
-	assert.equal(formatSqliteQualifiedName('analytics', 'events'), '"analytics"."events"');
-});
-
-test('createConnectionQueryDraft creates default query bound to connection', () => {
-	const draft = createConnectionQueryDraft(' local ', ' Local SQLite ');
-
-	assert.equal(draft.connectionId, 'local');
-	assert.equal(draft.connectionName, 'Local SQLite');
-	assert.match(draft.initialSql, /Connection: Local SQLite/);
-	assert.match(draft.initialSql, /SELECT 1 AS value;/);
-});
-
-test('createTablePreviewDraft creates select top SQL for table node', () => {
-	const draft = createTablePreviewDraft(
-		{
-			type: SqlConnectionTreeNodeType.Table,
-			connectionId: 'local',
-			schema: 'main',
-			tableName: 'users',
-			label: 'users'
-		},
-		{
-			connectionName: 'Local SQLite'
+class StubCatalog implements ISqlDriverCatalogService {
+	declare readonly _serviceBrand: undefined;
+	private readonly entries: Map<string, SqlRuntimeDriverEntry> = new Map();
+	constructor(entries: SqlRuntimeDriverEntry[]) {
+		for (const entry of entries) {
+			this.entries.set(entry.id, entry);
 		}
-	);
+	}
+	getRuntimeStatus(): Promise<SqlRuntimeDriverEntry[]> { return Promise.resolve([...this.entries.values()]); }
+	getCachedRuntimeStatus(): SqlRuntimeDriverEntry[] { return [...this.entries.values()]; }
+	findRuntimeStatus(id: SqlRuntimeDriverId): SqlRuntimeDriverEntry | undefined { return this.entries.get(id); }
+	isDriverRunnable(id: SqlRuntimeDriverId): boolean {
+		const s = this.entries.get(id)?.status;
+		return s === SqlRuntimeStatus.Stable || s === SqlRuntimeStatus.Preview;
+	}
+	assertAtLeast(): void {}
+	labelFor(id: SqlRuntimeDriverId): string { return id; }
+	onChange(): () => void { return () => {}; }
+}
 
-	assert.equal(draft.connectionId, 'local');
-	assert.equal(draft.connectionName, 'Local SQLite');
-	assert.equal(
-		draft.initialSql,
-		`SELECT *
-FROM "users"
-LIMIT ${SQL_CONNECTION_TABLE_PREVIEW_LIMIT};
-`
-	);
-});
-
-test('createTablePreviewDraft creates select top SQL for attached schema', () => {
-	const draft = createTablePreviewDraft(
-		{
-			type: SqlConnectionTreeNodeType.Table,
-			connectionId: 'local',
-			schema: 'analytics',
-			tableName: 'events',
-			label: 'events'
-		},
-		{
-			limit: 50
-		}
-	);
-
-	assert.equal(
-		draft.initialSql,
-		`SELECT *
-FROM "analytics"."events"
-LIMIT 50;
-`
-	);
-});
-
-test('createTablePreviewDraft clamps large limit', () => {
-	const draft = createTablePreviewDraft(
-		{
-			type: SqlConnectionTreeNodeType.Table,
-			connectionId: 'local',
-			schema: 'main',
-			tableName: 'users',
-			label: 'users'
-		},
-		{
-			limit: 20_000
-		}
-	);
-
-	assert.match(draft.initialSql, /LIMIT 10000;/);
-});
-
-test('createTablePreviewDraft rejects invalid limit', () => {
-	assert.throws(
-		() =>
-			createTablePreviewDraft(
-				{
-					type: SqlConnectionTreeNodeType.Table,
-					connectionId: 'local',
-					schema: 'main',
-					tableName: 'users',
-					label: 'users'
-				},
-				{
-					limit: 0
-				}
-			),
-		/limit must be a positive integer/
-	);
-});
-
-test('createSqlEditorDraftFromTreeNode supports connection node', () => {
-	const draft = createSqlEditorDraftFromTreeNode(
-		{
-			id: 'sql/connection/local',
-			type: SqlConnectionTreeNodeType.Connection,
-			label: 'Local SQLite',
-			connectionId: 'local'
-		},
-		{
-			connectionName: 'Local SQLite'
-		}
-	);
-
-	assert.equal(draft.connectionId, 'local');
-	assert.equal(draft.connectionName, 'Local SQLite');
-	assert.match(draft.initialSql, /SELECT 1 AS value;/);
-});
-
-test('createSqlEditorDraftFromTreeNode supports table node', () => {
-	const draft = createSqlEditorDraftFromTreeNode({
-		id: 'sql/connection/local/table/main/users',
-		type: SqlConnectionTreeNodeType.Table,
-		label: 'users',
-		connectionId: 'local',
-		schema: 'main',
-		tableName: 'users'
-	});
-
-	assert.equal(draft.connectionId, 'local');
-	assert.match(draft.initialSql, /FROM "users"/);
-});
-
-test('createSqlEditorDraftFromTreeNode supports view node', () => {
-	const draft = createSqlEditorDraftFromTreeNode({
-		id: 'sql/connection/local/view/main/active_users',
-		type: SqlConnectionTreeNodeType.View,
-		label: 'active_users',
-		connectionId: 'local',
-		schema: 'main',
-		tableName: 'active_users'
-	});
-
-	assert.equal(draft.connectionId, 'local');
-	assert.match(draft.initialSql, /FROM "active_users"/);
-});
-
-test('createSqlEditorDraftFromTreeNode rejects column node', () => {
-	assert.throws(
-		() =>
-			createSqlEditorDraftFromTreeNode({
-				id: 'column',
-				type: SqlConnectionTreeNodeType.Column,
-				label: 'id',
-				connectionId: 'local',
-				tableName: 'users',
-				columnName: 'id'
-			}),
-		/Cannot open SQL query from node type/
-	);
-});
-
-test('createSqlEditorDraftFromTreeNode rejects node without connection id', () => {
-	assert.throws(
-		() =>
-			createSqlEditorDraftFromTreeNode({
-				id: 'empty',
-				type: SqlConnectionTreeNodeType.Empty,
-				label: 'Empty'
-			}),
-		/no connection id/
-	);
-});
-
-test('SqlTableType is reachable from sqlTypes module', () => {
-	assert.equal(SqlTableType.Table, 'table');
-});
-
-test('createTablePreviewDraft can generate sqlite SQL through dialect option', () => {
-	const draft = createTablePreviewDraft(
-		{
-			type: SqlConnectionTreeNodeType.Table,
-			connectionId: 'local',
-			schema: 'main',
-			tableName: 'users',
-			label: 'users'
-		},
-		{
-			dialect: SqlDialect.Sqlite,
-			limit: 25
-		}
-	);
-
-	assert.equal(
-		draft.initialSql,
-		`SELECT *
-FROM "users"
-LIMIT 25;
-`
-	);
-});
-
-test('createTablePreviewDraft supports attached sqlite schema', () => {
-	const draft = createTablePreviewDraft(
-		{
-			type: SqlConnectionTreeNodeType.Table,
-			connectionId: 'local',
-			schema: 'analytics',
-			tableName: 'events',
-			label: 'events'
-		},
-		{
-			limit: 50
-		}
-	);
-
-	assert.equal(
-		draft.initialSql,
-		`SELECT *
-FROM "analytics"."events"
-LIMIT 50;
-`
-	);
-});
-
-test('createSelectDraftFromTreeNode creates SELECT draft', () => {
-	const draft = createSelectDraftFromTreeNode({
-		id: 'table-users',
-		type: SqlConnectionTreeNodeType.Table,
-		label: 'users',
-		connectionId: 'local',
-		schema: 'main',
-		tableName: 'users'
-	});
-
-	assert.equal(
-		draft.initialSql,
-		`SELECT *
-FROM "users"
-LIMIT 100;
-`
-	);
-});
-
-test('createCountDraftFromTreeNode creates COUNT draft', () => {
-	const draft = createCountDraftFromTreeNode({
-		id: 'table-users',
-		type: SqlConnectionTreeNodeType.Table,
-		label: 'users',
-		connectionId: 'local',
-		schema: 'main',
-		tableName: 'users'
-	});
-
-	assert.equal(
-		draft.initialSql,
-		`SELECT COUNT(*) AS "count"
-FROM "users";
-`
-	);
-});
-
-test('createInsertDraftFromTreeNode creates INSERT draft', () => {
-	const draft = createInsertDraftFromTreeNode(
-		{
-			id: 'table-users',
-			type: SqlConnectionTreeNodeType.Table,
-			label: 'users',
-			connectionId: 'local',
-			schema: 'main',
-			tableName: 'users'
-		},
-		{
-			columns: [
-				{
-					name: 'id',
-					dataType: 'INTEGER',
-					ordinal: 0,
-					primaryKey: true,
-					notNull: true,
-					defaultValue: undefined
-				},
-				{
-					name: 'name',
-					dataType: 'TEXT',
-					ordinal: 1,
-					primaryKey: false,
-					notNull: false,
-					defaultValue: undefined
-				}
-			]
-		}
-	);
-
-	assert.equal(
-		draft.initialSql,
-		`INSERT INTO "users" ("id", "name")
-VALUES (:id, :name);
-`
-	);
-});
-
-test('createUpdateDraftFromTreeNode creates UPDATE draft', () => {
-	const draft = createUpdateDraftFromTreeNode(
-		{
-			id: 'table-users',
-			type: SqlConnectionTreeNodeType.Table,
-			label: 'users',
-			connectionId: 'local',
-			schema: 'main',
-			tableName: 'users'
-		},
-		{
-			columns: [
-				{
-					name: 'id',
-					dataType: 'INTEGER',
-					ordinal: 0,
-					primaryKey: true,
-					notNull: true,
-					defaultValue: undefined
-				},
-				{
-					name: 'name',
-					dataType: 'TEXT',
-					ordinal: 1,
-					primaryKey: false,
-					notNull: false,
-					defaultValue: undefined
-				}
-			]
-		}
-	);
-
-	assert.equal(
-		draft.initialSql,
-		`UPDATE "users"
-SET "name" = :name
-WHERE "id" = :id;
-`
-	);
-});
-
-test('copy helpers create table name text', () => {
-	const node = {
-		id: 'table-events',
-		type: SqlConnectionTreeNodeType.Table,
-		label: 'events',
-		connectionId: 'local',
-		schema: 'analytics',
-		tableName: 'events'
+function profile(id: string, label: string, driver: SqlRuntimeDriverId): IConnectionWithStatus {
+	return {
+		profile: { id, label, driver, readOnly: false, createdAtMs: 0 },
+		status: { kind: 'idle' },
 	};
+}
 
-	assert.equal(createCopyTableNameTextFromTreeNode(node), 'events');
-	assert.equal(createCopyQualifiedNameTextFromTreeNode(node), '"analytics"."events"');
+test('query model filters by label substring', () => {
+	const source: IConnectionWithStatus[] = [
+		profile('1', 'prod-sqlite', SqlRuntimeDriverId.Sqlite),
+		profile('2', 'dev-mysql', SqlRuntimeDriverId.MySql),
+	];
+	const model = new SqlConnectionQueryModel(source, {}, new StubCatalog([
+		{ id: SqlRuntimeDriverId.Sqlite, displayName: 'SQLite', status: SqlRuntimeStatus.Stable, summary: '', notes: [] },
+		{ id: SqlRuntimeDriverId.MySql, displayName: 'MySQL', status: SqlRuntimeStatus.Preview, summary: '', notes: [] },
+	]));
+	const r = model.query({ text: 'mysql' });
+	assert.equal(r.length, 1);
+	assert.equal(r[0].profile.id, '2');
 });
 
-test('table like node guards work', () => {
-	assert.equal(
-		isSqlTableLikeNode({
-			id: 'table-users',
-			type: SqlConnectionTreeNodeType.Table,
-			label: 'users'
-		}),
-		true
-	);
-
-	assert.equal(
-		isSqlTableLikeNode({
-			id: 'views',
-			type: SqlConnectionTreeNodeType.Group,
-			label: 'Views'
-		}),
-		false
-	);
-
-	assert.equal(
-		isSqlMutableTableNode({
-			id: 'table-users',
-			type: SqlConnectionTreeNodeType.Table,
-			label: 'users'
-		}),
-		true
-	);
-
-	assert.equal(
-		isSqlMutableTableNode({
-			id: 'view-users',
-			type: SqlConnectionTreeNodeType.View,
-			label: 'users'
-		}),
-		false
-	);
+test('query model filters by driver', () => {
+	const source: IConnectionWithStatus[] = [
+		profile('1', 'a', SqlRuntimeDriverId.Sqlite),
+		profile('2', 'b', SqlRuntimeDriverId.MySql),
+	];
+	const model = new SqlConnectionQueryModel(source, {}, new StubCatalog([
+		{ id: SqlRuntimeDriverId.Sqlite, displayName: 'SQLite', status: SqlRuntimeStatus.Stable, summary: '', notes: [] },
+		{ id: SqlRuntimeDriverId.MySql, displayName: 'MySQL', status: SqlRuntimeStatus.Preview, summary: '', notes: [] },
+	]));
+	assert.equal(model.query({ driver: SqlRuntimeDriverId.Sqlite }).length, 1);
 });
 
-test('template draft helpers preserve connection name', () => {
-	const node = {
-		id: 'table-users',
-		type: SqlConnectionTreeNodeType.Table,
-		label: 'users',
-		connectionId: 'local',
-		schema: 'main',
-		tableName: 'users'
-	};
-
-	assert.equal(
-		createSelectDraftFromTreeNode(node, { connectionName: 'Local SQLite' }).connectionName,
-		'Local SQLite'
-	);
-
-	assert.equal(
-		createCountDraftFromTreeNode(node, { connectionName: 'Local SQLite' }).connectionName,
-		'Local SQLite'
-	);
-
-	assert.equal(
-		createInsertDraftFromTreeNode(node, { connectionName: 'Local SQLite' }).connectionName,
-		'Local SQLite'
-	);
-
-	assert.equal(
-		createUpdateDraftFromTreeNode(node, { connectionName: 'Local SQLite' }).connectionName,
-		'Local SQLite'
-	);
+test('onlyEnabled excludes planned drivers', () => {
+	const source: IConnectionWithStatus[] = [
+		profile('1', 'a', SqlRuntimeDriverId.Sqlite),
+		profile('2', 'b', SqlRuntimeDriverId.Postgres),
+	];
+	const model = new SqlConnectionQueryModel(source, {}, new StubCatalog([
+		{ id: SqlRuntimeDriverId.Sqlite, displayName: 'SQLite', status: SqlRuntimeStatus.Stable, summary: '', notes: [] },
+		{ id: SqlRuntimeDriverId.Postgres, displayName: 'Postgres', status: SqlRuntimeStatus.Planned, summary: '', notes: [] },
+	]));
+	assert.equal(model.query({ onlyEnabled: true }).length, 1);
 });
 
-test('createSelectDraftFromTreeNode uses mysql dialect when provided', () => {
-	const draft = createSelectDraftFromTreeNode(
-		{
-			id: 'sql/connection/mysql/table/app/users',
-			type: SqlConnectionTreeNodeType.Table,
-			label: 'users',
-			connectionId: 'mysql',
-			databaseName: 'app',
-			schema: 'app',
-			tableName: 'users'
-		},
-		{
-			dialect: SqlDialect.MySql
-		}
-	);
-
-	assert.equal(
-		draft.initialSql,
-		'SELECT *\nFROM `app`.`users`\nLIMIT 100;\n'
-	);
+test('query model returns empty when filter mismatches', () => {
+	const model = new SqlConnectionQueryModel([], {}, new StubCatalog([]));
+	assert.equal(model.query({ text: 'x' }).length, 0);
 });
 
-test('createCountDraftFromTreeNode uses mysql dialect when provided', () => {
-	const draft = createCountDraftFromTreeNode(
-		{
-			id: 'sql/connection/mysql/table/app/users',
-			type: SqlConnectionTreeNodeType.Table,
-			label: 'users',
-			connectionId: 'mysql',
-			schema: 'app',
-			tableName: 'users'
-		},
-		{
-			dialect: SqlDialect.MySql
-		}
-	);
-
-	assert.match(draft.initialSql, /FROM `app`\.`users`/);
-});
-
-test('createInsertDraftFromTreeNode uses mysql dialect when provided', () => {
-	const draft = createInsertDraftFromTreeNode(
-		{
-			id: 'sql/connection/mysql/table/app/users',
-			type: SqlConnectionTreeNodeType.Table,
-			label: 'users',
-			connectionId: 'mysql',
-			schema: 'app',
-			tableName: 'users'
-		},
-		{
-			dialect: SqlDialect.MySql,
-			columns: [
-				{ name: 'id', ordinal: 0, notNull: true, primaryKey: true },
-				{ name: 'email', ordinal: 1, notNull: true }
-			]
-		}
-	);
-
-	assert.match(draft.initialSql, /INSERT INTO `app`\.`users` \(`id`, `email`\)/);
+test('list returns source as readonly snapshot', () => {
+	const source: IConnectionWithStatus[] = [
+		profile('1', 'a', SqlRuntimeDriverId.Sqlite),
+	];
+	const model = new SqlConnectionQueryModel(source, {}, new StubCatalog([
+		{ id: SqlRuntimeDriverId.Sqlite, displayName: 'SQLite', status: SqlRuntimeStatus.Stable, summary: '', notes: [] },
+	]));
+	const snap = model.list();
+	assert.equal(snap.length, 1);
 });

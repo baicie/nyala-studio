@@ -5,8 +5,12 @@
  * The service is the single frontend accessor for the Rust runtime status
  * table. UI surfaces (driver card, command palette, AI context) must
  * derive their status from this service instead of hardcoding strings.
+ *
+ * Phase 01 adds `assertAtLeast()` so the connection form can perform
+ * a UI-side runtime guard before calling the backend.
  *--------------------------------------------------------------------------------------------*/
 
+import { Emitter } from 'vs/base/common/event';
 import { SqlServiceError, TauriSqlCommandExecutor } from './sqlCommandExecutor.js';
 import {
 	ISqlDriverCatalogService,
@@ -78,9 +82,14 @@ export class SqlDriverCatalogService implements ISqlDriverCatalogService {
 
 	private cache: SqlRuntimeDriverEntry[] | undefined;
 	private readonly executor: TauriSqlCommandExecutor;
+	private readonly onDidChangeEmitter = new Emitter<void>();
 
 	constructor(executor: TauriSqlCommandExecutor = new TauriSqlCommandExecutor()) {
 		this.executor = executor;
+	}
+
+	onChange(listener: () => void): () => void {
+		return this.onDidChangeEmitter.event(listener);
 	}
 
 	async getRuntimeStatus(): Promise<SqlRuntimeDriverEntry[]> {
@@ -97,6 +106,7 @@ export class SqlDriverCatalogService implements ISqlDriverCatalogService {
 
 			const entries = Array.isArray(raw) ? raw.map(toEntry) : [];
 			this.cache = Object.freeze(entries);
+			this.onDidChangeEmitter.fire();
 			return this.cache;
 		} catch (error) {
 			// Phase 00: if the backend is unavailable (dev environment without
@@ -104,6 +114,7 @@ export class SqlDriverCatalogService implements ISqlDriverCatalogService {
 			// UI still renders meaningful labels.
 			if (error instanceof SqlServiceError) {
 				this.cache = Object.freeze(buildOfflineFallback());
+				this.onDidChangeEmitter.fire();
 				return this.cache;
 			}
 
@@ -132,6 +143,55 @@ export class SqlDriverCatalogService implements ISqlDriverCatalogService {
 
 		return entry.status === SqlRuntimeStatus.Stable || entry.status === SqlRuntimeStatus.Preview;
 	}
+
+	assertAtLeast(id: SqlRuntimeDriverId, minimum: SqlRuntimeStatus): void {
+		const entry = this.findRuntimeStatus(id);
+
+		if (!entry) {
+			throw new Error(`driver ${id} is not in the runtime status table`);
+		}
+
+		if (entry.status === SqlRuntimeStatus.Disabled) {
+			throw new Error(`driver ${id} is disabled`);
+		}
+
+		if (!isAllowedWhenCurrentIs(minimum, entry.status)) {
+			throw new Error(
+				`driver ${id} does not meet required runtime status: ` +
+				`current=${entry.status}, minimum=${minimum}`
+			);
+		}
+	}
+
+	labelFor(id: SqlRuntimeDriverId): string {
+		const entry = this.findRuntimeStatus(id);
+		if (!entry) {
+			return id;
+		}
+		return `${entry.displayName} · ${entry.status.toUpperCase()}`;
+	}
+}
+
+function isAllowedWhenCurrentIs(minimum: SqlRuntimeStatus, current: SqlRuntimeStatus): boolean {
+	const matrix: Record<SqlRuntimeStatus, ReadonlySet<SqlRuntimeStatus>> = {
+		[SqlRuntimeStatus.Stable]: new Set([
+			SqlRuntimeStatus.Stable,
+			SqlRuntimeStatus.Preview,
+			SqlRuntimeStatus.Planned,
+			SqlRuntimeStatus.Disabled,
+		]),
+		[SqlRuntimeStatus.Preview]: new Set([
+			SqlRuntimeStatus.Preview,
+			SqlRuntimeStatus.Planned,
+			SqlRuntimeStatus.Disabled,
+		]),
+		[SqlRuntimeStatus.Planned]: new Set([
+			SqlRuntimeStatus.Planned,
+			SqlRuntimeStatus.Disabled,
+		]),
+		[SqlRuntimeStatus.Disabled]: new Set([SqlRuntimeStatus.Disabled]),
+	};
+	return matrix[minimum].has(current);
 }
 
 function buildOfflineFallback(): SqlRuntimeDriverEntry[] {

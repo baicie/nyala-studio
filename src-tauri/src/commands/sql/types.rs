@@ -1,3 +1,4 @@
+use crate::runtime_status::{DriverId, RuntimeStatus};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_QUERY_ROW_LIMIT: usize = 1_000;
@@ -300,4 +301,240 @@ pub struct SqlQueryResult {
     pub row_count: usize,
     pub elapsed_ms: u64,
     pub truncated: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Phase 01 - Connection MVP Stabilization
+//
+// New "clean room" model types introduced for Phase 01. They deliberately
+// duplicate the *shape* (not the storage) of `SqlConnection` so the new
+// `ConnectionManager` can layer on top of the existing store without
+// breaking already-shipped commands.
+//
+// Rules:
+//   * `ConnectionProfile` is the durable shape (file-backed).
+//   * `ConnectionSecret` is in-memory only; it must never reach the
+//     persistence layer and must be safe to `Display`/`Debug`.
+//   * `DriverIdDto` is the serde DTO for `DriverId`; serde cannot encode
+//     the snake_case `DriverId` enum directly because we already own
+//     `SqlConnectionKind` for the legacy wire format.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DriverIdDto {
+    Sqlite,
+    Mysql,
+    Postgres,
+}
+
+impl From<DriverIdDto> for DriverId {
+    fn from(value: DriverIdDto) -> Self {
+        match value {
+            DriverIdDto::Sqlite => DriverId::Sqlite,
+            DriverIdDto::Mysql => DriverId::MySql,
+            DriverIdDto::Postgres => DriverId::Postgres,
+        }
+    }
+}
+
+impl From<DriverId> for DriverIdDto {
+    fn from(value: DriverId) -> Self {
+        match value {
+            DriverId::Sqlite => DriverIdDto::Sqlite,
+            DriverId::MySql => DriverIdDto::Mysql,
+            DriverId::Postgres => DriverIdDto::Postgres,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionProfile {
+    pub id: String,
+    pub label: String,
+    pub driver: DriverIdDto,
+    pub read_only: bool,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub database: Option<String>,
+    pub username: Option<String>,
+    pub file_path: Option<String>,
+    #[serde(default)]
+    pub remember_in_memory: bool,
+    pub created_at_ms: i64,
+}
+
+/// In-memory secret material. NEVER persisted, NEVER logged.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionSecret {
+    pub password: Option<String>,
+}
+
+impl ConnectionSecret {
+    /// Returns a deterministic redacted string. Used by Display/Debug
+    /// overrides to ensure secrets never leak through logs.
+    pub fn redacted_string(&self) -> String {
+        let mut count = 0usize;
+        if self.password.is_some() {
+            count += 1;
+        }
+        format!("redacted:{count}fields")
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum SqlCommandError {
+    DriverNotAvailable { message: String },
+    UnknownDriver { message: String },
+    OpenFailed { message: String },
+    NotOpen { message: String },
+    Persistence { message: String },
+    Validation { message: String },
+    Internal { message: String },
+}
+
+impl SqlCommandError {
+    pub fn new(code: &str, message: impl Into<String>) -> Self {
+        match code {
+            "driver_not_available" => SqlCommandError::DriverNotAvailable { message: message.into() },
+            "unknown_driver" => SqlCommandError::UnknownDriver { message: message.into() },
+            "open_failed" => SqlCommandError::OpenFailed { message: message.into() },
+            "not_open" => SqlCommandError::NotOpen { message: message.into() },
+            "persistence" => SqlCommandError::Persistence { message: message.into() },
+            "validation" => SqlCommandError::Validation { message: message.into() },
+            _ => SqlCommandError::Internal { message: message.into() },
+        }
+    }
+}
+
+impl std::fmt::Display for SqlCommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SqlCommandError::DriverNotAvailable { message }
+            | SqlCommandError::UnknownDriver { message }
+            | SqlCommandError::OpenFailed { message }
+            | SqlCommandError::NotOpen { message }
+            | SqlCommandError::Persistence { message }
+            | SqlCommandError::Validation { message }
+            | SqlCommandError::Internal { message } => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::fmt::Display for ConnectionSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.redacted_string())
+    }
+}
+
+/// Mirrors `runtime_status::assert_minimum_status` but operates on the
+/// `DriverIdDto` enum so the rest of Phase 01 does not need to depend on
+/// the raw `DriverId` (which would re-expose the runtime status module).
+pub fn assert_driver_status_at_least(driver: DriverIdDto, minimum: RuntimeStatus) -> Result<(), String> {
+    let id: DriverId = driver.into();
+    crate::runtime_status::assert_minimum_status(id, minimum)
+        .map_err(|message| format!("driver {} does not meet status: {message}", id.as_token()))
+}
+
+#[cfg(test)]
+mod phase01_tests {
+    use super::*;
+
+    #[test]
+    fn connection_secret_display_is_redacted() {
+        let secret = ConnectionSecret {
+            password: Some("hunter2".into()),
+        };
+
+        let display = format!("{secret}");
+        assert!(!display.contains("hunter2"));
+        assert!(display.contains("redacted"));
+        assert!(display.contains("1fields"));
+    }
+
+    #[test]
+    fn connection_secret_redacted_string_counts_fields() {
+        assert_eq!(ConnectionSecret::default().redacted_string(), "redacted:0fields");
+        assert_eq!(
+            ConnectionSecret {
+                password: Some("x".into())
+            }
+            .redacted_string(),
+            "redacted:1fields"
+        );
+    }
+
+    #[test]
+    fn driver_id_dto_round_trips_via_serde() {
+        for (raw, token) in [
+            (DriverIdDto::Sqlite, "\"sqlite\""),
+            (DriverIdDto::Mysql, "\"mysql\""),
+            (DriverIdDto::Postgres, "\"postgres\""),
+        ] {
+            let serialised = serde_json::to_string(&raw).unwrap();
+            assert_eq!(serialised, token);
+            let back: DriverIdDto = serde_json::from_str(&serialised).unwrap();
+            assert_eq!(back, raw);
+        }
+    }
+
+    #[test]
+    fn driver_id_dto_into_driver_id() {
+        assert_eq!(DriverId::from(DriverIdDto::Sqlite), DriverId::Sqlite);
+        assert_eq!(DriverId::from(DriverIdDto::Mysql), DriverId::MySql);
+        assert_eq!(DriverId::from(DriverIdDto::Postgres), DriverId::Postgres);
+    }
+
+    #[test]
+    fn connection_profile_serialization_strips_secret_fields() {
+        let profile = ConnectionProfile {
+            id: "p1".into(),
+            label: "demo".into(),
+            driver: DriverIdDto::Sqlite,
+            read_only: false,
+            host: None,
+            port: None,
+            database: None,
+            username: None,
+            file_path: Some("/tmp/x.db".into()),
+            remember_in_memory: false,
+            created_at_ms: 0,
+        };
+
+        let json = serde_json::to_string(&profile).unwrap();
+        assert!(!json.contains("password"));
+        assert!(!json.contains("secret"));
+        assert!(!json.contains("credential"));
+        assert!(json.contains("filePath"));
+    }
+
+    #[test]
+    fn assert_driver_status_at_least_accepts_stable_for_sqlite() {
+        assert!(assert_driver_status_at_least(DriverIdDto::Sqlite, RuntimeStatus::Stable).is_ok());
+        assert!(assert_driver_status_at_least(DriverIdDto::Sqlite, RuntimeStatus::Preview).is_ok());
+    }
+
+    #[test]
+    fn assert_driver_status_at_least_rejects_planned_postgres() {
+        let err = assert_driver_status_at_least(DriverIdDto::Postgres, RuntimeStatus::Stable).unwrap_err();
+        assert!(err.contains("postgres"));
+    }
+
+    #[test]
+    fn assert_driver_status_at_least_rejects_stable_minimum_for_mysql_preview() {
+        // MySQL is Preview, so a `stable` minimum must reject.
+        let err = assert_driver_status_at_least(DriverIdDto::Mysql, RuntimeStatus::Stable).unwrap_err();
+        assert!(err.contains("mysql"));
+    }
+
+    #[test]
+    fn sql_command_error_serializes_with_code_tag() {
+        let value = SqlCommandError::new("open_failed", "boom");
+        let json = serde_json::to_string(&value).unwrap();
+        assert!(json.contains("\"code\":\"open_failed\""));
+        assert!(json.contains("\"message\":\"boom\""));
+    }
 }
