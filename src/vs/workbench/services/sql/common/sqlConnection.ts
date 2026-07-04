@@ -89,3 +89,41 @@ export interface ISqlConnectionServiceV2 {
 
 	readonly onChange: import('vs/base/common/event').Event<void>;
 }
+
+/*---------------------------------------------------------------------------------------------
+ * Legacy `ISqlConnectionService` (v1) compatibility shim.
+ *
+ * The connection form, saved-connection list, and connections UI still
+ * operate on the older `SqlConnection` / `SqlConnectionInput` shapes
+ * modeled in `sqlTypes.ts`. The cleaner profile-based `V2` service is
+ * added on top. Both decorators coexist and bind to their respective
+ * singleton implementations in `sqlService.contribution.ts`.
+ *
+ * Removal of the v1 surface is intentionally deferred until the
+ * connections UI uses the new profile model end-to-end.
+ *--------------------------------------------------------------------------------------------*/
+
+import type {
+	SqlConnection,
+	SqlConnectionInput,
+	SqlConnectionTestResult,
+	SqlRemoveSavedConnectionRequest,
+	SqlRestoreSavedConnectionsResult,
+	SqlSaveConnectionRequest,
+	SqlSavedConnection
+} from 'vs/workbench/services/sql/common/sqlTypes';
+
+export const ISqlConnectionService = createDecorator<ISqlConnectionService>('sqlConnectionService');
+
+export interface ISqlConnectionService {
+	readonly _serviceBrand: undefined;
+
+	testConnection(input: SqlConnectionInput): Promise<SqlConnectionTestResult>;
+	openConnection(input: SqlConnectionInput): Promise<SqlConnection>;
+	closeConnection(connectionId: string): Promise<void>;
+	listConnections(): Promise<SqlConnection[]>;
+	saveConnection(request: SqlSaveConnectionRequest): Promise<SqlSavedConnection>;
+	listSavedConnections(): Promise<SqlSavedConnection[]>;
+	removeSavedConnection(request: SqlRemoveSavedConnectionRequest): Promise<void>;
+	restoreSavedConnections(): Promise<SqlRestoreSavedConnectionsResult>;
+}
