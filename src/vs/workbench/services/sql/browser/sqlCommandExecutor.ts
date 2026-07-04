@@ -19,7 +19,14 @@ export type SqlCommandName =
 	| 'sql_execute_query'
 	| 'sql_cancel_query'
 	| 'sql_list_driver_runtime_status'
-	| 'sql_assert_driver_runtime_status';
+	| 'sql_assert_driver_runtime_status'
+	// Phase 01 - Connection MVP commands.
+	| 'sql_test_connection_v2'
+	| 'sql_open_connection_v2'
+	| 'sql_close_connection_v2'
+	| 'sql_list_connections_v2'
+	| 'sql_upsert_connection_v2'
+	| 'sql_forget_secrets';
 
 export interface SqlCommandExecutorOptions {
 	readonly allowVoid?: boolean;

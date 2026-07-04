@@ -13,6 +13,7 @@ use commands::lsp::LspState;
 use commands::process::ProcessStore;
 use commands::remote::RemoteManagerStore;
 use commands::settings::SettingsStore;
+use commands::sql::connection_manager::build_default_manager;
 use commands::sql::SqlConnectionStore;
 use commands::storage::StorageDb;
 use commands::tasks::TaskProcessStore;
@@ -387,6 +388,9 @@ pub fn run() {
         .manage(ExtensionDiagnosticsStore::new())
         .manage(Arc::new(SettingsStore::new()))
         .manage(Arc::new(SqlConnectionStore::new()))
+        .manage(build_default_manager(Some(
+            std::path::PathBuf::from("nyala.connections.v1").join("connections.json"),
+        )))
         .manage(Arc::new(sidex_extension_api::CommandRegistry::new()))
         .manage(Arc::new(RemoteManagerStore::new()))
         .manage(Arc::new(
@@ -675,6 +679,13 @@ pub fn run() {
             commands::sql_cancel_query,
             commands::sql_list_driver_runtime_status,
             commands::sql_assert_driver_runtime_status,
+            // Phase 01 - Connection MVP
+            commands::sql_test_connection_v2,
+            commands::sql_open_connection_v2,
+            commands::sql_close_connection_v2,
+            commands::sql_list_connections_v2,
+            commands::sql_upsert_connection_v2,
+            commands::sql_forget_secrets,
             // sidex-db state persistence
             commands::db_get_recent_files,
             commands::db_get_recent_workspaces,

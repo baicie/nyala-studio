@@ -60,4 +60,24 @@ export interface ISqlDriverCatalogService {
 	 * connections (Stable or Preview).
 	 */
 	isDriverRunnable(id: SqlRuntimeDriverId): boolean;
+
+	/**
+	 * Synchronously assert that a driver's status meets a minimum
+	 * maturity threshold. Throws when the requirement is not met so
+	 * the caller can surface a structured error before calling the
+	 * backend. Mirrors Rust-side `runtime_status::assert_minimum_status`.
+	 */
+	assertAtLeast(id: SqlRuntimeDriverId, minimum: SqlRuntimeStatus): void;
+
+	/**
+	 * Human-readable label combining display name and status, e.g.
+	 * "SQLite · STABLE". Falls back to the id when no entry exists.
+	 */
+	labelFor(id: SqlRuntimeDriverId): string;
+
+	/**
+	 * Subscribe to backend changes. The listener fires whenever the
+	 * catalog is re-fetched from the Rust backend.
+	 */
+	onChange(listener: () => void): () => void;
 }
