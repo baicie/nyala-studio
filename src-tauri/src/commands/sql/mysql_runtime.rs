@@ -83,6 +83,15 @@ pub fn list_mysql_tables(pool: &Pool, database: Option<&str>) -> Result<Vec<SqlT
         .collect())
 }
 
+type MySqlColumnRow = (
+    u64,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<String>,
+);
+
 pub fn list_mysql_columns(
     pool: &Pool,
     schema: Option<&str>,
@@ -97,7 +106,7 @@ pub fn list_mysql_columns(
             .ok_or_else(|| "MySQL connection has no selected database".to_string())?,
     };
 
-    let rows: Vec<(u64, String, Option<String>, String, Option<String>, Option<String>)> = conn
+    let rows: Vec<MySqlColumnRow> = conn
         .exec(
             "SELECT ORDINAL_POSITION, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT
              FROM information_schema.COLUMNS
@@ -171,6 +180,7 @@ fn execute_mysql_select(
     let mut rows = Vec::new();
     let mut truncated = false;
 
+    #[allow(clippy::while_let_on_iterator)]
     while let Some(row) = result.next() {
         let row = row.map_err(|err| format!("failed to read MySQL row: {err}"))?;
 
@@ -199,13 +209,14 @@ fn row_to_cells(row: Row) -> Vec<SqlCellValue> {
 pub fn mysql_value_to_cell(value: Value) -> SqlCellValue {
     match value {
         Value::NULL => SqlCellValue::null(),
-        Value::Bytes(bytes) => match String::from_utf8(bytes.clone()) {
-            Ok(text) => SqlCellValue::text(text),
-            Err(_) => {
+        Value::Bytes(bytes) => {
+            if let Ok(text) = String::from_utf8(bytes.clone()) {
+                SqlCellValue::text(text)
+            } else {
                 use base64::{engine::general_purpose, Engine as _};
                 SqlCellValue::blob(general_purpose::STANDARD.encode(&bytes), bytes.len())
             }
-        },
+        }
         Value::Int(value) => SqlCellValue::integer(value),
         Value::UInt(value) => {
             let signed = i64::try_from(value).unwrap_or(i64::MAX);

@@ -150,9 +150,8 @@ impl ConnectionManager {
         secret: ConnectionSecret,
     ) -> Result<(), SqlCommandError> {
         let minimum_status = match profile.driver {
-            DriverIdDto::Sqlite => RuntimeStatus::Stable,
+            DriverIdDto::Sqlite | DriverIdDto::Postgres => RuntimeStatus::Stable,
             DriverIdDto::Mysql => RuntimeStatus::Preview,
-            DriverIdDto::Postgres => RuntimeStatus::Stable,
         };
         assert_driver_status_at_least(profile.driver, minimum_status)
             .map_err(|message| SqlCommandError::new("driver_not_available", message))?;
@@ -185,13 +184,12 @@ impl ConnectionManager {
         Ok(())
     }
 
-    pub fn close(&self, profile_id: &str) -> Result<(), SqlCommandError> {
+    pub fn close(&self, profile_id: &str) {
         let mut inner = self.inner.lock().expect("connection manager poisoned");
         if let Some(entry) = inner.drivers.remove(profile_id) {
             entry.conn.close();
         }
         inner.last_secret_by_id.remove(profile_id);
-        Ok(())
     }
 
     pub fn is_open(&self, profile_id: &str) -> bool {
@@ -283,7 +281,7 @@ mod tests {
         manager.put_secret("a", ConnectionSecret { password: Some("x".into()) });
         manager.open(&p, ConnectionSecret { password: None }).unwrap();
         assert!(manager.is_open("a"));
-        manager.close("a").unwrap();
+        manager.close("a");
         assert!(!manager.is_open("a"));
         assert!(manager.get_secret("a").is_none());
     }

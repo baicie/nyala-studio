@@ -10,6 +10,10 @@
  * the IPC wire format.
  *--------------------------------------------------------------------------------------------*/
 
+// Tauri's IPC surface requires owned parameters on every `#[tauri::command]`
+// (see connection_v2.rs for the full rationale).
+#![allow(clippy::needless_pass_by_value)]
+
 use serde::{Deserialize, Serialize};
 use tauri::State;
 

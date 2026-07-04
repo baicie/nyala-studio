@@ -12,6 +12,12 @@
  *   * Test connection must never persist the secret.
  *--------------------------------------------------------------------------------------------*/
 
+// Tauri's IPC surface requires owned parameters on every `#[tauri::command]`:
+// the command handler consumes each argument and serializes the response.
+// `&str` / `&State<...>` parameters would not match the runtime-generated
+// invocation shim, so we silence the clippy lint here once for the file.
+#![allow(clippy::needless_pass_by_value)]
+
 use tauri::State;
 
 use super::connection_manager::SharedConnectionManager;
@@ -49,8 +55,8 @@ pub fn sql_open_connection_v2(
 pub fn sql_close_connection_v2(
     manager: State<'_, SharedConnectionManager>,
     profile_id: String,
-) -> Result<(), SqlCommandError> {
-    manager.close(&profile_id)
+) {
+    manager.close(&profile_id);
 }
 
 #[tauri::command]
@@ -134,7 +140,7 @@ mod tests {
                 ConnectionSecret::default(),
             )
             .unwrap();
-        manager.close("a").unwrap();
+        manager.close("a");
         assert!(!manager.is_open("a"));
     }
 

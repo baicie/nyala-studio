@@ -82,8 +82,7 @@ fn temporary_path(path: &Path) -> PathBuf {
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
-        .map(|value| format!("{value}.tmp"))
-        .unwrap_or_else(|| "tmp".to_string());
+        .map_or_else(|| "tmp".to_string(), |value| format!("{value}.tmp"));
 
     tmp.set_extension(extension);
     tmp

@@ -17,7 +17,7 @@ pub enum SqlDialect {
 }
 
 impl SqlDialect {
-    pub fn from_connection_kind(kind: &SqlConnectionKind) -> Self {
+    pub fn from_connection_kind(kind: SqlConnectionKind) -> Self {
         match kind {
             SqlConnectionKind::Sqlite => Self::Sqlite,
             SqlConnectionKind::PostgreSql => Self::PostgreSql,
@@ -270,15 +270,15 @@ mod tests {
     #[test]
     fn dialect_maps_from_connection_kind() {
         assert_eq!(
-            SqlDialect::from_connection_kind(&SqlConnectionKind::Sqlite),
+            SqlDialect::from_connection_kind(SqlConnectionKind::Sqlite),
             SqlDialect::Sqlite
         );
         assert_eq!(
-            SqlDialect::from_connection_kind(&SqlConnectionKind::PostgreSql),
+            SqlDialect::from_connection_kind(SqlConnectionKind::PostgreSql),
             SqlDialect::PostgreSql
         );
         assert_eq!(
-            SqlDialect::from_connection_kind(&SqlConnectionKind::MySql),
+            SqlDialect::from_connection_kind(SqlConnectionKind::MySql),
             SqlDialect::MySql
         );
     }

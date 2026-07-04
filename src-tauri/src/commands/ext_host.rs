@@ -5,7 +5,7 @@ use crate::commands::extension_platform::{
 };
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -16,14 +16,14 @@ use tauri::AppHandle;
 use std::os::windows::process::CommandExt;
 
 /// Strip the Windows `\\?\` prefix; Node's CJS resolver chokes on UNC paths.
-fn normalize_for_node(path: PathBuf) -> PathBuf {
+fn normalize_for_node(path: &Path) -> PathBuf {
     #[cfg(windows)]
     {
-        dunce::simplified(&path).to_path_buf()
+        dunce::simplified(path).to_path_buf()
     }
     #[cfg(not(windows))]
     {
-        path
+        path.to_path_buf()
     }
 }
 
@@ -254,7 +254,7 @@ fn prepare_session_inputs(
     workspace_folders: &[String],
 ) -> Result<SessionInputs, String> {
     let runtime = resolve_node_runtime(app)?;
-    let server_js = normalize_for_node(resolve_server_script(app));
+    let server_js = normalize_for_node(&resolve_server_script(app));
 
     if !server_js.exists() {
         return Err(format!(

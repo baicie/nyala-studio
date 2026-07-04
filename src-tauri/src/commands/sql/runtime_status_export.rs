@@ -26,7 +26,7 @@ impl From<&DriverRuntimeEntry> for DriverRuntimeStatusDto {
             display_name: entry.display_name.to_string(),
             status: entry.status.as_token().to_string(),
             summary: entry.summary.to_string(),
-            notes: entry.notes.iter().map(|note| note.to_string()).collect(),
+            notes: entry.notes.iter().map(ToString::to_string).collect(),
         }
     }
 }
@@ -44,6 +44,7 @@ pub fn sql_list_driver_runtime_status() -> Vec<DriverRuntimeStatusDto> {
 /// string error is intentionally not specific to avoid leaking internal
 /// state across the IPC boundary.
 #[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
 pub fn sql_assert_driver_runtime_status(driver_id: String, minimum: String) -> Result<(), String> {
     let driver: DriverId = parse_driver(&driver_id)?;
     let minimum_status = parse_runtime_status(&minimum)?;

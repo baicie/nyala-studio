@@ -58,7 +58,7 @@ pub trait SqlDriver: Send + Sync {
     ) -> Result<BoxedConnection, String>;
 
     /// Returns Ok(()) if the connection could be opened and torn down
-    /// cleanly. Drivers that need a network round-trip (MySQL) should
+    /// cleanly. Drivers that need a network round-trip (`MySQL`) should
     /// actually open the pool to confirm reachability.
     #[allow(dead_code)]
     fn test(&self, profile: &ConnectionProfile, secret: &ConnectionSecret) -> Result<(), String> {
@@ -81,7 +81,7 @@ impl SqlDriverRegistry {
         self.drivers
             .iter()
             .find(|driver| driver.id() == id)
-            .map(|driver| driver.as_ref())
+            .map(std::convert::AsRef::as_ref)
     }
 }
 
@@ -137,7 +137,7 @@ impl SqlDriver for SqliteDriver {
             // `query_only` PRAGMA is broadly supported; falling back to
             // a read-only transaction would change semantics, so we
             // only apply the pragma when the connection accepted it.
-            let _ = conn.pragma_update(None, "query_only", &1);
+            let _ = conn.pragma_update(None, "query_only", 1);
         }
 
         Ok(Arc::new(SqliteConnection::new(conn)))
@@ -148,7 +148,7 @@ impl SqlDriver for SqliteDriver {
     }
 }
 
-/// Phase 02 SQLite connection. The underlying handle is wrapped behind
+/// Phase 02 `SQLite` connection. The underlying handle is wrapped behind
 /// a `Mutex` so the trait methods can be called from multiple Tauri
 /// commands without taking the connection by `&mut`.
 pub struct SqliteConnection {
@@ -173,7 +173,7 @@ impl SqlConnection for SqliteConnection {
     fn close(&self) {}
 
     fn is_alive(&self) -> bool {
-        self.conn.lock().map(|_| true).unwrap_or(false)
+        self.conn.lock().is_ok_and(|_| true)
     }
 
     fn list_schemas(&self) -> Result<Vec<SchemataDto>, SqlCommandError> {

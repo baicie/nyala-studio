@@ -91,14 +91,14 @@ pub fn sql_driver_catalog() -> Vec<SqlDriverDescriptor> {
     ]
 }
 
-pub fn get_driver_descriptor(kind: &SqlConnectionKind) -> SqlDriverDescriptor {
+pub fn get_driver_descriptor(kind: SqlConnectionKind) -> SqlDriverDescriptor {
     sql_driver_catalog()
         .into_iter()
-        .find(|driver| &driver.kind == kind)
+        .find(|driver| driver.kind == kind)
         .expect("all SqlConnectionKind variants must be in driver catalog")
 }
 
-pub fn ensure_driver_enabled(kind: &SqlConnectionKind) -> Result<(), String> {
+pub fn ensure_driver_enabled(kind: SqlConnectionKind) -> Result<(), String> {
     let descriptor = get_driver_descriptor(kind);
 
     match descriptor.availability {
@@ -115,7 +115,7 @@ pub fn ensure_driver_enabled(kind: &SqlConnectionKind) -> Result<(), String> {
 }
 
 pub fn normalize_connection_input(input: &SqlConnectionInput) -> Result<SqlConnection, String> {
-    ensure_driver_enabled(&input.kind)?;
+    ensure_driver_enabled(input.kind)?;
 
     match input.kind {
         SqlConnectionKind::Sqlite => normalize_sqlite_connection_input(input),
@@ -151,7 +151,7 @@ pub fn normalize_sqlite_connection_input(
 pub fn normalize_network_connection_input(
     input: &SqlConnectionInput,
 ) -> Result<SqlConnection, String> {
-    let descriptor = get_driver_descriptor(&input.kind);
+    let descriptor = get_driver_descriptor(input.kind);
 
     if !descriptor.remote {
         return Err(format!(
@@ -174,13 +174,13 @@ pub fn normalize_network_connection_input(
     Ok(SqlConnection {
         id,
         name,
-        kind: input.kind.clone(),
+        kind: input.kind,
         database_path: None,
         host: Some(host),
         port: Some(port),
         database: Some(database),
         username: normalize_optional(input.username.as_deref()),
-        ssl_mode: Some(input.ssl_mode.clone().unwrap_or(SqlSslMode::Prefer)),
+        ssl_mode: Some(input.ssl_mode.unwrap_or(SqlSslMode::Prefer)),
         read_only: input.read_only,
     })
 }
@@ -222,36 +222,36 @@ mod tests {
 
     #[test]
     fn sqlite_driver_is_stable() {
-        let descriptor = get_driver_descriptor(&SqlConnectionKind::Sqlite);
+        let descriptor = get_driver_descriptor(SqlConnectionKind::Sqlite);
         assert_eq!(descriptor.label, "SQLite");
         assert_eq!(descriptor.availability, SqlDriverAvailability::Stable);
         assert_eq!(descriptor.runtime_status, RuntimeStatus::Stable);
-        assert!(ensure_driver_enabled(&SqlConnectionKind::Sqlite).is_ok());
+        assert!(ensure_driver_enabled(SqlConnectionKind::Sqlite).is_ok());
     }
 
     #[test]
     fn postgresql_driver_is_planned() {
-        let descriptor = get_driver_descriptor(&SqlConnectionKind::PostgreSql);
+        let descriptor = get_driver_descriptor(SqlConnectionKind::PostgreSql);
         assert_eq!(descriptor.runtime_status, RuntimeStatus::Planned);
-        let err = ensure_driver_enabled(&SqlConnectionKind::PostgreSql).unwrap_err();
+        let err = ensure_driver_enabled(SqlConnectionKind::PostgreSql).unwrap_err();
         assert!(err.contains("planned"));
     }
 
     #[test]
     fn mysql_driver_is_preview_per_phase_00() {
-        let descriptor = get_driver_descriptor(&SqlConnectionKind::MySql);
+        let descriptor = get_driver_descriptor(SqlConnectionKind::MySql);
         assert_eq!(descriptor.label, "MySQL");
         assert_eq!(descriptor.availability, SqlDriverAvailability::Preview);
         assert_eq!(descriptor.runtime_status, RuntimeStatus::Preview);
-        assert!(ensure_driver_enabled(&SqlConnectionKind::MySql).is_ok());
+        assert!(ensure_driver_enabled(SqlConnectionKind::MySql).is_ok());
     }
 
     #[test]
     fn catalog_runtime_status_matches_truth_of_record() {
         // 关键 invariant：catalog 里的 runtime_status 必须从单一真理之源派生。
-        let sqlite = get_driver_descriptor(&SqlConnectionKind::Sqlite);
-        let mysql = get_driver_descriptor(&SqlConnectionKind::MySql);
-        let postgres = get_driver_descriptor(&SqlConnectionKind::PostgreSql);
+        let sqlite = get_driver_descriptor(SqlConnectionKind::Sqlite);
+        let mysql = get_driver_descriptor(SqlConnectionKind::MySql);
+        let postgres = get_driver_descriptor(SqlConnectionKind::PostgreSql);
 
         assert_eq!(sqlite.runtime_status, RuntimeStatus::Stable);
         assert_eq!(mysql.runtime_status, RuntimeStatus::Preview);

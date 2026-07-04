@@ -532,19 +532,19 @@ fn kill_process_tree(pid: u32) -> Result<(), String> {
 
     // Use taskkill /T to kill process tree on Windows
     let result = Command::new("taskkill")
-        .args(&["/F", "/T", "/PID", &pid.to_string()])
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .args(["/F", "/T", "/PID", &pid.to_string()])
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .output();
 
     match result {
         Ok(output) => {
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(format!("taskkill failed: {}", stderr));
+                return Err(format!("taskkill failed: {stderr}"));
             }
             Ok(())
         }
-        Err(e) => Err(format!("Failed to execute taskkill: {}", e)),
+        Err(e) => Err(format!("Failed to execute taskkill: {e}")),
     }
 }
 

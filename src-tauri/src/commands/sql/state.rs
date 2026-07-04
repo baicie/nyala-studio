@@ -197,13 +197,13 @@ impl SqlConnectionStore {
         let saved = SqlSavedConnection {
             id: connection.id.clone(),
             name: connection.name.clone(),
-            kind: connection.kind.clone(),
+            kind: connection.kind,
             database_path: connection.database_path.clone(),
             host: connection.host.clone(),
             port: connection.port,
             database: connection.database.clone(),
             username: connection.username.clone(),
-            ssl_mode: connection.ssl_mode.clone(),
+            ssl_mode: connection.ssl_mode,
             read_only: connection.read_only,
             create_if_missing: request.input.create_if_missing,
             auto_connect: request.auto_connect,
@@ -454,14 +454,13 @@ impl SqlConnectionStore {
 
         match &handle.runtime {
             SqlRuntimeConnection::Sqlite { conn, .. } => {
-                self.execute_sqlite_query(conn, sql, limit)
+                Self::execute_sqlite_query(conn, sql, limit)
             }
             SqlRuntimeConnection::MySql { pool } => execute_mysql_query(pool, sql, limit),
         }
     }
 
     fn execute_sqlite_query(
-        &self,
         conn: &Mutex<Connection>,
         sql: &str,
         limit: usize,

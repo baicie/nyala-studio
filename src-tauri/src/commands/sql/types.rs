@@ -87,14 +87,14 @@ impl SqlSavedConnection {
         SqlConnectionInput {
             id: Some(self.id.clone()),
             name: Some(self.name.clone()),
-            kind: self.kind.clone(),
+            kind: self.kind,
             database_path: self.database_path.clone(),
             host: self.host.clone(),
             port: self.port,
             database: self.database.clone(),
             username: self.username.clone(),
             password: None,
-            ssl_mode: self.ssl_mode.clone(),
+            ssl_mode: self.ssl_mode,
             read_only: self.read_only,
             create_if_missing: self.create_if_missing,
         }

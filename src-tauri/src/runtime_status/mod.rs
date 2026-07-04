@@ -123,9 +123,8 @@ pub fn snapshot() -> Vec<DriverRuntimeEntry> {
 /// level. Stable <= Stable, Preview <= Preview, Planned <= Planned all pass.
 /// Asking Stable when only Preview is available returns an error string.
 pub fn assert_minimum_status(id: DriverId, minimum: RuntimeStatus) -> Result<(), &'static str> {
-    let entry = match lookup(id) {
-        Some(entry) => entry,
-        None => return Err("unknown driver"),
+    let Some(entry) = lookup(id) else {
+        return Err("unknown driver");
     };
 
     if entry.status == RuntimeStatus::Disabled {
@@ -141,7 +140,7 @@ pub fn assert_minimum_status(id: DriverId, minimum: RuntimeStatus) -> Result<(),
 
 impl RuntimeStatus {
     fn is_allowed_when_current_is(self, current: RuntimeStatus) -> bool {
-        let allowed = match current {
+        match current {
             RuntimeStatus::Stable => {
                 matches!(
                     self,
@@ -161,8 +160,7 @@ impl RuntimeStatus {
                 matches!(self, RuntimeStatus::Planned | RuntimeStatus::Disabled)
             }
             RuntimeStatus::Disabled => matches!(self, RuntimeStatus::Disabled),
-        };
-        allowed
+        }
     }
 }
 
