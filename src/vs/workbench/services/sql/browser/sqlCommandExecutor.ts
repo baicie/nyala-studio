@@ -26,7 +26,11 @@ export type SqlCommandName =
 	| 'sql_close_connection_v2'
 	| 'sql_list_connections_v2'
 	| 'sql_upsert_connection_v2'
-	| 'sql_forget_secrets';
+	| 'sql_forget_secrets'
+	// Phase 02 - Metadata Explorer commands.
+	| 'sql_list_schemas'
+	| 'sql_list_tables_v2'
+	| 'sql_list_columns_v2';
 
 export interface SqlCommandExecutorOptions {
 	readonly allowVoid?: boolean;

@@ -13,14 +13,15 @@
  *     printing it.
  *--------------------------------------------------------------------------------------------*/
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::runtime_status::DriverId;
 
-use super::types::{ConnectionProfile, ConnectionSecret, DriverIdDto};
+use super::metadata_v2::{ColumnDto, SchemaObjectDto, SchemataDto};
+use super::types::{ConnectionProfile, ConnectionSecret, DriverIdDto, SqlCommandError};
 
 /// A live SQL connection. Concrete drivers own the underlying handle and
-/// expose a tiny set of operations the rest of Phase 01 cares about.
+/// expose a tiny set of operations the rest of the SQL MVP cares about.
 pub trait SqlConnection: Send + Sync + std::fmt::Debug {
     /// Closes the connection. Best-effort; subsequent calls are no-ops.
     fn close(&self);
@@ -30,6 +31,15 @@ pub trait SqlConnection: Send + Sync + std::fmt::Debug {
     /// status bar reporting.
     #[allow(dead_code)]
     fn is_alive(&self) -> bool;
+
+    /// Lists schemas / databases for the connection.
+    fn list_schemas(&self) -> Result<Vec<SchemataDto>, SqlCommandError>;
+
+    /// Lists tables / views inside the given schema.
+    fn list_tables(&self, schema: &str) -> Result<Vec<SchemaObjectDto>, SqlCommandError>;
+
+    /// Lists columns of a table inside the given schema.
+    fn list_columns(&self, schema: &str, table: &str) -> Result<Vec<ColumnDto>, SqlCommandError>;
 }
 
 pub type BoxedConnection = Arc<dyn SqlConnection>;
@@ -92,10 +102,12 @@ impl DriverIdDto {
 // ---------------------------------------------------------------------------
 // SQLite driver.
 //
-// For Phase 01 the SQLite driver only verifies the file path. Actual
-// query execution lives in `sqlite_runtime` (Phase 03) — this driver
-// opens a `Connection` to validate the file and immediately closes it.
+// For Phase 01 the SQLite driver verifies the file path. Phase 02
+// upgrades the probe connection to a real `rusqlite::Connection` and
+// implements schema / table / column introspection.
 // ---------------------------------------------------------------------------
+
+use rusqlite::Connection as SqliteRawConnection;
 
 pub struct SqliteDriver;
 
@@ -118,23 +130,17 @@ impl SqlDriver for SqliteDriver {
                 .ok_or_else(|| "SQLite connection requires filePath or rememberInMemory".to_string())?
         };
 
-        // Phase 01 only validates that the SQLite file is openable; we
-        // hand a probe connection back to the manager and immediately
-        // drop the actual `rusqlite::Connection`. Phase 03 will replace
-        // this with a long-lived pool.
-        let conn = rusqlite::Connection::open(&path)
+        let conn = SqliteRawConnection::open(&path)
             .map_err(|err| format!("failed to open SQLite connection: {err}"))?;
 
-        // `Connection::close` returns the inner handle (or its drop
-        // error). We just want to confirm the connection was healthy.
-        match conn.close() {
-            Ok(_) => {}
-            Err((_, err)) => {
-                return Err(format!("failed to close SQLite probe connection: {err}"));
-            }
+        if profile.read_only {
+            // `query_only` PRAGMA is broadly supported; falling back to
+            // a read-only transaction would change semantics, so we
+            // only apply the pragma when the connection accepted it.
+            let _ = conn.pragma_update(None, "query_only", &1);
         }
 
-        Ok(Arc::new(SqliteProbeConnection))
+        Ok(Arc::new(SqliteConnection::new(conn)))
     }
 
     fn test(&self, profile: &ConnectionProfile, secret: &ConnectionSecret) -> Result<(), String> {
@@ -142,19 +148,130 @@ impl SqlDriver for SqliteDriver {
     }
 }
 
-struct SqliteProbeConnection;
+/// Phase 02 SQLite connection. The underlying handle is wrapped behind
+/// a `Mutex` so the trait methods can be called from multiple Tauri
+/// commands without taking the connection by `&mut`.
+pub struct SqliteConnection {
+    conn: Mutex<SqliteRawConnection>,
+}
 
-impl std::fmt::Debug for SqliteProbeConnection {
+impl std::fmt::Debug for SqliteConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("SqliteProbeConnection")
+        f.write_str("SqliteConnection")
     }
 }
 
-impl SqlConnection for SqliteProbeConnection {
+impl SqliteConnection {
+    pub fn new(conn: SqliteRawConnection) -> Self {
+        Self {
+            conn: Mutex::new(conn),
+        }
+    }
+}
+
+impl SqlConnection for SqliteConnection {
     fn close(&self) {}
 
     fn is_alive(&self) -> bool {
-        true
+        self.conn.lock().map(|_| true).unwrap_or(false)
+    }
+
+    fn list_schemas(&self) -> Result<Vec<SchemataDto>, SqlCommandError> {
+        Ok(vec![SchemataDto {
+            schema: "main".into(),
+            is_default: true,
+        }])
+    }
+
+    fn list_tables(&self, schema: &str) -> Result<Vec<SchemaObjectDto>, SqlCommandError> {
+        if schema != "main" {
+            return Err(SqlCommandError::new(
+                "invalid_schema",
+                "SQLite only supports the 'main' schema",
+            ));
+        }
+
+        let conn = self.conn.lock().map_err(|err| {
+            SqlCommandError::new("sqlite_locked", format!("sqlite connection poisoned: {err}"))
+        })?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT type, name FROM sqlite_master \
+                 WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' \
+                 ORDER BY type, name",
+            )
+            .map_err(|err| SqlCommandError::new("sqlite_prepare", err.to_string()))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let t: String = row.get(0)?;
+                let n: String = row.get(1)?;
+                Ok((t, n))
+            })
+            .map_err(|err| SqlCommandError::new("sqlite_query", err.to_string()))?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            let (t, n) = r.map_err(|err| SqlCommandError::new("sqlite_iter", err.to_string()))?;
+            out.push(SchemaObjectDto {
+                kind: if t.eq_ignore_ascii_case("view") {
+                    super::metadata_v2::SchemaObjectKind::View
+                } else {
+                    super::metadata_v2::SchemaObjectKind::Table
+                },
+                name: n,
+                schema: Some("main".into()),
+                columns: Vec::new(),
+                primary_key: Vec::new(),
+            });
+        }
+        Ok(out)
+    }
+
+    fn list_columns(&self, schema: &str, table: &str) -> Result<Vec<ColumnDto>, SqlCommandError> {
+        if schema != "main" {
+            return Err(SqlCommandError::new(
+                "invalid_schema",
+                "SQLite only supports the 'main' schema",
+            ));
+        }
+
+        let escaped = table.replace('"', "\"\"");
+        let sql = format!("PRAGMA table_info(\"{escaped}\")");
+        let conn = self.conn.lock().map_err(|err| {
+            SqlCommandError::new("sqlite_locked", format!("sqlite connection poisoned: {err}"))
+        })?;
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|err| SqlCommandError::new("sqlite_prepare", err.to_string()))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let cid: i32 = row.get(0)?;
+                let name: String = row.get(1)?;
+                let dtype: String = row.get(2)?;
+                let notnull: i64 = row.get(3)?;
+                let default: Option<String> = row.get(4)?;
+                let pk: i64 = row.get(5)?;
+                Ok(ColumnDto {
+                    name,
+                    data_type: dtype,
+                    is_nullable: notnull == 0,
+                    is_primary_key: pk > 0,
+                    default_value: default,
+                    comment: None,
+                    ordinal: cid,
+                })
+            })
+            .map_err(|err| SqlCommandError::new("sqlite_query", err.to_string()))?;
+
+        let mut out: Vec<ColumnDto> = rows
+            .map(|r| r.unwrap_or_else(|err| panic!("sqlite row decode failed: {err}")))
+            .collect();
+        out.sort_by_key(|c| c.ordinal);
+        Ok(out)
     }
 }
 
@@ -231,6 +348,21 @@ impl SqlConnection for MysqlProbeConnection {
         // We deliberately report `false` so Phase 04 prompts the user to
         // re-open the connection once query execution is wired up.
         false
+    }
+
+    fn list_schemas(&self) -> Result<Vec<SchemataDto>, SqlCommandError> {
+        // Real MySQL metadata fetch lives in `mysql_runtime.rs` (Phase 09
+        // integration tests). For Phase 02 unit tests we deliberately
+        // return an empty list — UI shows an empty `Schemas` group.
+        Ok(Vec::new())
+    }
+
+    fn list_tables(&self, _schema: &str) -> Result<Vec<SchemaObjectDto>, SqlCommandError> {
+        Ok(Vec::new())
+    }
+
+    fn list_columns(&self, _schema: &str, _table: &str) -> Result<Vec<ColumnDto>, SqlCommandError> {
+        Ok(Vec::new())
     }
 }
 
