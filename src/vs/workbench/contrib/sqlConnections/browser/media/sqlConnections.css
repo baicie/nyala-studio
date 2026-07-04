@@ -318,3 +318,84 @@
 	font-size: 11px;
 	line-height: 1.4;
 }
+
+/* ----------------------------------------------------------------------------------------
+ * SQL Explorer (Phase 02) tree view.
+ * Reuses the legacy .sql-connection-node-* classes; only the column
+ * rows and the inline refresh button are unique to this surface.
+ * ---------------------------------------------------------------------------------------*/
+
+.sql-connection-node-refresh {
+	margin-left: auto;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	border-radius: 2px;
+	color: inherit;
+	background: transparent;
+	cursor: pointer;
+	opacity: 0;
+}
+
+.sql-connection-node:hover .sql-connection-node-refresh,
+.sql-connection-node:focus-within .sql-connection-node-refresh {
+	opacity: 1;
+}
+
+.sql-connection-node-refresh:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.sql-connection-node.has-error .sql-connection-node-label {
+	color: var(--vscode-errorForeground);
+}
+
+.sql-connection-node-error {
+	margin-left: 4px;
+	color: var(--vscode-errorForeground);
+	font-size: 11px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sql-connection-column-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 20px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	padding-right: 6px;
+}
+
+.sql-connection-column-row:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.sql-connection-column-row.empty {
+	font-style: italic;
+	opacity: 0.7;
+}
+
+.sql-connection-column-name {
+	flex: 0 0 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sql-connection-column-name.is-primary-key {
+	font-weight: 600;
+	color: var(--vscode-textPreformat-foreground);
+}
+
+.sql-connection-column-type {
+	flex: 0 0 auto;
+	font-family: var(--monaco-monospace-font);
+}
+
+.sql-connection-column-flags {
+	margin-left: auto;
+	opacity: 0.7;
+}
