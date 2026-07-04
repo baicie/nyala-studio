@@ -265,41 +265,6 @@ Use a simple table/grid first. Do not introduce a heavy virtualized grid before 
 
 ---
 
-### Phase 7 — Migrate Assets From Old sql-studio MVP
-
-The old `baicie/sql-studio/tree/mvp` project is not the final shell, but it contains useful domain assets.
-
-Migration rule:
-
-```txt
-Migrate domain logic, not React shell code.
-```
-
-Worth migrating later:
-
-```txt
-crates/sqlgui-db
-crates/sqlgui-common
-crates/sqlgui-extension
-SQL API type design
-extension manifest / permission design
-SQL formatter demo
-result-grid interaction ideas
-connection form field design
-```
-
-Do not migrate:
-
-```txt
-React application shell
-React Router structure
-Zustand global state model
-shadcn page layout
-old desktop app layout
-```
-
----
-
 ## Architecture Rules
 
 ### Preserve SideX / VS Code Layering
