@@ -5,6 +5,14 @@ mid-2026 Nyala retarget, every value listed below points at
 Nyala-owned endpoints; if any value still resolves to a SideX
 endpoint, **stop and reopen this file before tagging.**
 
+For the **operational** counterpart — actual provisioning steps
+(Cloudflare / Apple / Azure), DNS waits, artifact verification,
+rollback decisions — see
+[`docs/RELEASE-RUNBOOK.md`](./RELEASE-RUNBOOK.md). The two files
+deliberately split along this line: this file documents *what
+secrets the workflow expects and why*; the runbook documents
+*what the maintainer does on release day*.
+
 ## What this workflow does
 
 `.github/workflows/release.yml` runs whenever a `v*` tag is pushed
