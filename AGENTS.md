@@ -23,10 +23,14 @@ Treat the SideX / VS Code workbench as vendor-grade. Do not casually rewrite it.
 
 ## Current Status
 
-- Branch under development: `mvp`.
-- MVP Definition of Done: met on commit `60ab89c0` (see `docs/sql-mvp-phases/phase-do-d-verification.md`).
-- The MVP loop works: branded workbench, SQLite connection, table listing, SQL editor, SELECT execution, result panel, structured SQL error.
-- Last cleanup round landed: SCM provider unloaded (commit `09bf4b65`), AGENTS Phase 7 dropped (commit `0306f70f`).
+Source of truth for phase progress: **`docs/sql-mvp-phases/README.md`** and the per-phase docs under `docs/sql-mvp-phases/`. Read those before checking off any roadmap work.
+
+- Branch under development: `mvp`. working tree clean.
+- MVP core loop (the 10-item Definition of Done) met on commit `60ab89c0`. Verification report: `docs/sql-mvp-phases/phase-do-d-verification.md`.
+- Phases 00–07 of the SQL roadmap are implemented at P0 scope and covered by `pnpm run test`. Phase 08 (packaging + demo flow + MySQL Preview validation) is still **pending**.
+- Recent cleanup: SCM provider unloaded (`09bf4b65`), AGENTS Phase 7 dropped (`0306f70f`), AGENTS reorganized (`a0d56767`).
+
+**Never claim a phase is met from this file alone — open `docs/sql-mvp-phases/README.md` and the matching phase doc first.**
 
 ---
 
@@ -44,90 +48,23 @@ Always work in this order. Reordering requires explicit user request.
 
 ## High-Level Roadmap
 
-Each phase lists the deliverable, where it lives, and what is **not** part of the phase.
+The authoritative roadmap lives in **`docs/sql-mvp-phases/README.md`** (Phase 00 – 08 + DoD verification). The summary below is a quick reference; **always open the per-phase doc before planning work on a phase.**
 
-### Phase 1 — Product Branding
+| Phase | Doc | Scope |
+|---|---|---|
+| 00 | `phase-00-runtime-status.md` | runtime status surface, scripts/verify-sql-runtime-status.mjs |
+| 01 | `phase-01-connection-mvp.md` | SQLite connection lifecycle + secret hygiene |
+| 02 | `phase-02-metadata-explorer.md` | three-level tree, per-node error / refresh |
+| 03 | `phase-03-editor-execution.md` | execute all / selection / current + Ctrl+Enter |
+| 04 | `phase-04-result-panel.md` | columns / rows / affected / elapsed / error |
+| 05 | `phase-05-history-formatter-snippets-explain.md` | history, snippets, formatter, explain |
+| 06 | `phase-06-ai-helper-foundation.md` | deterministic provider + capability guard |
+| 07 | `phase-07-plugin-api-mvp.md` | 13 contribution points + local-only loader |
+| 08 | `phase-08-mvp-packaging.md` | **pending** — demo.db seed + welcome flow + MySQL Preview validation |
 
-Replace remaining SideX / SQL Studio branding with Nyala / Nyala Studio.
+Implementation order is strict: `00 → 01 → 02 → 03 → 04 → 05 → 06 → 07 → 08`. Do not start a phase before the previous one is at least at the README status row "部分" or "已具备雏形".
 
-**Touch:** `package.json`, `src-tauri/tauri.conf.json`, `README.md`, menu labels, about labels, window title, app identifier, bundle metadata, icons, updater config.
-
-**Target identifiers:** `productName: "Nyala Studio"`, `identifier: com.baicie.sqlstudio`, window title `Nyala`.
-
-**Out of scope:** upstream SideX updater endpoints must not be reused.
-
-### Phase 2 — SQL Rust Commands
-
-Tauri command bridge for SQL.
-
-**Location:** `src-tauri/src/commands/sql/`. Module wiring: `src-tauri/src/commands/mod.rs`, `src-tauri/src/lib.rs`.
-
-**Modules (current state):** `mod.rs`, `types.rs`, `state.rs`, `connection_manager.rs`, `metadata.rs`, `metadata_v2.rs`, `dialect.rs`, `driver.rs`, `driver_registry.rs`, `persistence.rs`, `persistence_v2.rs`, `runtime_status_export.rs`, `mysql_runtime.rs`. Add new modules here; do not scatter SQL logic elsewhere.
-
-**Minimum commands:** `sql_test_connection`, `sql_open_connection`, `sql_close_connection`, `sql_list_connections`, `sql_list_tables`, `sql_list_columns`, `sql_execute_query`, `sql_cancel_query`.
-
-**Out of scope:** PostgreSQL and MySQL production support until SQLite flow is stable end to end.
-
-### Phase 3 — Workbench SQL Services
-
-Frontend service abstractions that sit between the UI and the Tauri command bridge.
-
-**Location:** `src/vs/workbench/services/sql/common/` and `src/vs/workbench/services/sql/browser/`.
-
-**Core services:** `ISqlConnectionService`, `ISqlMetadataService`, `ISqlQueryService`.
-
-**Rule:** UI components must call services, never `invoke()` directly. Every SQL Tauri command has exactly one browser-side service that wraps it.
-
-### Phase 4 — SQL Connections View
-
-Activity-bar + sidebar entry for managing connections.
-
-**Location:** `src/vs/workbench/contrib/sqlConnections/`.
-
-**UI shape:** activity-bar `SQL Connections`, sidebar tree (connection → database → schema → tables → columns).
-
-**Commands:** `sql.addConnection`, `sql.refreshConnections`, `sql.openNewQuery`, `sql.copyConnectionName`, `sql.removeConnection`.
-
-**Out of scope:** do not remove Explorer / Search / Terminal here. Hide later if needed.
-
-### Phase 5 — SQL Editor
-
-SQL editor contribution.
-
-**Location:** `src/vs/workbench/contrib/sqlEditor/`.
-
-**Model:** `SqlEditorInput`, `SqlEditorPane`, `SqlEditorModel`, `SqlEditorActions`, `SqlEditorExecutionController`, `SqlEditorDraftService`, `SqlEditorEvents`. A separate serializer class is not required — VS Code's editor registry handles input persistence via `editor.input.factory`.
-
-**Commands:** `sql.newQuery`, `sql.executeQuery`, `sql.executeSelection`, `sql.changeConnection`.
-
-**Shortcuts:**
-
-| Shortcut | Action |
-|---|---|
-| `Ctrl/Cmd + Enter` | execute current query |
-| `Shift + Enter` | execute selected query |
-
-**Out of scope:** React-Router-style pages for the SQL editor.
-
-### Phase 6 — Query Result Panel
-
-Result panel below the editor area.
-
-**Location:** `src/vs/workbench/contrib/sqlResult/`.
-
-**Panel:** toolbar, result grid, messages, errors.
-
-**Display:** columns, rows, elapsed time, row count, error detail.
-
-**Out of scope:** column resizing, cell editing, infinite scrolling, copy range, CSV export, filtering, sorting, virtualization, large result streaming. Add these later, never block MVP on them.
-
-### Phase 7+ — Post-MVP Cleanup
-
-Free to explore once Phase 1-6 are stable and the Definition of Done has been met:
-
-- Product polish, additional drivers, AI assistant stub, plugin system.
-
-Do not start Post-MVP work until the build, lint, and test suites are all green for the work in flight.
+Legacy `AGENTS.md §Phase 1` – `§Phase 6` text (the original phase numbering) still applies as a code-path map, but the design contract for each phase lives in the matching doc under `docs/sql-mvp-phases/`.
 
 ---
 
@@ -462,9 +399,9 @@ feat/sqlite-mvp
 
 ---
 
-## Definition of Done (MVP)
+## Definition of Done (Core MVP)
 
-Met on commit `60ab89c0`. Verification report: `docs/sql-mvp-phases/phase-do-d-verification.md`.
+The 10-item Core MVP gate was met on commit `60ab89c0`. Verification report: `docs/sql-mvp-phases/phase-do-d-verification.md`.
 
 1. App launches as Nyala, not SideX or SQL Studio.
 2. A SQLite connection can be added.
@@ -477,4 +414,4 @@ Met on commit `60ab89c0`. Verification report: `docs/sql-mvp-phases/phase-do-d-v
 9. `pnpm run rust:check` is clean.
 10. `pnpm run test` passes end to end (branding, runtime status, Rust + 8 frontend suites).
 
-The list is read-only now. To open new work past the MVP, see "Post-MVP Cleanup" under the High-Level Roadmap.
+This list is **read-only** and a historical anchor only. To check off additional work, look at the matching entry in `docs/sql-mvp-phases/README.md` (e.g. Phase 08 acceptance checklist).
