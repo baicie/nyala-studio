@@ -312,6 +312,7 @@ pub async fn remote_connect_wsl(
     let mut mgr = store.inner.lock().await;
     let id = mgr
         .connect_wsl(&distro)
+        .await
         .map_err(|e| format!("WSL connect failed: {e}"))?;
     let info = mgr
         .active_connections()
