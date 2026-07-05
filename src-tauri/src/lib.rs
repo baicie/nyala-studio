@@ -681,6 +681,7 @@ pub fn run() {
             commands::sql_assert_driver_runtime_status,
             // Phase 08 - MVP Packaging
             commands::sql_bootstrap_demo,
+            commands::sql_validate_mysql_preview,
             // Phase 01 - Connection MVP
             commands::sql_test_connection_v2,
             commands::sql_open_connection_v2,
