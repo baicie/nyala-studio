@@ -132,8 +132,9 @@ impl RemoteManager {
     // -- WSL ----------------------------------------------------------------
 
     /// Connect to a WSL distribution.
+    #[allow(clippy::unused_async)]
     pub async fn connect_wsl(&mut self, distro: &str) -> Result<ConnectionId> {
-        let transport = WslTransport::connect(distro).await?;
+        let transport = WslTransport::connect(distro)?;
         let label = format!("WSL: {distro}");
         Ok(self.insert(Box::new(transport), ConnectionKind::Wsl, label))
     }
@@ -163,7 +164,7 @@ impl RemoteManager {
 
     // -- Tunnel -------------------------------------------------------------
 
-    /// Connect via a remote tunnel (placeholder — requires a `TunnelClient`
+    /// Connect via a remote tunnel (placeholder 鈥?requires a `TunnelClient`
     /// to be wired into `RemoteTransport`).
     #[allow(clippy::unused_async)]
     pub async fn connect_tunnel(&mut self, _tunnel_id: &str) -> Result<ConnectionId> {

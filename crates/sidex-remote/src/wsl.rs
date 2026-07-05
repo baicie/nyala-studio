@@ -141,8 +141,7 @@ pub fn connect_distro(name: &str) -> Result<WslConnection> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[allow(clippy::unused_async)]
-pub async fn connect_distro(_name: &str) -> Result<WslConnection> {
+pub fn connect_distro(_name: &str) -> Result<WslConnection> {
     wsl_unavailable()
 }
 
@@ -332,7 +331,7 @@ impl RemoteTransport for WslTransport {
     }
 
     async fn open_pty(&self, _cols: u16, _rows: u16) -> Result<RemotePty> {
-        bail!("WSL PTY not yet implemented — use sidex-terminal instead")
+        bail!("WSL PTY not yet implemented 鈥?use sidex-terminal instead")
     }
 
     async fn upload(&self, local: &Path, remote: &str) -> Result<()> {
@@ -358,8 +357,7 @@ impl RemoteTransport for WslTransport {
 #[cfg(not(target_os = "windows"))]
 impl WslTransport {
     /// Connect to a named WSL distribution. Returns an error on non-Windows.
-    #[allow(clippy::unused_async)]
-    pub async fn connect(_distro: &str) -> Result<Self> {
+    pub fn connect(_distro: &str) -> Result<Self> {
         wsl_unavailable()
     }
 }
