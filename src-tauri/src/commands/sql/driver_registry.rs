@@ -124,10 +124,9 @@ impl SqlDriver for SqliteDriver {
         let path = if profile.remember_in_memory {
             ":memory:".to_string()
         } else {
-            profile
-                .file_path
-                .clone()
-                .ok_or_else(|| "SQLite connection requires filePath or rememberInMemory".to_string())?
+            profile.file_path.clone().ok_or_else(|| {
+                "SQLite connection requires filePath or rememberInMemory".to_string()
+            })?
         };
 
         let conn = SqliteRawConnection::open(&path)
@@ -192,7 +191,10 @@ impl SqlConnection for SqliteConnection {
         }
 
         let conn = self.conn.lock().map_err(|err| {
-            SqlCommandError::new("sqlite_locked", format!("sqlite connection poisoned: {err}"))
+            SqlCommandError::new(
+                "sqlite_locked",
+                format!("sqlite connection poisoned: {err}"),
+            )
         })?;
 
         let mut stmt = conn
@@ -240,7 +242,10 @@ impl SqlConnection for SqliteConnection {
         let escaped = table.replace('"', "\"\"");
         let sql = format!("PRAGMA table_info(\"{escaped}\")");
         let conn = self.conn.lock().map_err(|err| {
-            SqlCommandError::new("sqlite_locked", format!("sqlite connection poisoned: {err}"))
+            SqlCommandError::new(
+                "sqlite_locked",
+                format!("sqlite connection poisoned: {err}"),
+            )
         })?;
 
         let mut stmt = conn
@@ -308,7 +313,12 @@ impl SqlDriver for MysqlDriver {
             .tcp_port(port)
             .db_name(Some(database));
 
-        if let Some(username) = profile.username.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(username) = profile
+            .username
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             builder = builder.user(Some(username));
         }
         if let Some(password) = secret.password.as_deref() {
@@ -490,8 +500,17 @@ mod tests {
     #[test]
     fn driver_registry_can_build_all_default_drivers() {
         let registry = default_registry();
-        assert_eq!(registry.build(DriverId::Sqlite).unwrap().id(), DriverId::Sqlite);
-        assert_eq!(registry.build(DriverId::MySql).unwrap().id(), DriverId::MySql);
-        assert_eq!(registry.build(DriverId::Postgres).unwrap().id(), DriverId::Postgres);
+        assert_eq!(
+            registry.build(DriverId::Sqlite).unwrap().id(),
+            DriverId::Sqlite
+        );
+        assert_eq!(
+            registry.build(DriverId::MySql).unwrap().id(),
+            DriverId::MySql
+        );
+        assert_eq!(
+            registry.build(DriverId::Postgres).unwrap().id(),
+            DriverId::Postgres
+        );
     }
 }

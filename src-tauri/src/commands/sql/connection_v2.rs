@@ -21,9 +21,7 @@
 use tauri::State;
 
 use super::connection_manager::SharedConnectionManager;
-use super::types::{
-    ConnectionProfile, ConnectionSecret, SqlCommandError,
-};
+use super::types::{ConnectionProfile, ConnectionSecret, SqlCommandError};
 
 #[tauri::command]
 pub fn sql_test_connection_v2(
@@ -52,10 +50,7 @@ pub fn sql_open_connection_v2(
 }
 
 #[tauri::command]
-pub fn sql_close_connection_v2(
-    manager: State<'_, SharedConnectionManager>,
-    profile_id: String,
-) {
+pub fn sql_close_connection_v2(manager: State<'_, SharedConnectionManager>, profile_id: String) {
     manager.close(&profile_id);
 }
 
@@ -123,10 +118,7 @@ mod tests {
     fn open_connection_v2_returns_profile_id() {
         let manager = build_default_manager(Some(unique_path("open")));
         manager
-            .open(
-                &sqlite_in_memory_profile("a"),
-                ConnectionSecret::default(),
-            )
+            .open(&sqlite_in_memory_profile("a"), ConnectionSecret::default())
             .unwrap();
         assert!(manager.is_open("a"));
     }
@@ -135,10 +127,7 @@ mod tests {
     fn close_connection_v2_drops_open_state() {
         let manager = build_default_manager(Some(unique_path("close")));
         manager
-            .open(
-                &sqlite_in_memory_profile("a"),
-                ConnectionSecret::default(),
-            )
+            .open(&sqlite_in_memory_profile("a"), ConnectionSecret::default())
             .unwrap();
         manager.close("a");
         assert!(!manager.is_open("a"));
@@ -174,7 +163,10 @@ mod tests {
     fn test_connection_v2_rejects_planned_postgres() {
         let manager = build_default_manager(Some(unique_path("postgres")));
         let err = manager
-            .open_for_test(&profile("a", DriverIdDto::Postgres), ConnectionSecret::default())
+            .open_for_test(
+                &profile("a", DriverIdDto::Postgres),
+                ConnectionSecret::default(),
+            )
             .unwrap_err();
         assert!(matches!(err, SqlCommandError::DriverNotAvailable { .. }));
     }
@@ -212,8 +204,10 @@ mod tests {
     fn connection_manager_uses_default_registry_when_no_path() {
         // Smoke check: build_default_manager without a path returns a
         // working manager backed by the default driver registry.
-        let manager: std::sync::Arc<ConnectionManager> =
-            Arc::new(ConnectionManager::new(default_registry(), unique_path("smoke")));
+        let manager: std::sync::Arc<ConnectionManager> = Arc::new(ConnectionManager::new(
+            default_registry(),
+            unique_path("smoke"),
+        ));
         assert!(manager.list_profiles().is_empty());
     }
 }

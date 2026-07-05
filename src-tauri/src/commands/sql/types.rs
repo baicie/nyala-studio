@@ -399,13 +399,27 @@ pub enum SqlCommandError {
 impl SqlCommandError {
     pub fn new(code: &str, message: impl Into<String>) -> Self {
         match code {
-            "driver_not_available" => SqlCommandError::DriverNotAvailable { message: message.into() },
-            "unknown_driver" => SqlCommandError::UnknownDriver { message: message.into() },
-            "open_failed" => SqlCommandError::OpenFailed { message: message.into() },
-            "not_open" => SqlCommandError::NotOpen { message: message.into() },
-            "persistence" => SqlCommandError::Persistence { message: message.into() },
-            "validation" => SqlCommandError::Validation { message: message.into() },
-            _ => SqlCommandError::Internal { message: message.into() },
+            "driver_not_available" => SqlCommandError::DriverNotAvailable {
+                message: message.into(),
+            },
+            "unknown_driver" => SqlCommandError::UnknownDriver {
+                message: message.into(),
+            },
+            "open_failed" => SqlCommandError::OpenFailed {
+                message: message.into(),
+            },
+            "not_open" => SqlCommandError::NotOpen {
+                message: message.into(),
+            },
+            "persistence" => SqlCommandError::Persistence {
+                message: message.into(),
+            },
+            "validation" => SqlCommandError::Validation {
+                message: message.into(),
+            },
+            _ => SqlCommandError::Internal {
+                message: message.into(),
+            },
         }
     }
 }
@@ -433,7 +447,10 @@ impl std::fmt::Display for ConnectionSecret {
 /// Mirrors `runtime_status::assert_minimum_status` but operates on the
 /// `DriverIdDto` enum so the rest of Phase 01 does not need to depend on
 /// the raw `DriverId` (which would re-expose the runtime status module).
-pub fn assert_driver_status_at_least(driver: DriverIdDto, minimum: RuntimeStatus) -> Result<(), String> {
+pub fn assert_driver_status_at_least(
+    driver: DriverIdDto,
+    minimum: RuntimeStatus,
+) -> Result<(), String> {
     let id: DriverId = driver.into();
     crate::runtime_status::assert_minimum_status(id, minimum)
         .map_err(|message| format!("driver {} does not meet status: {message}", id.as_token()))
@@ -457,7 +474,10 @@ mod phase01_tests {
 
     #[test]
     fn connection_secret_redacted_string_counts_fields() {
-        assert_eq!(ConnectionSecret::default().redacted_string(), "redacted:0fields");
+        assert_eq!(
+            ConnectionSecret::default().redacted_string(),
+            "redacted:0fields"
+        );
         assert_eq!(
             ConnectionSecret {
                 password: Some("x".into())
@@ -519,14 +539,16 @@ mod phase01_tests {
 
     #[test]
     fn assert_driver_status_at_least_rejects_planned_postgres() {
-        let err = assert_driver_status_at_least(DriverIdDto::Postgres, RuntimeStatus::Stable).unwrap_err();
+        let err = assert_driver_status_at_least(DriverIdDto::Postgres, RuntimeStatus::Stable)
+            .unwrap_err();
         assert!(err.contains("postgres"));
     }
 
     #[test]
     fn assert_driver_status_at_least_rejects_stable_minimum_for_mysql_preview() {
         // MySQL is Preview, so a `stable` minimum must reject.
-        let err = assert_driver_status_at_least(DriverIdDto::Mysql, RuntimeStatus::Stable).unwrap_err();
+        let err =
+            assert_driver_status_at_least(DriverIdDto::Mysql, RuntimeStatus::Stable).unwrap_err();
         assert!(err.contains("mysql"));
     }
 

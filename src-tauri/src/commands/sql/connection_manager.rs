@@ -19,7 +19,9 @@ use std::sync::{Arc, Mutex};
 use crate::runtime_status::{assert_minimum_status, DriverId, RuntimeStatus};
 
 use super::driver_registry::{default_registry, BoxedConnection, SqlDriverRegistry};
-use super::persistence_v2::{default_path, load_from, save_to, PersistenceError, StoredConnections};
+use super::persistence_v2::{
+    default_path, load_from, save_to, PersistenceError, StoredConnections,
+};
 use super::types::{
     assert_driver_status_at_least, ConnectionProfile, ConnectionSecret, DriverIdDto,
     SqlCommandError,
@@ -66,9 +68,7 @@ impl ConnectionManager {
 
     pub fn upsert_profile(&self, profile: ConnectionProfile) -> Result<(), SqlCommandError> {
         let mut inner = self.inner.lock().expect("connection manager poisoned");
-        inner
-            .profile_by_id
-            .insert(profile.id.clone(), profile);
+        inner.profile_by_id.insert(profile.id.clone(), profile);
         // Persistence is best-effort; we surface failures as `persistence`
         // errors so the UI can toast them.
         let snapshot = stored_snapshot(&inner);
@@ -95,7 +95,9 @@ impl ConnectionManager {
 
     pub fn put_secret(&self, profile_id: &str, secret: ConnectionSecret) {
         let mut inner = self.inner.lock().expect("connection manager poisoned");
-        inner.last_secret_by_id.insert(profile_id.to_string(), secret);
+        inner
+            .last_secret_by_id
+            .insert(profile_id.to_string(), secret);
     }
 
     pub fn get_secret(&self, profile_id: &str) -> Option<ConnectionSecret> {
@@ -222,7 +224,9 @@ fn stored_snapshot(inner: &Inner) -> StoredConnections {
 
 pub type SharedConnectionManager = Arc<ConnectionManager>;
 
-pub fn build_default_manager(persistence_path: Option<std::path::PathBuf>) -> SharedConnectionManager {
+pub fn build_default_manager(
+    persistence_path: Option<std::path::PathBuf>,
+) -> SharedConnectionManager {
     let path = persistence_path.unwrap_or_else(default_path);
     Arc::new(ConnectionManager::new(default_registry(), path))
 }
@@ -248,14 +252,21 @@ mod tests {
     }
 
     fn fresh_manager() -> ConnectionManager {
-        ConnectionManager::new(default_registry(), std::env::temp_dir().join("nyala-conn-mgr.json"))
+        ConnectionManager::new(
+            default_registry(),
+            std::env::temp_dir().join("nyala-conn-mgr.json"),
+        )
     }
 
     #[test]
     fn upsert_then_list_returns_profiles_sorted() {
         let manager = fresh_manager();
-        manager.upsert_profile(profile("b", DriverIdDto::Sqlite)).unwrap();
-        manager.upsert_profile(profile("a", DriverIdDto::Sqlite)).unwrap();
+        manager
+            .upsert_profile(profile("b", DriverIdDto::Sqlite))
+            .unwrap();
+        manager
+            .upsert_profile(profile("a", DriverIdDto::Sqlite))
+            .unwrap();
         let list = manager.list_profiles();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].id, "a");
@@ -265,8 +276,15 @@ mod tests {
     #[test]
     fn drop_secret_preserves_profile() {
         let manager = fresh_manager();
-        manager.upsert_profile(profile("a", DriverIdDto::Sqlite)).unwrap();
-        manager.put_secret("a", ConnectionSecret { password: Some("x".into()) });
+        manager
+            .upsert_profile(profile("a", DriverIdDto::Sqlite))
+            .unwrap();
+        manager.put_secret(
+            "a",
+            ConnectionSecret {
+                password: Some("x".into()),
+            },
+        );
         manager.drop_secret("a");
         assert!(manager.get_secret("a").is_none());
         assert_eq!(manager.list_profiles().len(), 1);
@@ -278,8 +296,15 @@ mod tests {
         let mut p = profile("a", DriverIdDto::Sqlite);
         p.remember_in_memory = true;
         manager.upsert_profile(p.clone()).unwrap();
-        manager.put_secret("a", ConnectionSecret { password: Some("x".into()) });
-        manager.open(&p, ConnectionSecret { password: None }).unwrap();
+        manager.put_secret(
+            "a",
+            ConnectionSecret {
+                password: Some("x".into()),
+            },
+        );
+        manager
+            .open(&p, ConnectionSecret { password: None })
+            .unwrap();
         assert!(manager.is_open("a"));
         manager.close("a");
         assert!(!manager.is_open("a"));
@@ -292,8 +317,15 @@ mod tests {
         let mut p = profile("a", DriverIdDto::Sqlite);
         p.remember_in_memory = true;
         manager.upsert_profile(p.clone()).unwrap();
-        manager.put_secret("a", ConnectionSecret { password: Some("x".into()) });
-        manager.open(&p, ConnectionSecret { password: None }).unwrap();
+        manager.put_secret(
+            "a",
+            ConnectionSecret {
+                password: Some("x".into()),
+            },
+        );
+        manager
+            .open(&p, ConnectionSecret { password: None })
+            .unwrap();
         manager.forget_everything();
         assert!(!manager.is_open("a"));
         assert!(manager.get_secret("a").is_none());
@@ -307,7 +339,12 @@ mod tests {
         p.remember_in_memory = true;
         manager.upsert_profile(p.clone()).unwrap();
         manager
-            .open_for_test(&p, ConnectionSecret { password: Some("x".into()) })
+            .open_for_test(
+                &p,
+                ConnectionSecret {
+                    password: Some("x".into()),
+                },
+            )
             .unwrap();
         assert!(!manager.is_open("a"));
         assert!(manager.get_secret("a").is_none());
@@ -317,13 +354,8 @@ mod tests {
     fn postgres_open_is_blocked_by_runtime_status_guard() {
         let manager = fresh_manager();
         let p = profile("a", DriverIdDto::Postgres);
-        let err = manager
-            .open(&p, ConnectionSecret::default())
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            SqlCommandError::DriverNotAvailable { .. }
-        ));
+        let err = manager.open(&p, ConnectionSecret::default()).unwrap_err();
+        assert!(matches!(err, SqlCommandError::DriverNotAvailable { .. }));
     }
 
     #[test]
@@ -342,9 +374,7 @@ mod tests {
     #[test]
     fn with_conn_returns_not_open_when_missing() {
         let manager = fresh_manager();
-        let err = manager
-            .with_conn("missing", |_| Ok(()))
-            .unwrap_err();
+        let err = manager.with_conn("missing", |_| Ok(())).unwrap_err();
         assert!(matches!(err, SqlCommandError::NotOpen { .. }));
     }
 

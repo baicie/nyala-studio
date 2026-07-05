@@ -74,10 +74,11 @@ pub fn load_from(path: &Path) -> Result<StoredConnections, PersistenceError> {
     }
 
     let bytes = std::fs::read(path)?;
-    let text = String::from_utf8(bytes).map_err(|err| PersistenceError::Encoding(err.to_string()))?;
+    let text =
+        String::from_utf8(bytes).map_err(|err| PersistenceError::Encoding(err.to_string()))?;
 
-    let mut doc: HashMap<String, Value> = serde_json::from_str(&text)
-        .map_err(|err| PersistenceError::Json(err.to_string()))?;
+    let mut doc: HashMap<String, Value> =
+        serde_json::from_str(&text).map_err(|err| PersistenceError::Json(err.to_string()))?;
 
     strip_secret_fields(&mut doc);
 
@@ -113,8 +114,8 @@ pub fn save_to(path: &Path, stored: &StoredConnections) -> Result<(), Persistenc
         std::fs::create_dir_all(parent)?;
     }
 
-    let mut value = serde_json::to_value(stored)
-        .map_err(|err| PersistenceError::Json(err.to_string()))?;
+    let mut value =
+        serde_json::to_value(stored).map_err(|err| PersistenceError::Json(err.to_string()))?;
 
     strip_secret_fields_root(&mut value);
 
@@ -131,7 +132,8 @@ pub fn default_path() -> PathBuf {
         .or_else(dirs::data_dir)
         .unwrap_or_else(|| PathBuf::from("."));
 
-    base.join(CONNECTIONS_DOCUMENT_MAGIC).join("connections.json")
+    base.join(CONNECTIONS_DOCUMENT_MAGIC)
+        .join("connections.json")
 }
 
 fn strip_secret_fields(doc: &mut HashMap<String, Value>) {

@@ -75,7 +75,9 @@ pub fn sql_list_tables_v2(
     profile_id: String,
     schema: String,
 ) -> MetadataResult<Vec<SchemaObjectDto>> {
-    with_conn(&manager, &profile_id, |entry| entry.conn.list_tables(&schema))
+    with_conn(&manager, &profile_id, |entry| {
+        entry.conn.list_tables(&schema)
+    })
 }
 
 #[tauri::command]
@@ -85,7 +87,9 @@ pub fn sql_list_columns_v2(
     schema: String,
     table: String,
 ) -> MetadataResult<Vec<ColumnDto>> {
-    with_conn(&manager, &profile_id, |entry| entry.conn.list_columns(&schema, &table))
+    with_conn(&manager, &profile_id, |entry| {
+        entry.conn.list_columns(&schema, &table)
+    })
 }
 
 fn with_conn<R>(
@@ -186,9 +190,7 @@ mod tests {
     fn list_schemas_for_sqlite_returns_main_via_manager() {
         let manager = ConnectionManager::new(default_registry(), unique_path());
         let profile = sqlite_in_memory_profile();
-        manager
-            .open(&profile, ConnectionSecret::default())
-            .unwrap();
+        manager.open(&profile, ConnectionSecret::default()).unwrap();
 
         let schemas = manager
             .with_conn(&profile.id, |entry| entry.conn.list_schemas())
@@ -202,9 +204,7 @@ mod tests {
     fn list_tables_for_empty_sqlite_returns_empty() {
         let manager = ConnectionManager::new(default_registry(), unique_path());
         let profile = sqlite_in_memory_profile();
-        manager
-            .open(&profile, ConnectionSecret::default())
-            .unwrap();
+        manager.open(&profile, ConnectionSecret::default()).unwrap();
 
         let tables = manager
             .with_conn(&profile.id, |entry| entry.conn.list_tables("main"))
