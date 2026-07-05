@@ -21,6 +21,7 @@ import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { IViewDescriptorService } from '../../../common/views.js';
 import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
 import { ISqlConnectionService } from '../../../services/sql/common/sqlConnection.js';
+import { isTauri } from '../../../../sidex-bridge.js';
 import { ISqlDriverCatalogService, SqlRuntimeDriverId } from '../../../services/sql/common/sqlDriverCatalog.js';
 import { ISqlMetadataService } from '../../../services/sql/common/sqlMetadata.js';
 import { getDialectForConnectionKind, SqlDialect } from '../../../services/sql/common/sqlDialect.js';
@@ -175,7 +176,15 @@ export class SqlConnectionsView extends ViewPane {
 		this.refreshDriverStatusStrip();
 		this.refreshDriverPreview();
 
-		this.refresh().catch(error => this.showError(error));
+		// Phase 01: only hit the Rust backend when it actually exists. In a
+		// plain browser dev session `isTauri()` is false and every SQL command
+		// throws "Tauri runtime is not available", which would otherwise fire
+		// a notification storm at workbench boot.
+		if (isTauri()) {
+			this.refresh().catch(error => this.showError(error));
+		} else {
+			this.showInfo('SQL backend unavailable in this preview window.');
+		}
 	}
 
 	private refreshDriverStatusStrip(): void {
