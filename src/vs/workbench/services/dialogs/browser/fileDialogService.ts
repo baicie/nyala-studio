@@ -69,7 +69,7 @@ export class FileDialogService extends AbstractFileDialogService implements IFil
 				});
 			}
 		} catch (e) {
-			console.error('[SideX] Failed to open folder dialog:', e);
+			console.error('[Nyala] Failed to open folder dialog:', e);
 		}
 	}
 
@@ -82,7 +82,7 @@ export class FileDialogService extends AbstractFileDialogService implements IFil
 				await this.editorService.openEditor({ resource: fileUri, options: { pinned: true } });
 			}
 		} catch (e) {
-			console.error('[SideX] Failed to open file dialog:', e);
+			console.error('[Nyala] Failed to open file dialog:', e);
 		}
 	}
 
@@ -106,7 +106,7 @@ export class FileDialogService extends AbstractFileDialogService implements IFil
 				return URI.file(result);
 			}
 		} catch (e) {
-			console.error('[SideX] Save dialog failed:', e);
+			console.error('[Nyala] Save dialog failed:', e);
 		}
 		return undefined;
 	}
@@ -130,7 +130,7 @@ export class FileDialogService extends AbstractFileDialogService implements IFil
 				return URI.file(result);
 			}
 		} catch (e) {
-			console.error('[SideX] Save dialog failed:', e);
+			console.error('[Nyala] Save dialog failed:', e);
 		}
 		return undefined;
 	}
@@ -160,7 +160,7 @@ export class FileDialogService extends AbstractFileDialogService implements IFil
 			const paths = Array.isArray(result) ? result : [result];
 			return paths.map(p => URI.file(p));
 		} catch (e) {
-			console.error('[SideX] Open dialog failed:', e);
+			console.error('[Nyala] Open dialog failed:', e);
 		}
 		return undefined;
 	}

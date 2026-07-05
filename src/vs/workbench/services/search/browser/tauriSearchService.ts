@@ -113,7 +113,7 @@ class TauriSearchProvider extends Disposable implements ISearchResultProvider {
 					limitHit = true;
 				}
 			} catch (err) {
-				this.logService.error('[SideX-Search] textSearch failed:', err);
+				this.logService.error('[Nyala-Search] textSearch failed:', err);
 			}
 		}
 
@@ -148,7 +148,7 @@ class TauriSearchProvider extends Disposable implements ISearchResultProvider {
 					limitHit = true;
 				}
 			} catch (err) {
-				this.logService.error('[SideX-Search] fileSearch failed:', err);
+				this.logService.error('[Nyala-Search] fileSearch failed:', err);
 			}
 		}
 

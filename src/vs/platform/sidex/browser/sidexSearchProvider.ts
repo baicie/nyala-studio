@@ -56,7 +56,7 @@ export class SideXSearchProvider {
 			});
 			return (results as FileSearchResult[]) || [];
 		} catch (e) {
-			console.error('[SideX] Search failed:', e);
+			console.error('[Nyala] Search failed:', e);
 			return [];
 		}
 	}

@@ -130,7 +130,7 @@ export class TauriFileSystemProvider extends Disposable implements IFileSystemPr
 			const msg = typeof err === 'string' ? err : err instanceof Error ? err.message : String(err);
 			const isNotFound = /no such file|not found|ENOENT/i.test(msg);
 			if (!isNotFound) {
-				console.debug('[SideX-FS] stat failed:', path, err);
+				console.debug('[Nyala-FS] stat failed:', path, err);
 			}
 			throw TauriFileSystemProvider.toError(err, resource, FileSystemProviderErrorCode.FileNotFound);
 		}
@@ -162,7 +162,7 @@ export class TauriFileSystemProvider extends Disposable implements IFileSystemPr
 			const msg = typeof err === 'string' ? err : err instanceof Error ? err.message : String(err);
 			const isNotFound = /no such file|not found|ENOENT/i.test(msg);
 			if (!isNotFound) {
-				console.debug('[SideX-FS] readdir failed:', path, err);
+				console.debug('[Nyala-FS] readdir failed:', path, err);
 			}
 			throw TauriFileSystemProvider.toError(err, resource, FileSystemProviderErrorCode.FileNotFound);
 		}

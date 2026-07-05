@@ -139,9 +139,9 @@ export class TauriExtensionHostBridge extends Disposable implements IWorkbenchCo
 			this._registerProviders(conn);
 			this._listenEvents(conn);
 
-			console.log('[SideX] Extension host bridge connected');
+			console.log('[Nyala] Extension host bridge connected');
 		} catch (e) {
-			console.warn('[SideX] Extension host bridge failed:', e);
+			console.warn('[Nyala] Extension host bridge failed:', e);
 		}
 	}
 

@@ -52,7 +52,7 @@ async function ensureTauri(): Promise<boolean> {
 		_listen = events.listen as typeof _listen;
 		return true;
 	} catch (e) {
-		console.error('[SideX Terminal] Failed to load Tauri APIs:', e);
+		console.error('[Nyala Terminal] Failed to load Tauri APIs:', e);
 		return false;
 	}
 }
@@ -186,7 +186,7 @@ class TauriPty extends Disposable implements ITerminalChildProcess {
 
 			return undefined;
 		} catch (e: any) {
-			console.error('[SideX Terminal] Failed to spawn:', e);
+			console.error('[Nyala Terminal] Failed to spawn:', e);
 			return { message: e?.message || 'Failed to spawn terminal' };
 		}
 	}

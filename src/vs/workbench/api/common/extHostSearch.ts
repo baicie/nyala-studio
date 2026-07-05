@@ -86,7 +86,7 @@ export class ExtHostSearch implements IExtHostSearch {
 		}
 		set.add(scheme);
 		this._logService.trace(
-			`[SideX] extHostSearch: ignoring ${kind} provider for scheme '${scheme}' (search routed through Rust)`
+			`[Nyala] extHostSearch: ignoring ${kind} provider for scheme '${scheme}' (search routed through Rust)`
 		);
 		return toDisposable(() => set.delete(scheme));
 	}

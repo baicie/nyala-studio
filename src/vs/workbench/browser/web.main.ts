@@ -614,20 +614,20 @@ export class BrowserMain extends Disposable {
 		if (isTauri) {
 			const userDataProvider = new TauriUserDataProvider();
 			fileService.registerProvider(Schemas.vscodeUserData, userDataProvider);
-			logService.info('[SideX] Registered TauriUserDataProvider for vscode-userdata:// scheme');
+			logService.info('[Nyala] Registered TauriUserDataProvider for vscode-userdata:// scheme');
 
 			const fileProvider = new TauriFileSystemProvider();
 			fileService.registerProvider(Schemas.file, fileProvider);
-			logService.info('[SideX] Registered TauriFileSystemProvider for file:// scheme');
+			logService.info('[Nyala] Registered TauriFileSystemProvider for file:// scheme');
 
 			const vscodeFileProvider = new TauriFileSystemProvider();
 			fileService.registerProvider(Schemas.vscodeFileResource, vscodeFileProvider);
-			logService.info('[SideX] Registered TauriFileSystemProvider for vscode-file:// scheme');
+			logService.info('[Nyala] Registered TauriFileSystemProvider for vscode-file:// scheme');
 		} else {
 			const userDataProvider = new InMemoryFileSystemProvider();
 			fileService.registerProvider(Schemas.vscodeUserData, userDataProvider);
 			this.registerDeveloperActions(userDataProvider);
-			logService.warn('[SideX] Tauri backend not detected — user-data is in-memory only');
+			logService.warn('[Nyala] Tauri backend not detected — user-data is in-memory only');
 		}
 
 		fileService.registerProvider(Schemas.tmp, new InMemoryFileSystemProvider());
@@ -779,7 +779,7 @@ export class BrowserMain extends Disposable {
 			workspace = this.configuration.workspaceProvider.workspace;
 		}
 
-		console.log('[SideX] resolveWorkspace:', workspace, 'isFolderToOpen:', workspace && isFolderToOpen(workspace));
+		console.log('[Nyala] resolveWorkspace:', workspace, 'isFolderToOpen:', workspace && isFolderToOpen(workspace));
 
 		// Multi-root workspace
 		if (workspace && isWorkspaceToOpen(workspace)) {
@@ -789,12 +789,12 @@ export class BrowserMain extends Disposable {
 		// Single-folder workspace
 		if (workspace && isFolderToOpen(workspace)) {
 			const id = getSingleFolderWorkspaceIdentifier(workspace.folderUri);
-			console.log('[SideX] Resolved single-folder workspace:', id);
+			console.log('[Nyala] Resolved single-folder workspace:', id);
 			return id;
 		}
 
 		// Empty window workspace
-		console.log('[SideX] No workspace resolved, using empty window');
+		console.log('[Nyala] No workspace resolved, using empty window');
 		return UNKNOWN_EMPTY_WINDOW_WORKSPACE;
 	}
 }

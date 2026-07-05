@@ -40,7 +40,7 @@ export class SideXSearchService {
 				})) || []
 			);
 		} catch (e) {
-			console.warn('[SideX] search failed:', e);
+			console.warn('[Nyala] search failed:', e);
 			return [];
 		}
 	}

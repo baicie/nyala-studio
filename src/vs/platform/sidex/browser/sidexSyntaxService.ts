@@ -61,7 +61,7 @@ export class SideXSyntaxBrowserService {
 				return languages;
 			}
 		} catch (e) {
-			console.warn('[SideX] syntax_get_languages failed:', e);
+			console.warn('[Nyala] syntax_get_languages failed:', e);
 		}
 		return [];
 	}
@@ -91,7 +91,7 @@ export class SideXSyntaxBrowserService {
 		try {
 			return (await invoke<SyntaxToken[]>('syntax_tokenize', { language, source })) ?? [];
 		} catch (e) {
-			console.warn('[SideX] syntax_tokenize failed:', e);
+			console.warn('[Nyala] syntax_tokenize failed:', e);
 			return [];
 		}
 	}

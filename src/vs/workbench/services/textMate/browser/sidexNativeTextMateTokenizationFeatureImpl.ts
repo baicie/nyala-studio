@@ -410,7 +410,7 @@ export class SidexTextMateTokenizationFeature extends Disposable implements ITex
 				injectionScopeNames: def.injectTo
 			});
 		} catch (err) {
-			this._logService.error(`[SideX-TextMate] Failed to load grammar for ${languageId} (${scopeName}):`, err);
+			this._logService.error(`[Nyala-TextMate] Failed to load grammar for ${languageId} (${scopeName}):`, err);
 			return null;
 		}
 
@@ -478,7 +478,7 @@ export class SidexTextMateTokenizationFeature extends Disposable implements ITex
 		getNativeTextMate()
 			.updateTheme(nativeSettings, colorMapArg)
 			.catch(err => {
-				this._logService.error('[SideX-TextMate] Failed to update theme:', err);
+				this._logService.error('[Nyala-TextMate] Failed to update theme:', err);
 			});
 	}
 

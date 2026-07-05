@@ -28,7 +28,7 @@ try {
 		sheet.textContent = iconsSS.getCSS();
 	});
 } catch (e) {
-	console.warn('[SideX] Icon stylesheet fallback failed (non-fatal):', e);
+	console.warn('[Nyala] Icon stylesheet fallback failed (non-fatal):', e);
 }
 
 registerThemingParticipant((theme, collector) => {

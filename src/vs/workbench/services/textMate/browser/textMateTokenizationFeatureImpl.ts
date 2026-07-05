@@ -119,10 +119,10 @@ export class TextMateTokenizationFeature extends Disposable implements ITextMate
 		this._styleElement = domStylesheets.createStyleSheet();
 		this._styleElement.className = 'vscode-tokens-styles';
 
-		this._logService.info('[SideX-TextMate] TextMateTokenizationFeature constructed');
+		this._logService.info('[Nyala-TextMate] TextMateTokenizationFeature constructed');
 		grammarsExtPoint.setHandler(extensions => {
 			this._logService.info(
-				`[SideX-TextMate] grammarsExtPoint delivered ${extensions.length} extension(s) with grammars`
+				`[Nyala-TextMate] grammarsExtPoint delivered ${extensions.length} extension(s) with grammars`
 			);
 			this._handleGrammarsExtPoint(extensions);
 		});

@@ -48,7 +48,7 @@ export class SqlResultView extends ViewPane {
 	private readonly renderDisposables = this._register(new DisposableStore());
 
 	private container!: HTMLElement;
-	private toolbar!: HTMLElement;
+	private toolbarElement!: HTMLElement;
 	private summaryElement!: HTMLElement;
 	private contentElement!: HTMLElement;
 	private statusElement!: HTMLElement;
@@ -95,32 +95,32 @@ export class SqlResultView extends ViewPane {
 
 	protected override renderBody(container: HTMLElement): void {
 		this.container = append(container, $('.sql-result-view'));
-		this.toolbar = append(this.container, $('.sql-result-toolbar'));
+		this.toolbarElement = append(this.container, $('.sql-result-toolbar'));
 
-		this.summaryElement = append(this.toolbar, $('span.sql-result-summary'));
+		this.summaryElement = append(this.toolbarElement, $('span.sql-result-summary'));
 
 		this.copyCellButton = append(
-			this.toolbar,
+			this.toolbarElement,
 			$('button.sql-result-button', { type: 'button', title: 'Copy selected cell' }, 'Copy Cell')
 		) as HTMLButtonElement;
 
 		this.copyRowButton = append(
-			this.toolbar,
+			this.toolbarElement,
 			$('button.sql-result-button', { type: 'button', title: 'Copy selected row as TSV' }, 'Copy Row')
 		) as HTMLButtonElement;
 
 		this.copyCsvButton = append(
-			this.toolbar,
+			this.toolbarElement,
 			$('button.sql-result-button', { type: 'button', title: 'Copy all rows as CSV' }, 'Copy CSV')
 		) as HTMLButtonElement;
 
 		this.copyTsvButton = append(
-			this.toolbar,
+			this.toolbarElement,
 			$('button.sql-result-button', { type: 'button', title: 'Copy all rows as TSV' }, 'Copy TSV')
 		) as HTMLButtonElement;
 
 		this.clearButton = append(
-			this.toolbar,
+			this.toolbarElement,
 			$('button.sql-result-button', { type: 'button', title: 'Clear result' }, 'Clear')
 		) as HTMLButtonElement;
 

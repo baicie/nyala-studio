@@ -749,19 +749,19 @@ export class SqlConnectionsView extends ViewPane {
 		row.classList.add(`type-${node.type}`);
 
 		const hasChildren = Boolean(node.children?.length);
-		const isExpanded = this.isExpanded(node);
+		const isNodeExpanded = this.isNodeExpanded(node);
 
 		const twisty = append(
 			row,
 			$('button.sql-connection-node-twisty', {
 				type: 'button',
 				tabIndex: hasChildren ? 0 : -1,
-				'aria-label': isExpanded ? 'Collapse' : 'Expand',
-				'aria-expanded': hasChildren ? String(isExpanded) : undefined
+				'aria-label': isNodeExpanded ? 'Collapse' : 'Expand',
+				'aria-expanded': hasChildren ? String(isNodeExpanded) : undefined
 			})
 		) as HTMLButtonElement;
 
-		twisty.textContent = hasChildren ? (isExpanded ? '\u25be' : '\u25b8') : '';
+		twisty.textContent = hasChildren ? (isNodeExpanded ? '\u25be' : '\u25b8') : '';
 
 		if (hasChildren) {
 			this.treeRenderDisposables.add(
@@ -786,7 +786,7 @@ export class SqlConnectionsView extends ViewPane {
 
 		this.renderNodeActions(row, node);
 
-		if (hasChildren && isExpanded) {
+		if (hasChildren && isNodeExpanded) {
 			const children = append(wrapper, $('.sql-connection-node-children', { role: 'group' }));
 			for (const child of node.children!) {
 				children.appendChild(this.renderNode(child, depth + 1));
@@ -1118,7 +1118,7 @@ export class SqlConnectionsView extends ViewPane {
 		this.renderTree();
 	}
 
-	private isExpanded(node: SqlConnectionTreeNode): boolean {
+	private isNodeExpanded(node: SqlConnectionTreeNode): boolean {
 		return !this.collapsedNodes.has(node.id);
 	}
 

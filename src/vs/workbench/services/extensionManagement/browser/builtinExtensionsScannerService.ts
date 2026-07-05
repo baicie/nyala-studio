@@ -59,7 +59,7 @@ export class BuiltinExtensionsScannerService implements IBuiltinExtensionsScanne
 
 			const builtinExtensionsServiceUrl = FileAccess.asBrowserUri(builtinExtensionsPath);
 			this.logService.info(
-				`[SideX-Builtin] builtinExtensionsServiceUrl = ${builtinExtensionsServiceUrl?.toString?.()}`
+				`[Nyala-Builtin] builtinExtensionsServiceUrl = ${builtinExtensionsServiceUrl?.toString?.()}`
 			);
 			if (builtinExtensionsServiceUrl) {
 				let bundledExtensions: IBundledExtension[] = [];
@@ -69,7 +69,7 @@ export class BuiltinExtensionsScannerService implements IBuiltinExtensionsScanne
 					bundledExtensions = (globalThis as any)._VSCODE_BUILTIN_EXTENSIONS;
 					delete (globalThis as any)._VSCODE_BUILTIN_EXTENSIONS;
 					this.logService.info(
-						`[SideX-Builtin] loaded ${bundledExtensions.length} extensions from _VSCODE_BUILTIN_EXTENSIONS`
+						`[Nyala-Builtin] loaded ${bundledExtensions.length} extensions from _VSCODE_BUILTIN_EXTENSIONS`
 					);
 				} else {
 					// Fallback: check for DOM meta element
@@ -79,12 +79,12 @@ export class BuiltinExtensionsScannerService implements IBuiltinExtensionsScanne
 						? builtinExtensionsElement.getAttribute('data-settings')
 						: undefined;
 					this.logService.info(
-						`[SideX-Builtin] DOM meta element present? ${!!builtinExtensionsElement} data-settings length? ${builtinExtensionsElementAttribute?.length ?? 0}`
+						`[Nyala-Builtin] DOM meta element present? ${!!builtinExtensionsElement} data-settings length? ${builtinExtensionsElementAttribute?.length ?? 0}`
 					);
 					if (builtinExtensionsElementAttribute) {
 						try {
 							bundledExtensions = JSON.parse(builtinExtensionsElementAttribute);
-							this.logService.info(`[SideX-Builtin] parsed ${bundledExtensions.length} extensions from DOM`);
+							this.logService.info(`[Nyala-Builtin] parsed ${bundledExtensions.length} extensions from DOM`);
 						} catch (_error) {
 							/* ignore error*/
 						}
