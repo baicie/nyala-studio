@@ -173,7 +173,7 @@ pnpm run test
 
 `pnpm run test` is a chain that runs the branding guard, the runtime
 status consistency check, the Rust `cargo test --lib` suite (currently
-~152 tests), and every per-subsystem frontend suite
+~157 tests), and every per-subsystem frontend suite
 (`test:sql-services`, `test:sql-domain`, `test:sql-connections`,
 `test:sql-editor`, `test:sql-result`, `test:sql-history`,
 `test:sql-product`, `test:sql-advanced`).
@@ -192,10 +192,12 @@ pnpm run test:mysql-integration
 ```
 
 The full Phase 08 acceptance checklist lives in
-[`docs/sql-mvp-phases/phase-08-mvp-packaging.md`](./docs/sql-mvp-phases/phase-08-mvp-packaging.md)
-and is **not** considered met until the welcome view, the MySQL
-Preview validation UI, and this Release Readiness section are all
-green together.
+[`docs/sql-mvp-phases/phase-08-mvp-packaging.md`](./docs/sql-mvp-phases/phase-08-mvp-packaging.md).
+The P0 deliverable (demo seed + MySQL Preview validation + Welcome view
+model + Release Readiness doc) is shipped at commit `34128dc5`; the
+remaining items are the `ViewPane` subclass that renders the welcome
+tiles and a true transient-open API for the MySQL Preview profile, both
+covered in `docs/sql-mvp-phases/README.md` Phase 08 footer.
 
 ## Development
 
