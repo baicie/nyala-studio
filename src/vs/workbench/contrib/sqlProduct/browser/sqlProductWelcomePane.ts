@@ -36,12 +36,15 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
 import { IViewDescriptorService } from '../../../common/views.js';
+import { SQL_PRODUCT_WELCOME_VIEW_ID } from '../common/sqlProduct.js';
 import {
 	mapWelcomeActionToCommandId
 } from './sqlProductWelcomeRouting.js';
 import { SqlProductWelcomeView, WelcomeAction } from './sqlProductWelcomeView.js';
 
-export const SQL_PRODUCT_WELCOME_VIEW_ID = 'sqlStudio.product.welcome';
+// Re-export for other browser-side contributors; the canonical
+// definition lives in `common/sqlProduct.ts`.
+export { SQL_PRODUCT_WELCOME_VIEW_ID };
 
 const WELCOME_PRIMARY_LABEL = localize('sqlProductWelcomePrimary', 'Open the demo database');
 const WELCOME_PRIMARY_HINT = localize(

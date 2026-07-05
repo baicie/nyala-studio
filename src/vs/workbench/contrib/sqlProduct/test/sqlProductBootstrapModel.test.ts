@@ -95,14 +95,54 @@ test('createSqlProductStartupPlan can open welcome query through preferences', (
 		}
 	});
 
-	assert.equal(plan.length, 1);
-	assert.equal(plan[0].kind, SqlProductStartupCommandKind.NewQuery);
-	assert.equal(plan[0].commandId, SQL_NEW_QUERY_COMMAND_ID);
-	assert.deepEqual(plan[0].args, [
+	// Phase 08 follow-up: when welcome-query is on, both the welcome
+	// pane focus and the new-query command fire so the user gets the
+	// guide in the panel plus a starter query in the editor.
+	assert.equal(plan.length, 2);
+	assert.equal(plan[0].kind, SqlProductStartupCommandKind.FocusWelcome);
+	assert.equal(plan[0].commandId, 'sqlStudio.product.welcome.focus');
+	assert.equal(plan[1].kind, SqlProductStartupCommandKind.NewQuery);
+	assert.equal(plan[1].commandId, SQL_NEW_QUERY_COMMAND_ID);
+	assert.deepEqual(plan[1].args, [
 		{
 			initialSql: 'SELECT 42;'
 		}
 	]);
+});
+
+test('createSqlProductStartupPlan focuses welcome even without layout restore', () => {
+	// Welcome must work independently of `restoreSqlLayoutOnStartup`,
+	// otherwise first-time users with layout-restore off would never
+	// see the welcome pane.
+	const plan = createSqlProductStartupPlan({
+		alreadyBootstrapped: false,
+		preferences: {
+			...DEFAULT_SQL_PRODUCT_PREFERENCES,
+			restoreSqlLayoutOnStartup: false,
+			openWelcomeQueryOnFirstLaunch: true,
+			defaultQuery: 'SELECT 1;'
+		}
+	});
+
+	assert.ok(
+		plan.some(cmd => cmd.kind === SqlProductStartupCommandKind.FocusWelcome),
+		'welcome focus must fire when openWelcomeQueryOnFirstLaunch is true'
+	);
+});
+
+test('createSqlProductStartupPlan omits welcome when preference is off', () => {
+	const plan = createSqlProductStartupPlan({
+		alreadyBootstrapped: false,
+		preferences: {
+			...DEFAULT_SQL_PRODUCT_PREFERENCES,
+			openWelcomeQueryOnFirstLaunch: false
+		}
+	});
+
+	assert.ok(
+		!plan.some(cmd => cmd.kind === SqlProductStartupCommandKind.FocusWelcome),
+		'welcome focus must not fire when openWelcomeQueryOnFirstLaunch is false'
+	);
 });
 
 test('dedupeStartupCommands removes duplicate command args pairs', () => {

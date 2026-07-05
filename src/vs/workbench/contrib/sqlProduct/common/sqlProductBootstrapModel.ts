@@ -5,12 +5,14 @@
 import { SQL_CONNECTIONS_FOCUS_COMMAND_ID } from '../../sqlConnections/common/sqlConnections.js';
 import { SQL_RESULT_OPEN_COMMAND_ID } from '../../sqlResult/common/sqlResult.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
+import { SQL_PRODUCT_WELCOME_VIEW_ID } from './sqlProduct.js';
 import { DEFAULT_SQL_PRODUCT_PREFERENCES, SqlProductPreferences } from './sqlProductPreferences.js';
 
 export const enum SqlProductStartupCommandKind {
 	FocusConnections = 'focusConnections',
 	OpenResults = 'openResults',
-	NewQuery = 'newQuery'
+	NewQuery = 'newQuery',
+	FocusWelcome = 'focusWelcome'
 }
 
 export interface SqlProductStartupCommand {
@@ -54,6 +56,16 @@ export function createSqlProductStartupPlan(options: SqlProductBootstrapOptions)
 	}
 
 	if (preferences.openWelcomeQueryOnFirstLaunch) {
+		// Welcome pane and a fresh SQL query both fire on first launch:
+		// the query lands an editor tab so the user has somewhere to
+		// type, the welcome pane (also gated on this same preference,
+		// see ISqlProductPreferencesService#openWelcomeQueryOnFirstLaunch)
+		// surfaces the four starting points in the panel.
+		commands.push({
+			kind: SqlProductStartupCommandKind.FocusWelcome,
+			commandId: `${SQL_PRODUCT_WELCOME_VIEW_ID}.focus`
+		});
+
 		commands.push({
 			kind: SqlProductStartupCommandKind.NewQuery,
 			commandId: SQL_NEW_QUERY_COMMAND_ID,
