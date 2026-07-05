@@ -22,6 +22,7 @@ import {
 	SQL_PRODUCT_PREFERENCES_VIEW_ID,
 	SqlProductPreferencesView
 } from './sqlProductPreferencesView.js';
+import { SqlProductWelcomeView, WELCOME_ACTION_IDS } from './sqlProductWelcomeView.js';
 import './sqlProductActions.js';
 import './media/sqlProductPreferences.css';
 
@@ -49,3 +50,9 @@ Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).regi
 	SqlProductBootstrapContribution,
 	WorkbenchPhase.AfterRestored
 );
+
+// Phase 08 §2.6 welcome view model. The actual DOM rendering is a
+// future `ViewPane` subclass; this re-export keeps the class
+// reachable from the contribution root so future view code can
+// `import { SqlProductWelcomeView } from '../sqlProduct.contribution.js'`.
+export { SqlProductWelcomeView, WELCOME_ACTION_IDS };
