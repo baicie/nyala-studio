@@ -22,9 +22,11 @@ import {
 	SQL_PRODUCT_PREFERENCES_VIEW_ID,
 	SqlProductPreferencesView
 } from './sqlProductPreferencesView.js';
+import { SqlProductWelcomePane, SQL_PRODUCT_WELCOME_VIEW_ID } from './sqlProductWelcomePane.js';
 import { SqlProductWelcomeView, WELCOME_ACTION_IDS } from './sqlProductWelcomeView.js';
 import './sqlProductActions.js';
 import './media/sqlProductPreferences.css';
+import './media/sqlProductWelcome.css';
 
 registerSingleton(ISqlProductPreferencesService, SqlProductPreferencesService, InstantiationType.Delayed);
 
@@ -40,6 +42,17 @@ Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews(
 			focusCommand: {
 				id: `${SQL_PRODUCT_PREFERENCES_VIEW_ID}.focus`
 			}
+		},
+		{
+			id: SQL_PRODUCT_WELCOME_VIEW_ID,
+			name: localize2('sqlProductWelcomeView', 'Welcome'),
+			ctorDescriptor: new SyncDescriptor(SqlProductWelcomePane),
+			order: 1,
+			canMoveView: false,
+			canToggleVisibility: true,
+			focusCommand: {
+				id: `${SQL_PRODUCT_WELCOME_VIEW_ID}.focus`
+			}
 		}
 	],
 	SQL_RESULT_VIEW_CONTAINER
@@ -51,8 +64,8 @@ Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).regi
 	WorkbenchPhase.AfterRestored
 );
 
-// Phase 08 §2.6 welcome view model. The actual DOM rendering is a
-// future `ViewPane` subclass; this re-export keeps the class
-// reachable from the contribution root so future view code can
-// `import { SqlProductWelcomeView } from '../sqlProduct.contribution.js'`.
-export { SqlProductWelcomeView, WELCOME_ACTION_IDS };
+// Phase 08 §2.6 welcome view model + ViewPane. The pane is the
+// renderer for the `SqlProductWelcomeView` model; both are
+// re-exported from the contribution root so other contributions
+// can pull them without reaching into `browser/`.
+export { SqlProductWelcomeView, WELCOME_ACTION_IDS, SqlProductWelcomePane, SQL_PRODUCT_WELCOME_VIEW_ID };

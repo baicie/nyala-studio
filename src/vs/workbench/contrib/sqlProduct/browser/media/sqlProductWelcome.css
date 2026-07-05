@@ -1,0 +1,76 @@
+/*---------------------------------------------------------------------------------------------
+ * SQL Studio Next - Welcome pane styles (Phase 08 §2.6).
+ *--------------------------------------------------------------------------------------------*/
+
+.sql-product-welcome-view {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 16px 18px;
+	overflow-y: auto;
+}
+
+.sql-product-welcome-title {
+	margin: 0;
+	font-size: 16px;
+	font-weight: 600;
+}
+
+.sql-product-welcome-lede {
+	margin: 0;
+	color: var(--vscode-descriptionForeground);
+	font-size: 13px;
+}
+
+.sql-product-welcome-actions {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 4px;
+}
+
+.sql-product-welcome-action {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
+	padding: 10px 14px;
+	text-align: left;
+	border: 1px solid var(--vscode-editorWidget-border);
+	border-radius: 4px;
+	background: var(--vscode-editorWidget-background);
+	color: inherit;
+	cursor: pointer;
+	font: inherit;
+	transition: border-color 120ms ease;
+}
+
+.sql-product-welcome-action:hover,
+.sql-product-welcome-action:focus-visible {
+	border-color: var(--vscode-focusBorder);
+	outline: none;
+}
+
+.sql-product-welcome-action--primary {
+	border-color: var(--vscode-focusBorder);
+	background: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+}
+
+.sql-product-welcome-action--primary:hover,
+.sql-product-welcome-action--primary:focus-visible {
+	background: var(--vscode-button-hoverBackground);
+}
+
+.sql-product-welcome-action-label {
+	font-weight: 500;
+}
+
+.sql-product-welcome-action--primary .sql-product-welcome-action-label {
+	font-weight: 600;
+}
+
+.sql-product-welcome-action-hint {
+	font-size: 12px;
+	opacity: 0.85;
+}
