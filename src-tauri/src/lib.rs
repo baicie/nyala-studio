@@ -679,6 +679,8 @@ pub fn run() {
             commands::sql_cancel_query,
             commands::sql_list_driver_runtime_status,
             commands::sql_assert_driver_runtime_status,
+            // Phase 08 - MVP Packaging
+            commands::sql_bootstrap_demo,
             // Phase 01 - Connection MVP
             commands::sql_test_connection_v2,
             commands::sql_open_connection_v2,

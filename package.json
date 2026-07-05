@@ -26,6 +26,7 @@
     "test:sql-runtime-status": "node scripts/verify-sql-runtime-status.mjs",
     "test:sql-connection-mvp": "node scripts/verify-sql-connection-mvp.mjs",
 "test:sql-metadata-explorer": "node scripts/verify-sql-metadata-explorer.mjs",
+    "seed:demo": "node --no-warnings scripts/seed-demo-db.mjs",
     "test:rust": "cd src-tauri && cargo test --lib",
     "test:sql-services": "node --test --import tsx src/vs/workbench/services/sql/test/sqlServices.test.ts src/vs/workbench/services/sql/test/sqlConnectionProfile.test.ts src/vs/workbench/services/sql/test/sqlConnectionProfileV2.test.ts src/vs/workbench/services/sql/test/sqlConnectionServiceV2.test.ts src/vs/workbench/services/sql/test/sqlAiService.test.ts src/vs/workbench/services/sql/test/sqlDriverCatalog.test.ts",
     "test:sql-domain": "node --test --import tsx src/vs/workbench/services/sql/test/sqlDialect.test.ts src/vs/workbench/services/sql/test/sqlDrivers.test.ts",
