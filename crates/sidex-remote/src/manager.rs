@@ -132,8 +132,8 @@ impl RemoteManager {
     // -- WSL ----------------------------------------------------------------
 
     /// Connect to a WSL distribution.
-    pub fn connect_wsl(&mut self, distro: &str) -> Result<ConnectionId> {
-        let transport = WslTransport::connect(distro)?;
+    pub async fn connect_wsl(&mut self, distro: &str) -> Result<ConnectionId> {
+        let transport = WslTransport::connect(distro).await?;
         let label = format!("WSL: {distro}");
         Ok(self.insert(Box::new(transport), ConnectionKind::Wsl, label))
     }
