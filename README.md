@@ -122,6 +122,81 @@ The short-term roadmap is now aligned with the actual runtime status:
 - Keep the default product experience SQL-first.
 - Run the full check suite before release.
 
+> Per-phase design contracts and the current verified state live in
+> [`docs/sql-mvp-phases/README.md`](./docs/sql-mvp-phases/README.md).
+> Always cross-check that table before claiming a phase is met.
+
+## SQLite Demo Flow
+
+Nyala Studio ships with a built-in demo SQLite database that lets a new
+user reach a runnable query in under a minute.
+
+- On first launch (or on demand), the workbench calls the
+  `sql_bootstrap_demo` Tauri command, which seeds
+  `<data_dir>/nyala-studio/demo.db` with a `users` table (5 rows) and an
+  `orders` table (5 rows joined to users), then registers a
+  `Demo (SQLite)` connection profile (id `demo-sqlite`) and opens it.
+- The seeder is idempotent: subsequent launches reuse the existing file
+  rather than duplicating rows.
+- Override the data directory for tests or sandboxed runs:
+
+  ```bash
+  export NYALA_DATA_DIR=/tmp/nyala-test
+  pnpm run seed:demo       # dev / CI helper that mirrors sql_bootstrap_demo
+  ```
+
+  On Windows (PowerShell):
+
+  ```powershell
+  $env:NYALA_DATA_DIR = 'D:\tmp\nyala-test'
+  pnpm run seed:demo
+  ```
+
+The full Rust implementation lives in
+[`src-tauri/src/commands/sql/demo_seed.rs`](./src-tauri/src/commands/sql/demo_seed.rs)
+and [`src-tauri/src/commands/sql/product.rs`](./src-tauri/src/commands/sql/product.rs).
+
+## Release Readiness
+
+Before publishing a build, every check below must pass locally. The
+GitHub Actions workflows under `.github/workflows/` enforce the same
+gates on `main` and on every pull request.
+
+```bash
+pnpm run lint
+pnpm run build
+pnpm run rust:fmt
+pnpm run rust:check
+pnpm run rust:clippy
+pnpm run test
+```
+
+`pnpm run test` is a chain that runs the branding guard, the runtime
+status consistency check, the Rust `cargo test --lib` suite (currently
+~152 tests), and every per-subsystem frontend suite
+(`test:sql-services`, `test:sql-domain`, `test:sql-connections`,
+`test:sql-editor`, `test:sql-result`, `test:sql-history`,
+`test:sql-product`, `test:sql-advanced`).
+
+Optional opt-in MySQL Preview validation. Only useful when you have a
+local MySQL on `127.0.0.1:3306` with the test database/credentials
+below — the test creates and drops a uniquely named table, but the
+test account still needs CREATE / DROP privileges.
+
+```bash
+export NYALA_TEST_MYSQL_HOST='127.0.0.1'
+export NYALA_TEST_MYSQL_DATABASE='nyala_test'
+export NYALA_TEST_MYSQL_USERNAME='root'
+export NYALA_TEST_MYSQL_PASSWORD='password'
+pnpm run test:mysql-integration
+```
+
+The full Phase 08 acceptance checklist lives in
+[`docs/sql-mvp-phases/phase-08-mvp-packaging.md`](./docs/sql-mvp-phases/phase-08-mvp-packaging.md)
+and is **not** considered met until the welcome view, the MySQL
+Preview validation UI, and this Release Readiness section are all
+green together.
+
 ## Development
 
 Install dependencies:
