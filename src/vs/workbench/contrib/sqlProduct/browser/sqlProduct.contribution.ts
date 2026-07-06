@@ -24,6 +24,7 @@ import {
 } from './sqlProductPreferencesView.js';
 import { SqlProductWelcomePane, SQL_PRODUCT_WELCOME_VIEW_ID } from './sqlProductWelcomePane.js';
 import { SqlProductWelcomeView, WELCOME_ACTION_IDS } from './sqlProductWelcomeView.js';
+import { SqlWorkbenchSplashContribution } from './sqlWorkbenchSplash.js';
 import './sqlProductActions.js';
 import './media/sqlProductPreferences.css';
 import './media/sqlProductWelcome.css';
@@ -61,6 +62,16 @@ Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews(
 Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).registerWorkbenchContribution2(
 	'workbench.contrib.sqlProductBootstrap',
 	SqlProductBootstrapContribution,
+	WorkbenchPhase.AfterRestored
+);
+
+// Splash dismissal: registered at `AfterRestored` so the workbench has
+// already laid out the editor area and there is no perceptible jump.
+// `SqlWorkbenchSplashContribution` listens for the lifecycle `Restored`
+// phase from inside and also runs a 12-second safety timer.
+Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).registerWorkbenchContribution2(
+	SqlWorkbenchSplashContribution.ID,
+	SqlWorkbenchSplashContribution,
 	WorkbenchPhase.AfterRestored
 );
 
