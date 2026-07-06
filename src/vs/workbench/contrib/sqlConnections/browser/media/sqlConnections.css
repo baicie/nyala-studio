@@ -3,6 +3,7 @@
 }
 
 .sql-connections-view {
+	container-type: inline-size;
 	box-sizing: border-box;
 	height: 100%;
 	display: flex;
@@ -38,8 +39,41 @@
 	outline: none;
 }
 
+/* Sized container that hosts a VS Code `SelectBox` widget so the
+ * control is full-width inside the connection form. The inner
+ * `.monaco-select-box` element renders the actual styled dropdown
+ * and picks up its own borders / hover affordances. */
+.sql-connections-selectbox {
+	min-width: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	width: 100%;
+	height: 26px;
+}
+
+.sql-connections-selectbox .monaco-select-box {
+	height: 26px;
+}
+
 .sql-connections-input:focus {
 	border-color: var(--vscode-focusBorder);
+}
+
+.sql-connections-path-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.sql-connections-path-row .sql-connections-input {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.sql-connections-browse-button {
+	flex: 0 0 auto;
 }
 
 .sql-connections-options {
@@ -57,16 +91,19 @@
 
 .sql-connections-actions {
 	display: flex;
+	flex-wrap: wrap;
 	gap: 6px;
 }
 
 .sql-connections-button {
+	box-sizing: border-box;
 	height: 26px;
 	padding: 0 10px;
 	border: 1px solid var(--vscode-button-border);
 	color: var(--vscode-button-secondaryForeground);
 	background: var(--vscode-button-secondaryBackground);
 	cursor: pointer;
+	white-space: nowrap;
 }
 
 .sql-connections-button.primary {
@@ -83,11 +120,27 @@
 	font-size: 11px;
 	opacity: 0.85;
 	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }
 
 .sql-connections-message.error {
 	color: var(--vscode-errorForeground);
 	opacity: 1;
+}
+
+.sql-connection-driver-preview {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.sql-connection-driver-preview-title {
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.sql-connection-driver-preview-message,
+.sql-connection-driver-preview-note {
+	overflow-wrap: anywhere;
 }
 
 .sql-connections-tree {
