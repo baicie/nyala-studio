@@ -3,16 +3,20 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { isStandalone } from '../../base/browser/browser.js';
+import { isStandalone, setZoomFactor, setZoomLevel } from '../../base/browser/browser.js';
+import { mainWindow } from '../../base/browser/window.js';
 import { isLinux, isMacintosh, isNative, isWeb, isWindows } from '../../base/common/platform.js';
 import { localize } from '../../nls.js';
+import { IConfigurationService } from '../../platform/configuration/common/configuration.js';
 import {
 	Extensions as ConfigurationExtensions,
 	ConfigurationScope,
 	IConfigurationRegistry
 } from '../../platform/configuration/common/configurationRegistry.js';
 import product from '../../platform/product/common/product.js';
+import { zoomLevelToZoomFactor } from '../../platform/window/common/window.js';
 import { Registry } from '../../platform/registry/common/platform.js';
+import { isTauri } from '../../sidex-bridge.js';
 import {
 	ConfigurationKeyValuePairs,
 	ConfigurationMigrationWorkbenchContribution,
@@ -24,7 +28,7 @@ import {
 	windowConfigurationNodeBase,
 	workbenchConfigurationNodeBase
 } from '../common/configuration.js';
-import { WorkbenchPhase, registerWorkbenchContribution2 } from '../common/contributions.js';
+import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../common/contributions.js';
 import { NotificationsPosition, NotificationsSettings } from '../common/notifications.js';
 import { CustomEditorLabelService } from '../services/editor/common/customEditorLabelService.js';
 import {
@@ -34,8 +38,71 @@ import {
 	LayoutSettings
 } from '../services/layout/browser/layoutService.js';
 import { defaultWindowTitle, defaultWindowTitleSeparator } from './parts/titlebar/windowTitle.js';
+import { WINDOW_ZOOM_LEVEL_SETTING, normalizeWindowZoomLevel } from './windowZoomLevel.js';
 
 const registry = Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration);
+
+class WindowZoomLevelContribution implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.windowZoomLevel';
+
+	private tauriWebview: { setZoom(scaleFactor: number): Promise<void> } | null = null;
+	private tauriWebviewLoad: Promise<{ setZoom(scaleFactor: number): Promise<void> } | null> | null = null;
+
+	constructor(@IConfigurationService private readonly configurationService: IConfigurationService) {
+		this.applyZoomLevel();
+
+		this.configurationService.onDidChangeConfiguration(event => {
+			if (event.affectsConfiguration(WINDOW_ZOOM_LEVEL_SETTING)) {
+				this.applyZoomLevel();
+			}
+		});
+	}
+
+	private async loadTauriWebview(): Promise<{ setZoom(scaleFactor: number): Promise<void> } | null> {
+		if (!isTauri()) {
+			return null;
+		}
+		if (this.tauriWebview) {
+			return this.tauriWebview;
+		}
+		if (this.tauriWebviewLoad) {
+			return this.tauriWebviewLoad;
+		}
+
+		this.tauriWebviewLoad = (async () => {
+			try {
+				const mod = await import('@tauri-apps/api/webview');
+				const webview = mod.getCurrentWebview();
+				this.tauriWebview = webview;
+				return webview;
+			} catch (error) {
+				console.warn('[Nyala] Failed to load Tauri webview zoom API:', error);
+				return null;
+			}
+		})();
+
+		return this.tauriWebviewLoad;
+	}
+
+	private applyZoomLevel(): void {
+		const zoomLevel = normalizeWindowZoomLevel(this.configurationService.getValue<number>(WINDOW_ZOOM_LEVEL_SETTING));
+		setZoomLevel(zoomLevel, mainWindow);
+		const factor = zoomLevelToZoomFactor(zoomLevel);
+		setZoomFactor(factor, mainWindow);
+
+		this.applyTauriZoom(factor).catch(error => {
+			console.warn('[Nyala] Tauri setZoom failed:', error);
+		});
+	}
+
+	private async applyTauriZoom(factor: number): Promise<void> {
+		const webview = await this.loadTauriWebview();
+		if (!webview) {
+			return;
+		}
+		await webview.setZoom(factor);
+	}
+}
 
 // Configuration
 (function registerConfiguration(): void {
@@ -1411,6 +1478,15 @@ const registry = Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Con
 				default: defaultWindowTitleSeparator,
 				markdownDescription: localize('window.titleSeparator', 'Separator used by {0}.', '`#window.title#`')
 			},
+			'window.zoomLevel': {
+				type: 'number',
+				default: 0,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize(
+					'window.zoomLevel',
+					'Adjust the zoom level of the window. The original size is 0 and each increment above or below changes the zoom factor by 20%.'
+				)
+			},
 			[LayoutSettings.COMMAND_CENTER]: {
 				type: 'boolean',
 				default: true,
@@ -1582,6 +1658,11 @@ const registry = Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Con
 
 	// Dynamic Window Configuration
 	registerWorkbenchContribution2(DynamicWindowConfiguration.ID, DynamicWindowConfiguration, WorkbenchPhase.Eventually);
+	registerWorkbenchContribution2(
+		WindowZoomLevelContribution.ID,
+		WindowZoomLevelContribution,
+		WorkbenchPhase.AfterRestored
+	);
 
 	// Problems
 	registry.registerConfiguration({
