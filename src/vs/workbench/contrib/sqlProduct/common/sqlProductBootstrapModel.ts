@@ -5,10 +5,11 @@
 import { SQL_CONNECTIONS_FOCUS_COMMAND_ID } from '../../sqlConnections/common/sqlConnections.js';
 import { SQL_RESULT_OPEN_COMMAND_ID } from '../../sqlResult/common/sqlResult.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
-import { SQL_PRODUCT_WELCOME_VIEW_ID } from './sqlProduct.js';
+import { SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID, SQL_PRODUCT_WELCOME_VIEW_ID } from './sqlProduct.js';
 import { DEFAULT_SQL_PRODUCT_PREFERENCES, SqlProductPreferences } from './sqlProductPreferences.js';
 
 export const enum SqlProductStartupCommandKind {
+	BootstrapDemo = 'bootstrapDemo',
 	FocusConnections = 'focusConnections',
 	OpenResults = 'openResults',
 	NewQuery = 'newQuery',
@@ -42,6 +43,11 @@ export function createSqlProductStartupPlan(options: SqlProductBootstrapOptions)
 
 	const preferences = options.preferences ?? DEFAULT_SQL_PRODUCT_PREFERENCES;
 	const commands: SqlProductStartupCommand[] = [];
+
+	commands.push({
+		kind: SqlProductStartupCommandKind.BootstrapDemo,
+		commandId: SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID
+	});
 
 	if (preferences.restoreSqlLayoutOnStartup) {
 		commands.push({

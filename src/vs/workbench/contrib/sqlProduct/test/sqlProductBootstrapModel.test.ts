@@ -4,6 +4,7 @@ import test from 'node:test';
 import { SQL_CONNECTIONS_FOCUS_COMMAND_ID } from '../../sqlConnections/common/sqlConnections.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
 import { SQL_RESULT_OPEN_COMMAND_ID } from '../../sqlResult/common/sqlResult.js';
+import { SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID } from '../common/sqlProduct.js';
 import {
 	createSqlProductStartupPlan,
 	dedupeStartupCommands,
@@ -49,6 +50,7 @@ test('createSqlProductStartupPlan creates SQL layout plan from preferences', () 
 	assert.deepEqual(
 		plan.map(item => item.kind),
 		[
+			SqlProductStartupCommandKind.BootstrapDemo,
 			SqlProductStartupCommandKind.FocusConnections,
 			SqlProductStartupCommandKind.OpenResults
 		]
@@ -56,10 +58,7 @@ test('createSqlProductStartupPlan creates SQL layout plan from preferences', () 
 
 	assert.deepEqual(
 		plan.map(item => item.commandId),
-		[
-			SQL_CONNECTIONS_FOCUS_COMMAND_ID,
-			SQL_RESULT_OPEN_COMMAND_ID
-		]
+		[SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID, SQL_CONNECTIONS_FOCUS_COMMAND_ID, SQL_RESULT_OPEN_COMMAND_ID]
 	);
 });
 
@@ -81,7 +80,10 @@ test('createSqlProductStartupPlan can skip layout restore through preferences', 
 		}
 	});
 
-	assert.deepEqual(plan, []);
+	assert.deepEqual(
+		plan.map(item => item.kind),
+		[SqlProductStartupCommandKind.BootstrapDemo]
+	);
 });
 
 test('createSqlProductStartupPlan can open welcome query through preferences', () => {
@@ -98,12 +100,13 @@ test('createSqlProductStartupPlan can open welcome query through preferences', (
 	// Phase 08 follow-up: when welcome-query is on, both the welcome
 	// pane focus and the new-query command fire so the user gets the
 	// guide in the panel plus a starter query in the editor.
-	assert.equal(plan.length, 2);
-	assert.equal(plan[0].kind, SqlProductStartupCommandKind.FocusWelcome);
-	assert.equal(plan[0].commandId, 'sqlStudio.product.welcome.focus');
-	assert.equal(plan[1].kind, SqlProductStartupCommandKind.NewQuery);
-	assert.equal(plan[1].commandId, SQL_NEW_QUERY_COMMAND_ID);
-	assert.deepEqual(plan[1].args, [
+	assert.equal(plan.length, 3);
+	assert.equal(plan[0].kind, SqlProductStartupCommandKind.BootstrapDemo);
+	assert.equal(plan[1].kind, SqlProductStartupCommandKind.FocusWelcome);
+	assert.equal(plan[1].commandId, 'sqlStudio.product.welcome.focus');
+	assert.equal(plan[2].kind, SqlProductStartupCommandKind.NewQuery);
+	assert.equal(plan[2].commandId, SQL_NEW_QUERY_COMMAND_ID);
+	assert.deepEqual(plan[2].args, [
 		{
 			initialSql: 'SELECT 42;'
 		}
@@ -163,9 +166,6 @@ test('dedupeStartupCommands removes duplicate command args pairs', () => {
 
 	assert.deepEqual(
 		plan.map(item => item.commandId),
-		[
-			SQL_CONNECTIONS_FOCUS_COMMAND_ID,
-			SQL_RESULT_OPEN_COMMAND_ID
-		]
+		[SQL_CONNECTIONS_FOCUS_COMMAND_ID, SQL_RESULT_OPEN_COMMAND_ID]
 	);
 });

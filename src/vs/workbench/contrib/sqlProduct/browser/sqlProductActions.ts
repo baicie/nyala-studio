@@ -3,15 +3,18 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { localize2 } from '../../../../nls.js';
+import { isTauri } from '../../../../sidex-bridge.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
+import { TauriSqlCommandExecutor } from '../../../services/sql/browser/sqlCommandExecutor.js';
 import { SQL_CONNECTIONS_FOCUS_COMMAND_ID } from '../../sqlConnections/common/sqlConnections.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
 import { SQL_RESULT_OPEN_COMMAND_ID } from '../../sqlResult/common/sqlResult.js';
 import {
+	SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID,
 	SQL_PRODUCT_HOME_COMMAND_ID,
 	SQL_PRODUCT_NEW_QUERY_COMMAND_ID,
 	SQL_PRODUCT_OPEN_RESULTS_COMMAND_ID
@@ -23,6 +26,11 @@ export const SQL_PRODUCT_OPEN_PREFERENCES_COMMAND_ID = 'sqlStudio.product.openPr
 export const SQL_PRODUCT_RESET_PREFERENCES_COMMAND_ID = 'sqlStudio.product.resetPreferences';
 export const SQL_PRODUCT_TOGGLE_RESTORE_LAYOUT_COMMAND_ID = 'sqlStudio.product.toggleRestoreLayout';
 export const SQL_PRODUCT_TOGGLE_WELCOME_QUERY_COMMAND_ID = 'sqlStudio.product.toggleWelcomeQuery';
+
+interface DemoBootstrapResult {
+	readonly dbPath: string;
+	readonly reused: boolean;
+}
 
 class SqlProductHomeAction extends Action2 {
 	constructor() {
@@ -85,6 +93,43 @@ class SqlProductOpenResultsAction extends Action2 {
 		const commandService = accessor.get(ICommandService);
 
 		await commandService.executeCommand(SQL_RESULT_OPEN_COMMAND_ID);
+	}
+}
+
+class SqlProductBootstrapDemoAction extends Action2 {
+	constructor() {
+		super({
+			id: SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID,
+			title: localize2('sqlProductBootstrapDemo', 'Nyala: Open Demo Database'),
+			category: Categories.View,
+			f1: true,
+			menu: {
+				id: MenuId.CommandPalette
+			}
+		});
+	}
+
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		const commandService = accessor.get(ICommandService);
+		const notificationService = accessor.get(INotificationService);
+		const executor = new TauriSqlCommandExecutor();
+
+		if (!isTauri()) {
+			return;
+		}
+
+		try {
+			const result = await executor.execute<DemoBootstrapResult>('sql_bootstrap_demo');
+			await commandService.executeCommand(SQL_CONNECTIONS_FOCUS_COMMAND_ID);
+			notificationService.info(
+				result.reused
+					? `Demo SQLite connection opened: ${result.dbPath}`
+					: `Demo SQLite database created: ${result.dbPath}`
+			);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			notificationService.warn(`Demo SQLite connection was not opened: ${message}`);
+		}
 	}
 }
 
@@ -179,6 +224,7 @@ class SqlProductToggleWelcomeQueryAction extends Action2 {
 registerAction2(SqlProductHomeAction);
 registerAction2(SqlProductNewQueryAction);
 registerAction2(SqlProductOpenResultsAction);
+registerAction2(SqlProductBootstrapDemoAction);
 registerAction2(SqlProductOpenPreferencesAction);
 registerAction2(SqlProductResetPreferencesAction);
 registerAction2(SqlProductToggleRestoreLayoutAction);
