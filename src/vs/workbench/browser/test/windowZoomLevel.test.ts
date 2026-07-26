@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -8,6 +9,8 @@ import {
 	WINDOW_ZOOM_LEVEL_SETTING,
 	normalizeWindowZoomLevel
 } from '../windowZoomLevel.js';
+
+const workbenchContributionSource = readFileSync(new URL('../workbench.contribution.ts', import.meta.url), 'utf8');
 
 test('normalizeWindowZoomLevel keeps in-range integers', () => {
 	assert.equal(normalizeWindowZoomLevel(0), 0);
@@ -43,4 +46,14 @@ test('WINDOW_ZOOM_LEVEL_SETTING matches the registration in workbench.contributi
 	// Keep this in lockstep with the settings key registered in
 	// workbench.contribution.ts so settings panel reads the same key.
 	assert.equal(WINDOW_ZOOM_LEVEL_SETTING, 'window.zoomLevel');
+});
+
+test('WindowZoomLevelContribution owns its listener and uses the workbench log service', () => {
+	assert.match(
+		workbenchContributionSource,
+		/class WindowZoomLevelContribution extends Disposable implements IWorkbenchContribution/
+	);
+	assert.match(workbenchContributionSource, /this\._register\(\s*this\.configurationService\.onDidChangeConfiguration/);
+	assert.match(workbenchContributionSource, /@ILogService private readonly logService: ILogService/);
+	assert.match(workbenchContributionSource, /this\.logService\.warn\('\[Nyala\] Tauri setZoom failed:'/);
 });

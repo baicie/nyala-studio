@@ -17,6 +17,7 @@
 import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
 
 import { SqlRuntimeDriverId, SqlRuntimeStatus } from 'vs/workbench/services/sql/common/sqlDriverCatalog';
+import { SqlSslMode } from 'vs/workbench/services/sql/common/sqlTypes';
 
 export type ConnectionProfileDriver = SqlRuntimeDriverId;
 export type ConnectionProfileStatus = SqlRuntimeStatus;
@@ -30,6 +31,7 @@ export interface ConnectionProfile {
 	readonly port?: number;
 	readonly database?: string;
 	readonly username?: string;
+	readonly sslMode?: SqlSslMode;
 	readonly filePath?: string;
 	readonly rememberInMemory?: boolean;
 	readonly createdAtMs: number;

@@ -11,6 +11,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Emitter } from 'vs/base/common/event';
+import { Disposable, IDisposable } from 'vs/base/common/lifecycle';
 import { SqlServiceError, TauriSqlCommandExecutor } from './sqlCommandExecutor.js';
 import {
 	ISqlDriverCatalogService,
@@ -77,18 +78,19 @@ function toEntry(raw: RawDriverRuntimeEntry): SqlRuntimeDriverEntry {
 	};
 }
 
-export class SqlDriverCatalogService implements ISqlDriverCatalogService {
+export class SqlDriverCatalogService extends Disposable implements ISqlDriverCatalogService {
 	declare readonly _serviceBrand: undefined;
 
 	private cache: SqlRuntimeDriverEntry[] | undefined;
 	private readonly executor: TauriSqlCommandExecutor;
-	private readonly onDidChangeEmitter = new Emitter<void>();
+	private readonly onDidChangeEmitter = this._register(new Emitter<void>());
 
 	constructor(executor: TauriSqlCommandExecutor = new TauriSqlCommandExecutor()) {
+		super();
 		this.executor = executor;
 	}
 
-	onChange(listener: () => void): () => void {
+	onChange(listener: () => void): IDisposable {
 		return this.onDidChangeEmitter.event(listener);
 	}
 
@@ -157,8 +159,7 @@ export class SqlDriverCatalogService implements ISqlDriverCatalogService {
 
 		if (!isAllowedWhenCurrentIs(minimum, entry.status)) {
 			throw new Error(
-				`driver ${id} does not meet required runtime status: ` +
-				`current=${entry.status}, minimum=${minimum}`
+				`driver ${id} does not meet required runtime status: ` + `current=${entry.status}, minimum=${minimum}`
 			);
 		}
 	}
@@ -178,20 +179,17 @@ function isAllowedWhenCurrentIs(minimum: SqlRuntimeStatus, current: SqlRuntimeSt
 			SqlRuntimeStatus.Stable,
 			SqlRuntimeStatus.Preview,
 			SqlRuntimeStatus.Planned,
-			SqlRuntimeStatus.Disabled,
+			SqlRuntimeStatus.Disabled
 		]),
 		[SqlRuntimeStatus.Preview]: new Set([
 			SqlRuntimeStatus.Preview,
 			SqlRuntimeStatus.Planned,
-			SqlRuntimeStatus.Disabled,
+			SqlRuntimeStatus.Disabled
 		]),
-		[SqlRuntimeStatus.Planned]: new Set([
-			SqlRuntimeStatus.Planned,
-			SqlRuntimeStatus.Disabled,
-		]),
-		[SqlRuntimeStatus.Disabled]: new Set([SqlRuntimeStatus.Disabled]),
+		[SqlRuntimeStatus.Planned]: new Set([SqlRuntimeStatus.Planned, SqlRuntimeStatus.Disabled]),
+		[SqlRuntimeStatus.Disabled]: new Set([SqlRuntimeStatus.Disabled])
 	};
-	return matrix[minimum].has(current);
+	return matrix[current].has(minimum);
 }
 
 function buildOfflineFallback(): SqlRuntimeDriverEntry[] {

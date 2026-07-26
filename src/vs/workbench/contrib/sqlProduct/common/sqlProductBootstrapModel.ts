@@ -36,6 +36,11 @@ export function shouldRunSqlProductBootstrap(options: SqlProductBootstrapOptions
 	return !options.alreadyBootstrapped;
 }
 
+/** The demo database is a native Tauri capability, not a browser-preview capability. */
+export function isSqlProductDemoBootstrapSupported(isNativeRuntime: boolean): boolean {
+	return isNativeRuntime;
+}
+
 export function createSqlProductStartupPlan(options: SqlProductBootstrapOptions): SqlProductStartupCommand[] {
 	if (!shouldRunSqlProductBootstrap(options)) {
 		return [];

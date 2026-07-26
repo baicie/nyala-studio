@@ -10,10 +10,10 @@
  *
  *   * `open.demo`         -> `sqlStudio.product.bootstrapDemo`
  *                            (already wired by Phase 08 §2.4)
- *   * `new.connection`    -> `workbench.view.sqlConnections` focus
+ *   * `new.connection`    -> `sqlStudio.connections.add`
+ *                            (focuses and expands the connection form)
  *   * `open.history`      -> `sqlStudio.queryHistory` view focus
- *   * `docs.shortcuts`    -> `workbench.action.showCommands` so the
- *                            user lands on the keybindings page
+ *   * `docs.shortcuts`    -> `workbench.action.openGlobalKeybindings`
  *
  * The pane lives in the SQL Results panel (same container as the
  * Preferences view) so it shares the user-facing toggle surface
@@ -37,9 +37,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
 import { IViewDescriptorService } from '../../../common/views.js';
 import { SQL_PRODUCT_WELCOME_VIEW_ID } from '../common/sqlProduct.js';
-import {
-	mapWelcomeActionToCommandId
-} from './sqlProductWelcomeRouting.js';
+import { mapWelcomeActionToCommandId } from './sqlProductWelcomeRouting.js';
 import { SqlProductWelcomeView, WelcomeAction } from './sqlProductWelcomeView.js';
 
 // Re-export for other browser-side contributors; the canonical
@@ -49,7 +47,7 @@ export { SQL_PRODUCT_WELCOME_VIEW_ID };
 const WELCOME_PRIMARY_LABEL = localize('sqlProductWelcomePrimary', 'Open the demo database');
 const WELCOME_PRIMARY_HINT = localize(
 	'sqlProductWelcomePrimaryHint',
-	'Bootstraps the local SQLite demo database, opens the connection, and runs `SELECT 1`.'
+	'Creates the local SQLite demo database and opens its connection.'
 );
 
 export class SqlProductWelcomePane extends ViewPane {
@@ -109,11 +107,14 @@ export class SqlProductWelcomePane extends ViewPane {
 	}
 
 	private renderAction(parent: HTMLElement, welcome: SqlProductWelcomeView, action: WelcomeAction): void {
-		const tile = append(parent, $('button.sql-product-welcome-action', {
-			type: 'button',
-			role: 'button',
-			'aria-label': action.label
-		}));
+		const tile = append(
+			parent,
+			$('button.sql-product-welcome-action', {
+				type: 'button',
+				role: 'button',
+				'aria-label': action.label
+			})
+		);
 
 		if (action.primary) {
 			tile.classList.add('sql-product-welcome-action--primary');
@@ -123,9 +124,7 @@ export class SqlProductWelcomePane extends ViewPane {
 			append(tile, $('span.sql-product-welcome-action-label', undefined, action.label));
 		}
 
-		this.renderDisposables.add(
-			addDisposableListener(tile, 'click', () => welcome.fire(action))
-		);
+		this.renderDisposables.add(addDisposableListener(tile, 'click', () => welcome.fire(action)));
 	}
 
 	private async dispatch(action: WelcomeAction): Promise<void> {
@@ -138,10 +137,7 @@ export class SqlProductWelcomePane extends ViewPane {
 		try {
 			await this.commandService.executeCommand(commandId);
 		} catch {
-			// Routing failures (missing command, denied action, etc.)
-			// are intentionally silent here: the welcome pane is a
-			// pointer surface, the host notification service carries
-			// the actual error message.
+			// Routing failures are handled by the command's owning surface.
 		}
 	}
 

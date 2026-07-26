@@ -6,10 +6,12 @@ import {
 	ISqlCommandExecutor,
 	SqlCommandName,
 	SqlServiceError,
-	TauriSqlCommandExecutor
+	TauriSqlCommandExecutor,
+	toSqlServiceError
 } from '../browser/sqlCommandExecutor.js';
 import { SqlMetadataService } from '../browser/sqlMetadataService.js';
 import { SqlQueryService } from '../browser/sqlQueryService.js';
+import { SqlProductService } from '../browser/sqlProductService.js';
 import { SqlCellKind, SqlConnectionKind, SqlSslMode, SqlTableType } from '../common/sqlTypes.js';
 import {
 	normalizeSqlConnectionInput,
@@ -411,15 +413,12 @@ test('TauriSqlCommandExecutor forwards command to window.__TAURI__.core.invoke',
 
 		const executor = new TauriSqlCommandExecutor();
 
-		const result = await executor.execute<{ cmd: string; args?: Record<string, unknown> }>(
-			'sql_execute_query',
-			{
-				request: {
-					connectionId: 'local',
-					sql: 'SELECT 1'
-				}
+		const result = await executor.execute<{ cmd: string; args?: Record<string, unknown> }>('sql_execute_query', {
+			request: {
+				connectionId: 'local',
+				sql: 'SELECT 1'
 			}
-		);
+		});
 
 		assert.deepEqual(result, {
 			cmd: 'sql_execute_query',
@@ -439,6 +438,41 @@ test('TauriSqlCommandExecutor forwards command to window.__TAURI__.core.invoke',
 	}
 });
 
+test('TauriSqlCommandExecutor uses the Tauri v2 core API without window.__TAURI__', async () => {
+	const globalScope = globalThis as typeof globalThis & {
+		isTauri?: boolean;
+		window?: unknown;
+	};
+	const previousIsTauri = globalScope.isTauri;
+	const previousWindow = globalScope.window;
+
+	try {
+		globalScope.isTauri = true;
+		globalScope.window = {
+			__TAURI_INTERNALS__: {
+				invoke: async (cmd: string, args?: Record<string, unknown>) => ({ cmd, args })
+			}
+		};
+
+		const executor = new TauriSqlCommandExecutor();
+		const result = await executor.execute<{ cmd: string; args?: Record<string, unknown> }>('sql_bootstrap_demo');
+
+		assert.deepEqual(result, { cmd: 'sql_bootstrap_demo', args: {} });
+	} finally {
+		if (previousIsTauri === undefined) {
+			delete globalScope.isTauri;
+		} else {
+			globalScope.isTauri = previousIsTauri;
+		}
+
+		if (previousWindow === undefined) {
+			delete globalScope.window;
+		} else {
+			globalScope.window = previousWindow;
+		}
+	}
+});
+
 test('TauriSqlCommandExecutor allowVoid does not throw when backend returns null', async () => {
 	const previousWindow = (globalThis as typeof globalThis & { window?: unknown }).window;
 
@@ -453,11 +487,7 @@ test('TauriSqlCommandExecutor allowVoid does not throw when backend returns null
 
 		const executor = new TauriSqlCommandExecutor();
 
-		await executor.execute<void>(
-			'sql_close_connection',
-			{ connectionId: 'local' },
-			{ allowVoid: true }
-		);
+		await executor.execute<void>('sql_close_connection', { connectionId: 'local' }, { allowVoid: true });
 	} finally {
 		if (previousWindow === undefined) {
 			delete (globalThis as typeof globalThis & { window?: unknown }).window;
@@ -721,4 +751,73 @@ test('SqlMetadataService.listDatabases invokes sql_list_databases', async () => 
 			connectionId: 'mysql-local'
 		}
 	});
+});
+
+test('SqlProductService.bootstrapDemo invokes the registered product command', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	executor.responses.set('sql_bootstrap_demo', {
+		dbPath: 'C:/data/demo.db',
+		reused: false,
+		connected: true,
+		sampleConnectionId: 'demo-sqlite'
+	});
+	const service = new SqlProductService(executor);
+
+	const result = await service.bootstrapDemo();
+
+	assert.equal(result.sampleConnectionId, 'demo-sqlite');
+	assert.deepEqual(executor.lastCall(), {
+		command: 'sql_bootstrap_demo',
+		args: {}
+	});
+});
+
+test('SqlProductService validates MySQL with separate transient secret', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	executor.responses.set('sql_validate_mysql_preview', {
+		selectOk: true,
+		ddlOk: true,
+		droppedTable: true,
+		elapsedMs: 3,
+		warnings: []
+	});
+	const service = new SqlProductService(executor);
+
+	await service.validateMysqlPreview(
+		{
+			host: 'localhost',
+			port: 3306,
+			database: 'app',
+			username: 'root',
+			sslMode: SqlSslMode.Require
+		},
+		{ password: 'secret' }
+	);
+
+	assert.deepEqual(executor.lastCall(), {
+		command: 'sql_validate_mysql_preview',
+		args: {
+			input: {
+				host: 'localhost',
+				port: 3306,
+				database: 'app',
+				username: 'root',
+				sslMode: SqlSslMode.Require
+			},
+			secret: { password: 'secret' }
+		}
+	});
+});
+
+test('toSqlServiceError preserves structured Tauri error code without serializing the object', () => {
+	const error = Object.assign(Object.create(null), {
+		code: 'ddl_failed',
+		message: 'DDL denied',
+		password: 'must-not-appear'
+	});
+	const converted = toSqlServiceError('sql_validate_mysql_preview', error);
+
+	assert.equal(converted.code, 'ddl_failed');
+	assert.equal(converted.message, 'DDL denied');
+	assert.equal(converted.message.includes('must-not-appear'), false);
 });

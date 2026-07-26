@@ -4,6 +4,7 @@
 
 import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 import { localize2 } from '../../../../nls.js';
+import { isTauri } from '../../../../sidex-bridge.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
@@ -18,7 +19,7 @@ import {
 	SQL_FORMAT_QUERY_COMMAND_ID,
 	SQL_NEW_QUERY_COMMAND_ID
 } from '../common/sqlEditor.js';
-import { SqlEditorExecutionSource } from '../common/sqlEditorModel.js';
+import { shouldResolveDefaultSqlConnection, SqlEditorExecutionSource } from '../common/sqlEditorModel.js';
 import { SqlEditorInput } from '../common/sqlEditorInput.js';
 import { SqlEditorPane } from './sqlEditorPane.js';
 
@@ -49,7 +50,7 @@ export class NewSqlQueryAction extends Action2 {
 		let connectionId = args?.connectionId?.trim() || undefined;
 		let connectionName = args?.connectionName?.trim() || undefined;
 
-		if (!connectionId) {
+		if (shouldResolveDefaultSqlConnection(isTauri(), connectionId)) {
 			try {
 				const connections = await connectionService.listConnections();
 				const first = connections[0];
@@ -93,7 +94,11 @@ export class ExecuteSqlQueryAction extends Action2 {
 	}
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
-		await runSqlEditorCommand(accessor, pane => pane.executeQuery(SqlEditorExecutionSource.All), 'Open a SQL Query editor before executing SQL.');
+		await runSqlEditorCommand(
+			accessor,
+			pane => pane.executeQuery(SqlEditorExecutionSource.All),
+			'Open a SQL Query editor before executing SQL.'
+		);
 	}
 }
 
@@ -115,7 +120,11 @@ export class ExecuteSqlSelectionAction extends Action2 {
 	}
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
-		await runSqlEditorCommand(accessor, pane => pane.executeQuery(SqlEditorExecutionSource.Selection), 'Open a SQL Query editor before executing selected SQL.');
+		await runSqlEditorCommand(
+			accessor,
+			pane => pane.executeQuery(SqlEditorExecutionSource.Selection),
+			'Open a SQL Query editor before executing selected SQL.'
+		);
 	}
 }
 
@@ -137,7 +146,11 @@ export class ExecuteSqlCurrentStatementAction extends Action2 {
 	}
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
-		await runSqlEditorCommand(accessor, pane => pane.executeQuery(SqlEditorExecutionSource.Statement), 'Open a SQL Query editor before executing current statement.');
+		await runSqlEditorCommand(
+			accessor,
+			pane => pane.executeQuery(SqlEditorExecutionSource.Statement),
+			'Open a SQL Query editor before executing current statement.'
+		);
 	}
 }
 
@@ -155,9 +168,13 @@ export class FormatSqlQueryAction extends Action2 {
 	}
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
-		await runSqlEditorCommand(accessor, pane => {
-			pane.formatQuery();
-		}, 'Open a SQL Query editor before formatting SQL.');
+		await runSqlEditorCommand(
+			accessor,
+			pane => {
+				pane.formatQuery();
+			},
+			'Open a SQL Query editor before formatting SQL.'
+		);
 	}
 }
 

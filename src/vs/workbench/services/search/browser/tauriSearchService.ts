@@ -4,7 +4,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { invoke } from '@tauri-apps/api/core';
-import { raceCancellationError } from '../../../../base/common/async.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { isCancellationError } from '../../../../base/common/errors.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
@@ -30,6 +29,7 @@ import {
 	SearchRange
 } from '../common/search.js';
 import { SearchService } from '../common/searchService.js';
+import { raceTauriSearchRequest } from '../common/tauriSearchCancellation.js';
 
 interface RustFileMatch {
 	path: string;
@@ -189,7 +189,7 @@ class TauriSearchProvider extends Disposable implements ISearchResultProvider {
 		token?: CancellationToken
 	): Promise<T> {
 		const request = invoke<T>(command, args);
-		return token ? raceCancellationError(request, token) : request;
+		return raceTauriSearchRequest(request, token);
 	}
 }
 

@@ -5,6 +5,7 @@
 
 import { isStandalone, setZoomFactor, setZoomLevel } from '../../base/browser/browser.js';
 import { mainWindow } from '../../base/browser/window.js';
+import { Disposable } from '../../base/common/lifecycle.js';
 import { isLinux, isMacintosh, isNative, isWeb, isWindows } from '../../base/common/platform.js';
 import { localize } from '../../nls.js';
 import { IConfigurationService } from '../../platform/configuration/common/configuration.js';
@@ -13,6 +14,7 @@ import {
 	ConfigurationScope,
 	IConfigurationRegistry
 } from '../../platform/configuration/common/configurationRegistry.js';
+import { ILogService } from '../../platform/log/common/log.js';
 import product from '../../platform/product/common/product.js';
 import { zoomLevelToZoomFactor } from '../../platform/window/common/window.js';
 import { Registry } from '../../platform/registry/common/platform.js';
@@ -42,20 +44,26 @@ import { WINDOW_ZOOM_LEVEL_SETTING, normalizeWindowZoomLevel } from './windowZoo
 
 const registry = Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration);
 
-class WindowZoomLevelContribution implements IWorkbenchContribution {
+class WindowZoomLevelContribution extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.windowZoomLevel';
 
 	private tauriWebview: { setZoom(scaleFactor: number): Promise<void> } | null = null;
 	private tauriWebviewLoad: Promise<{ setZoom(scaleFactor: number): Promise<void> } | null> | null = null;
 
-	constructor(@IConfigurationService private readonly configurationService: IConfigurationService) {
+	constructor(
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@ILogService private readonly logService: ILogService
+	) {
+		super();
 		this.applyZoomLevel();
 
-		this.configurationService.onDidChangeConfiguration(event => {
-			if (event.affectsConfiguration(WINDOW_ZOOM_LEVEL_SETTING)) {
-				this.applyZoomLevel();
-			}
-		});
+		this._register(
+			this.configurationService.onDidChangeConfiguration(event => {
+				if (event.affectsConfiguration(WINDOW_ZOOM_LEVEL_SETTING)) {
+					this.applyZoomLevel();
+				}
+			})
+		);
 	}
 
 	private async loadTauriWebview(): Promise<{ setZoom(scaleFactor: number): Promise<void> } | null> {
@@ -76,7 +84,7 @@ class WindowZoomLevelContribution implements IWorkbenchContribution {
 				this.tauriWebview = webview;
 				return webview;
 			} catch (error) {
-				console.warn('[Nyala] Failed to load Tauri webview zoom API:', error);
+				this.logService.warn('[Nyala] Failed to load Tauri webview zoom API:', error);
 				return null;
 			}
 		})();
@@ -91,7 +99,7 @@ class WindowZoomLevelContribution implements IWorkbenchContribution {
 		setZoomFactor(factor, mainWindow);
 
 		this.applyTauriZoom(factor).catch(error => {
-			console.warn('[Nyala] Tauri setZoom failed:', error);
+			this.logService.warn('[Nyala] Tauri setZoom failed:', error);
 		});
 	}
 

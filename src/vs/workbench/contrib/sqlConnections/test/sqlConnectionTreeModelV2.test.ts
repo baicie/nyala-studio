@@ -6,7 +6,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { SqlConnectionTreeModel } from '../browser/sqlConnectionTreeModel.js';
-import { ColumnDto, ISqlMetadataService, SchemataDto, SchemaObjectDto } from '../../../services/sql/common/sqlMetadata.js';
+import {
+	ColumnDto,
+	ISqlMetadataService,
+	SchemataDto,
+	SchemaObjectDto
+} from '../../../services/sql/common/sqlMetadata.js';
 import {
 	ConnectionProfile,
 	ConnectionSecret,
@@ -109,7 +114,7 @@ class FakeConnections implements ISqlConnectionServiceV2 {
 	}
 
 	async list(): Promise<IConnectionWithStatus[]> {
-		return [...this.store.values()].map((profile) => ({
+		return [...this.store.values()].map(profile => ({
 			profile,
 			status: { kind: 'idle' }
 		}));
@@ -133,7 +138,7 @@ class FakeCatalog implements ISqlDriverCatalogService {
 
 	private readonly entries: Map<string, SqlRuntimeDriverEntry>;
 	constructor(entries: SqlRuntimeDriverEntry[]) {
-		this.entries = new Map(entries.map((e) => [e.id, e]));
+		this.entries = new Map(entries.map(e => [e.id, e]));
 	}
 	findRuntimeStatus(id: SqlRuntimeDriverId): SqlRuntimeDriverEntry | undefined {
 		return this.entries.get(id);
@@ -157,8 +162,8 @@ class FakeCatalog implements ISqlDriverCatalogService {
 	labelFor(id: SqlRuntimeDriverId): string {
 		return `${id}`;
 	}
-	onChange(_listener: () => void): () => void {
-		return () => {};
+	onChange(_listener: () => void): { dispose(): void } {
+		return { dispose() {} };
 	}
 }
 
@@ -168,7 +173,13 @@ function fixture() {
 	const cat = new FakeCatalog([
 		{ id: SqlRuntimeDriverId.Sqlite, displayName: 'SQLite', status: SqlRuntimeStatus.Stable, summary: '', notes: [] },
 		{ id: SqlRuntimeDriverId.Mysql, displayName: 'MySQL', status: SqlRuntimeStatus.Preview, summary: '', notes: [] },
-		{ id: SqlRuntimeDriverId.Postgres, displayName: 'Postgres', status: SqlRuntimeStatus.Planned, summary: '', notes: [] }
+		{
+			id: SqlRuntimeDriverId.Postgres,
+			displayName: 'Postgres',
+			status: SqlRuntimeStatus.Planned,
+			summary: '',
+			notes: []
+		}
 	]);
 	const model = new SqlConnectionTreeModel(conns, meta, cat);
 	return { conns, meta, cat, model };
@@ -177,10 +188,18 @@ function fixture() {
 test('rebuild excludes planned and disabled drivers', async () => {
 	const f = fixture();
 	f.conns.setProfile({
-		id: 'pg', label: 'pg', driver: SqlRuntimeDriverId.Postgres, readOnly: false, createdAtMs: 0
+		id: 'pg',
+		label: 'pg',
+		driver: SqlRuntimeDriverId.Postgres,
+		readOnly: false,
+		createdAtMs: 0
 	});
 	f.conns.setProfile({
-		id: 's', label: 'sq', driver: SqlRuntimeDriverId.Sqlite, readOnly: false, createdAtMs: 0
+		id: 's',
+		label: 'sq',
+		driver: SqlRuntimeDriverId.Sqlite,
+		readOnly: false,
+		createdAtMs: 0
 	});
 	await f.model.rebuild();
 	const ds = f.model.list();
@@ -194,7 +213,11 @@ test('rebuild excludes planned and disabled drivers', async () => {
 test('expandDatasource loads schemas into the datasource node', async () => {
 	const f = fixture();
 	f.conns.setProfile({
-		id: 's', label: 'sq', driver: SqlRuntimeDriverId.Sqlite, readOnly: false, createdAtMs: 0
+		id: 's',
+		label: 'sq',
+		driver: SqlRuntimeDriverId.Sqlite,
+		readOnly: false,
+		createdAtMs: 0
 	});
 	f.meta.setSchemas('s', [{ schema: 'main', isDefault: true }]);
 	await f.model.rebuild();
@@ -211,12 +234,14 @@ test('expandDatasource loads schemas into the datasource node', async () => {
 test('expandSchema loads tables under the schema node', async () => {
 	const f = fixture();
 	f.conns.setProfile({
-		id: 's', label: 'sq', driver: SqlRuntimeDriverId.Sqlite, readOnly: false, createdAtMs: 0
+		id: 's',
+		label: 'sq',
+		driver: SqlRuntimeDriverId.Sqlite,
+		readOnly: false,
+		createdAtMs: 0
 	});
 	f.meta.setSchemas('s', [{ schema: 'main', isDefault: true }]);
-	f.meta.setTables('s', 'main', [
-		{ kind: 'table', name: 'users', schema: 'main', columns: [], primaryKey: ['id'] }
-	]);
+	f.meta.setTables('s', 'main', [{ kind: 'table', name: 'users', schema: 'main', columns: [], primaryKey: ['id'] }]);
 	await f.model.rebuild();
 	await f.model.expandDatasource('s');
 	await f.model.expandSchema('s', 'main');
@@ -233,16 +258,23 @@ test('expandSchema loads tables under the schema node', async () => {
 test('expandTable loads columns into the table node', async () => {
 	const f = fixture();
 	f.conns.setProfile({
-		id: 's', label: 'sq', driver: SqlRuntimeDriverId.Sqlite, readOnly: false, createdAtMs: 0
+		id: 's',
+		label: 'sq',
+		driver: SqlRuntimeDriverId.Sqlite,
+		readOnly: false,
+		createdAtMs: 0
 	});
 	f.meta.setSchemas('s', [{ schema: 'main', isDefault: true }]);
-	f.meta.setTables('s', 'main', [
-		{ kind: 'table', name: 'users', schema: 'main', columns: [], primaryKey: [] }
-	]);
+	f.meta.setTables('s', 'main', [{ kind: 'table', name: 'users', schema: 'main', columns: [], primaryKey: [] }]);
 	f.meta.setColumns('s', 'main', 'users', [
 		{
-			name: 'id', dataType: 'INTEGER', isNullable: false, isPrimaryKey: true,
-			defaultValue: null, comment: null, ordinal: 0
+			name: 'id',
+			dataType: 'INTEGER',
+			isNullable: false,
+			isPrimaryKey: true,
+			defaultValue: null,
+			comment: null,
+			ordinal: 0
 		}
 	]);
 	await f.model.rebuild();
@@ -261,7 +293,11 @@ test('expandTable loads columns into the table node', async () => {
 test('expandDatasource surfaces per-node error without poisoning siblings', async () => {
 	const f = fixture();
 	f.conns.setProfile({
-		id: 's', label: 'sq', driver: SqlRuntimeDriverId.Sqlite, readOnly: false, createdAtMs: 0
+		id: 's',
+		label: 'sq',
+		driver: SqlRuntimeDriverId.Sqlite,
+		readOnly: false,
+		createdAtMs: 0
 	});
 	f.meta.failNext('schemas', 's');
 	await f.model.rebuild();
@@ -276,7 +312,11 @@ test('expandDatasource surfaces per-node error without poisoning siblings', asyn
 test('refresh retries after error', async () => {
 	const f = fixture();
 	f.conns.setProfile({
-		id: 's', label: 'sq', driver: SqlRuntimeDriverId.Sqlite, readOnly: false, createdAtMs: 0
+		id: 's',
+		label: 'sq',
+		driver: SqlRuntimeDriverId.Sqlite,
+		readOnly: false,
+		createdAtMs: 0
 	});
 	f.meta.failNext('schemas', 's');
 	f.meta.setSchemas('s', [{ schema: 'main', isDefault: true }]);
@@ -297,9 +337,10 @@ test('listTablesV2 call is cached within TTL by SqlMetadataService', async () =>
 	// the cache, it does not own it.
 	const cacheImplMod = await import('../../../services/sql/browser/sqlMetadataService.js');
 	const fakeExecutor = {
-		execute: async <T,>(command: string, _args?: Record<string, unknown>): Promise<T> => {
+		execute: async <T>(command: string, _args?: Record<string, unknown>): Promise<T> => {
 			// count invokes via outer closure
-			(invokeCounter as Record<string, number>)[command] = ((invokeCounter as Record<string, number>)[command] ?? 0) + 1;
+			(invokeCounter as Record<string, number>)[command] =
+				((invokeCounter as Record<string, number>)[command] ?? 0) + 1;
 			if (command === 'sql_list_tables_v2') {
 				return [{ kind: 'table', name: 't', schema: 'main', columns: [], primaryKey: [] }] as unknown as T;
 			}

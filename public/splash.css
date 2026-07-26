@@ -55,14 +55,14 @@
 .nyala-splash__name {
 	font-size: 22px;
 	font-weight: 600;
-	letter-spacing: 0.5px;
+	letter-spacing: 0;
 	color: #1f1f1f;
 }
 
 .nyala-splash__status {
 	font-size: 12px;
 	opacity: 0.7;
-	letter-spacing: 0.2px;
+	letter-spacing: 0;
 }
 
 .nyala-splash__spinner {

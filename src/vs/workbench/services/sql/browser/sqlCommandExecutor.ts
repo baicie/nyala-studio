@@ -21,6 +21,7 @@ export type SqlCommandName =
 	| 'sql_list_driver_runtime_status'
 	| 'sql_assert_driver_runtime_status'
 	| 'sql_bootstrap_demo'
+	| 'sql_validate_mysql_preview'
 	// Phase 01 - Connection MVP commands.
 	| 'sql_test_connection_v2'
 	| 'sql_open_connection_v2'
@@ -45,7 +46,8 @@ export class SqlServiceError extends Error {
 	constructor(
 		message: string,
 		readonly command: SqlCommandName,
-		readonly cause?: unknown
+		readonly cause?: unknown,
+		readonly code: string = 'sql_service_error'
 	) {
 		super(message);
 		this.name = 'SqlServiceError';
@@ -89,9 +91,12 @@ export function toSqlServiceError(command: SqlCommandName, error: unknown): SqlS
 		return new SqlServiceError(error, command, error);
 	}
 
-	try {
-		return new SqlServiceError(JSON.stringify(error), command, error);
-	} catch {
-		return new SqlServiceError(String(error), command, error);
+	if (typeof error === 'object' && error !== null) {
+		const candidate = error as { code?: unknown; message?: unknown };
+		const code = typeof candidate.code === 'string' ? candidate.code : 'sql_service_error';
+		const message = typeof candidate.message === 'string' ? candidate.message : `SQL command '${command}' failed`;
+		return new SqlServiceError(message, command, error, code);
 	}
+
+	return new SqlServiceError(`SQL command '${command}' failed`, command, error);
 }

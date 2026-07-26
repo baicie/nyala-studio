@@ -3,10 +3,12 @@ import test from 'node:test';
 
 import {
 	createExecutePayload,
+	canLoadSqlEditorConnections,
 	getSqlEditorDescription,
 	getSqlEditorName,
 	normalizeExecutableSql,
 	normalizeSqlEditorOptions,
+	shouldResolveDefaultSqlConnection,
 	SqlEditorExecutionSource
 } from '../common/sqlEditorModel.js';
 import { SqlEditorInput } from '../common/sqlEditorInput.js';
@@ -59,6 +61,14 @@ test('getSqlEditorDescription describes connection state', () => {
 
 test('normalizeExecutableSql trims SQL', () => {
 	assert.equal(normalizeExecutableSql('  SELECT 1  '), 'SELECT 1');
+});
+
+test('shouldResolveDefaultSqlConnection skips browser previews and explicit connections', () => {
+	assert.equal(canLoadSqlEditorConnections(false), false);
+	assert.equal(canLoadSqlEditorConnections(true), true);
+	assert.equal(shouldResolveDefaultSqlConnection(false, undefined), false);
+	assert.equal(shouldResolveDefaultSqlConnection(true, 'local'), false);
+	assert.equal(shouldResolveDefaultSqlConnection(true, undefined), true);
 });
 
 test('createExecutePayload rejects missing connection', () => {

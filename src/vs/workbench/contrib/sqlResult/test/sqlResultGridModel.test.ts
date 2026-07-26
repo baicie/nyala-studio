@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { SqlCellKind, SqlQueryResult } from '../../../services/sql/common/sqlTypes.js';
@@ -18,6 +19,8 @@ import {
 	SqlResultCopyFormat,
 	SqlResultCopyMode
 } from '../common/sqlResultGridModel.js';
+
+const resultGridStyles = readFileSync(new URL('../browser/media/sqlResult.css', import.meta.url), 'utf8');
 
 const sampleResult: SqlQueryResult = {
 	columns: [
@@ -41,6 +44,14 @@ const sampleResult: SqlQueryResult = {
 	elapsedMs: 5,
 	truncated: false
 };
+
+test('result table keeps sparse numeric columns near their headers', () => {
+	const tableRule = resultGridStyles.match(/\.sql-result-table\s*\{(?<declarations>[^}]*)\}/s)?.groups?.declarations;
+
+	assert.ok(tableRule);
+	assert.match(tableRule, /width:\s*max-content/);
+	assert.doesNotMatch(tableRule, /min-width:\s*100%/);
+});
 
 test('buildSqlResultGrid keeps column and cell metadata', () => {
 	const grid = buildSqlResultGrid(sampleResult);
@@ -128,12 +139,7 @@ test('copySelectedRow copies selected row as TSV with header', () => {
 	const grid = buildSqlResultGrid(sampleResult);
 
 	assert.equal(
-		copySelectedRow(
-			grid,
-			{ rowIndex: 0, columnIndex: 1 },
-			SqlResultCopyFormat.Tsv,
-			true
-		),
+		copySelectedRow(grid, { rowIndex: 0, columnIndex: 1 }, SqlResultCopyFormat.Tsv, true),
 		'id\tname\tnote\n1\tAlice\thello, "world"'
 	);
 });
@@ -142,12 +148,7 @@ test('copySelectedRow copies selected row as CSV without header', () => {
 	const grid = buildSqlResultGrid(sampleResult);
 
 	assert.equal(
-		copySelectedRow(
-			grid,
-			{ rowIndex: 0, columnIndex: 1 },
-			SqlResultCopyFormat.Csv,
-			false
-		),
+		copySelectedRow(grid, { rowIndex: 0, columnIndex: 1 }, SqlResultCopyFormat.Csv, false),
 		'1,Alice,"hello, ""world"""'
 	);
 });
@@ -161,29 +162,13 @@ test('copySelectedRow returns empty string without selection', () => {
 test('copySelectedRow returns empty string for out-of-range row', () => {
 	const grid = buildSqlResultGrid(sampleResult);
 
-	assert.equal(
-		copySelectedRow(
-			grid,
-			{ rowIndex: 99, columnIndex: 0 },
-			SqlResultCopyFormat.Tsv,
-			true
-		),
-		''
-	);
+	assert.equal(copySelectedRow(grid, { rowIndex: 99, columnIndex: 0 }, SqlResultCopyFormat.Tsv, true), '');
 });
 
 test('copySelectedRow returns empty string for negative row', () => {
 	const grid = buildSqlResultGrid(sampleResult);
 
-	assert.equal(
-		copySelectedRow(
-			grid,
-			{ rowIndex: -1, columnIndex: 0 },
-			SqlResultCopyFormat.Tsv,
-			true
-		),
-		''
-	);
+	assert.equal(copySelectedRow(grid, { rowIndex: -1, columnIndex: 0 }, SqlResultCopyFormat.Tsv, true), '');
 });
 
 test('copyAllRows copies all rows as CSV', () => {
@@ -261,10 +246,7 @@ test('getSqlResultGridStatus describes select result', () => {
 test('getSqlResultGridStatus describes panel truncation', () => {
 	const grid = buildSqlResultGrid(sampleResult, 1);
 
-	assert.equal(
-		getSqlResultGridStatus(sampleResult, grid),
-		'2 row(s) · 3 column(s) · 5ms · showing first 1'
-	);
+	assert.equal(getSqlResultGridStatus(sampleResult, grid), '2 row(s) · 3 column(s) · 5ms · showing first 1');
 });
 
 test('getSqlResultGridStatus describes backend truncation', () => {
@@ -275,10 +257,7 @@ test('getSqlResultGridStatus describes backend truncation', () => {
 
 	const grid = buildSqlResultGrid(result);
 
-	assert.equal(
-		getSqlResultGridStatus(result, grid),
-		'2 row(s) · 3 column(s) · 5ms · backend truncated'
-	);
+	assert.equal(getSqlResultGridStatus(result, grid), '2 row(s) · 3 column(s) · 5ms · backend truncated');
 });
 
 test('getSqlResultGridStatus describes affected rows result', () => {

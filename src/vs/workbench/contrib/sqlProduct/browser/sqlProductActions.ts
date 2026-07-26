@@ -9,8 +9,11 @@ import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/c
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
-import { TauriSqlCommandExecutor } from '../../../services/sql/browser/sqlCommandExecutor.js';
-import { SQL_CONNECTIONS_FOCUS_COMMAND_ID } from '../../sqlConnections/common/sqlConnections.js';
+import { ISqlProductService } from '../../../services/sql/common/sqlProduct.js';
+import {
+	SQL_CONNECTIONS_FOCUS_COMMAND_ID,
+	SQL_CONNECTIONS_REFRESH_COMMAND_ID
+} from '../../sqlConnections/common/sqlConnections.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
 import { SQL_RESULT_OPEN_COMMAND_ID } from '../../sqlResult/common/sqlResult.js';
 import {
@@ -19,6 +22,7 @@ import {
 	SQL_PRODUCT_NEW_QUERY_COMMAND_ID,
 	SQL_PRODUCT_OPEN_RESULTS_COMMAND_ID
 } from '../common/sqlProduct.js';
+import { isSqlProductDemoBootstrapSupported } from '../common/sqlProductBootstrapModel.js';
 import { ISqlProductPreferencesService } from '../common/sqlProductPreferencesService.js';
 import { SQL_PRODUCT_PREFERENCES_VIEW_ID } from './sqlProductPreferencesView.js';
 
@@ -26,11 +30,6 @@ export const SQL_PRODUCT_OPEN_PREFERENCES_COMMAND_ID = 'sqlStudio.product.openPr
 export const SQL_PRODUCT_RESET_PREFERENCES_COMMAND_ID = 'sqlStudio.product.resetPreferences';
 export const SQL_PRODUCT_TOGGLE_RESTORE_LAYOUT_COMMAND_ID = 'sqlStudio.product.toggleRestoreLayout';
 export const SQL_PRODUCT_TOGGLE_WELCOME_QUERY_COMMAND_ID = 'sqlStudio.product.toggleWelcomeQuery';
-
-interface DemoBootstrapResult {
-	readonly dbPath: string;
-	readonly reused: boolean;
-}
 
 class SqlProductHomeAction extends Action2 {
 	constructor() {
@@ -110,17 +109,19 @@ class SqlProductBootstrapDemoAction extends Action2 {
 	}
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
-		const commandService = accessor.get(ICommandService);
-		const notificationService = accessor.get(INotificationService);
-		const executor = new TauriSqlCommandExecutor();
-
-		if (!isTauri()) {
+		if (!isSqlProductDemoBootstrapSupported(isTauri())) {
 			return;
 		}
 
+		const commandService = accessor.get(ICommandService);
+		const notificationService = accessor.get(INotificationService);
+		const productService = accessor.get(ISqlProductService);
+
 		try {
-			const result = await executor.execute<DemoBootstrapResult>('sql_bootstrap_demo');
-			await commandService.executeCommand(SQL_CONNECTIONS_FOCUS_COMMAND_ID);
+			const result = await productService.bootstrapDemo();
+			await commandService.executeCommand(SQL_CONNECTIONS_REFRESH_COMMAND_ID, {
+				revealConnectionId: result.sampleConnectionId
+			});
 			notificationService.info(
 				result.reused
 					? `Demo SQLite connection opened: ${result.dbPath}`
@@ -129,6 +130,7 @@ class SqlProductBootstrapDemoAction extends Action2 {
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			notificationService.warn(`Demo SQLite connection was not opened: ${message}`);
+			throw error;
 		}
 	}
 }

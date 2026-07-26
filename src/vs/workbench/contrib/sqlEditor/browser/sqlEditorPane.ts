@@ -7,6 +7,7 @@ import './media/sqlEditor.css';
 import { $, addDisposableListener, append, clearNode, Dimension, EventType } from '../../../../base/browser/dom.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { isTauri } from '../../../../sidex-bridge.js';
 import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
 import { CodeEditorWidget } from '../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
 import { ILanguageService } from '../../../../editor/common/languages/language.js';
@@ -26,6 +27,7 @@ import { SqlEditorInput } from '../common/sqlEditorInput.js';
 import { SQL_EDITOR_PANE_ID } from '../common/sqlEditor.js';
 import {
 	createExecutePayload,
+	canLoadSqlEditorConnections,
 	findSqlStatementAtOffset,
 	getSqlEditorStatusLabel,
 	SqlEditorExecutionSource,
@@ -250,9 +252,12 @@ export class SqlEditorPane extends EditorPane {
 	}
 
 	async executeQuery(sourceOrSelectionOnly: SqlEditorExecutionSource | boolean): Promise<void> {
-		const source = typeof sourceOrSelectionOnly === 'boolean'
-			? sourceOrSelectionOnly ? SqlEditorExecutionSource.Selection : SqlEditorExecutionSource.All
-			: sourceOrSelectionOnly;
+		const source =
+			typeof sourceOrSelectionOnly === 'boolean'
+				? sourceOrSelectionOnly
+					? SqlEditorExecutionSource.Selection
+					: SqlEditorExecutionSource.All
+				: sourceOrSelectionOnly;
 
 		const input = this.currentInput;
 		const startedAt = Date.now();
@@ -420,11 +425,15 @@ export class SqlEditorPane extends EditorPane {
 	}
 
 	private async refreshConnections(input: SqlEditorInput): Promise<void> {
-		try {
-			this.currentConnections = await this.sqlConnectionService.listConnections();
-		} catch (error) {
+		if (!canLoadSqlEditorConnections(isTauri())) {
 			this.currentConnections = [];
-			this.showError(error);
+		} else {
+			try {
+				this.currentConnections = await this.sqlConnectionService.listConnections();
+			} catch (error) {
+				this.currentConnections = [];
+				this.showError(error);
+			}
 		}
 
 		clearNode(this.connectionSelect);
@@ -550,7 +559,13 @@ export class SqlEditorPane extends EditorPane {
 	private setRunning(running: boolean): void {
 		this.running = running;
 
-		if (!this.runButton || !this.runSelectionButton || !this.runStatementButton || !this.formatButton || !this.connectionSelect) {
+		if (
+			!this.runButton ||
+			!this.runSelectionButton ||
+			!this.runStatementButton ||
+			!this.formatButton ||
+			!this.connectionSelect
+		) {
 			return;
 		}
 

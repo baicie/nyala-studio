@@ -6,10 +6,12 @@ pub const MAX_QUERY_ROW_LIMIT: usize = 100_000;
 pub const MAX_SQL_BYTES: usize = 1_048_576;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum SqlConnectionKind {
+    #[serde(rename = "sqlite")]
     Sqlite,
+    #[serde(rename = "postgresql", alias = "postgre_sql")]
     PostgreSql,
+    #[serde(rename = "mysql", alias = "my_sql")]
     MySql,
 }
 
@@ -359,6 +361,8 @@ pub struct ConnectionProfile {
     pub port: Option<u16>,
     pub database: Option<String>,
     pub username: Option<String>,
+    #[serde(default, alias = "ssl_mode")]
+    pub ssl_mode: Option<SqlSslMode>,
     pub file_path: Option<String>,
     #[serde(default)]
     pub remember_in_memory: bool,
@@ -366,7 +370,7 @@ pub struct ConnectionProfile {
 }
 
 /// In-memory secret material. NEVER persisted, NEVER logged.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionSecret {
     pub password: Option<String>,
@@ -393,6 +397,12 @@ pub enum SqlCommandError {
     NotOpen { message: String },
     Persistence { message: String },
     Validation { message: String },
+    InvalidInput { message: String },
+    ConnectionFailed { message: String },
+    DdlFailed { message: String },
+    InsertFailed { message: String },
+    SelectFailed { message: String },
+    DropFailed { message: String },
     Internal { message: String },
 }
 
@@ -417,10 +427,49 @@ impl SqlCommandError {
             "validation" => SqlCommandError::Validation {
                 message: message.into(),
             },
+            "invalid_input" => SqlCommandError::InvalidInput {
+                message: message.into(),
+            },
+            "connection_failed" => SqlCommandError::ConnectionFailed {
+                message: message.into(),
+            },
+            "ddl_failed" => SqlCommandError::DdlFailed {
+                message: message.into(),
+            },
+            "insert_failed" => SqlCommandError::InsertFailed {
+                message: message.into(),
+            },
+            "select_failed" => SqlCommandError::SelectFailed {
+                message: message.into(),
+            },
+            "drop_failed" => SqlCommandError::DropFailed {
+                message: message.into(),
+            },
             _ => SqlCommandError::Internal {
                 message: message.into(),
             },
         }
+    }
+
+    /// Adds user-facing context without changing the serialized error code.
+    pub fn append_message(mut self, suffix: impl AsRef<str>) -> Self {
+        let suffix = suffix.as_ref();
+        match &mut self {
+            SqlCommandError::DriverNotAvailable { message }
+            | SqlCommandError::UnknownDriver { message }
+            | SqlCommandError::OpenFailed { message }
+            | SqlCommandError::NotOpen { message }
+            | SqlCommandError::Persistence { message }
+            | SqlCommandError::Validation { message }
+            | SqlCommandError::InvalidInput { message }
+            | SqlCommandError::ConnectionFailed { message }
+            | SqlCommandError::DdlFailed { message }
+            | SqlCommandError::InsertFailed { message }
+            | SqlCommandError::SelectFailed { message }
+            | SqlCommandError::DropFailed { message }
+            | SqlCommandError::Internal { message } => message.push_str(suffix),
+        }
+        self
     }
 }
 
@@ -433,8 +482,22 @@ impl std::fmt::Display for SqlCommandError {
             | SqlCommandError::NotOpen { message }
             | SqlCommandError::Persistence { message }
             | SqlCommandError::Validation { message }
+            | SqlCommandError::InvalidInput { message }
+            | SqlCommandError::ConnectionFailed { message }
+            | SqlCommandError::DdlFailed { message }
+            | SqlCommandError::InsertFailed { message }
+            | SqlCommandError::SelectFailed { message }
+            | SqlCommandError::DropFailed { message }
             | SqlCommandError::Internal { message } => write!(f, "{message}"),
         }
+    }
+}
+
+impl std::fmt::Debug for ConnectionSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ConnectionSecret")
+            .field(&self.redacted_string())
+            .finish()
     }
 }
 
@@ -473,6 +536,18 @@ mod phase01_tests {
     }
 
     #[test]
+    fn connection_secret_debug_is_redacted() {
+        let secret = ConnectionSecret {
+            password: Some("hunter2".into()),
+        };
+
+        let debug = format!("{secret:?}");
+        assert!(!debug.contains("hunter2"));
+        assert!(debug.contains("redacted"));
+        assert!(debug.contains("1fields"));
+    }
+
+    #[test]
     fn connection_secret_redacted_string_counts_fields() {
         assert_eq!(
             ConnectionSecret::default().redacted_string(),
@@ -502,6 +577,49 @@ mod phase01_tests {
     }
 
     #[test]
+    fn connection_kind_round_trips_with_frontend_wire_tokens() {
+        for (kind, token) in [
+            (SqlConnectionKind::Sqlite, "\"sqlite\""),
+            (SqlConnectionKind::PostgreSql, "\"postgresql\""),
+            (SqlConnectionKind::MySql, "\"mysql\""),
+        ] {
+            let serialized = serde_json::to_string(&kind).unwrap();
+            assert_eq!(serialized, token);
+
+            let deserialized: SqlConnectionKind = serde_json::from_str(token).unwrap();
+            assert_eq!(deserialized, kind);
+        }
+    }
+
+    #[test]
+    fn connection_kind_accepts_legacy_snake_case_tokens() {
+        let postgres: SqlConnectionKind = serde_json::from_str("\"postgre_sql\"").unwrap();
+        let mysql: SqlConnectionKind = serde_json::from_str("\"my_sql\"").unwrap();
+
+        assert_eq!(postgres, SqlConnectionKind::PostgreSql);
+        assert_eq!(mysql, SqlConnectionKind::MySql);
+    }
+
+    #[test]
+    fn connection_input_deserializes_typescript_mysql_wire_payload() {
+        let input: SqlConnectionInput = serde_json::from_value(serde_json::json!({
+            "name": "Local MySQL",
+            "kind": "mysql",
+            "host": "127.0.0.1",
+            "port": 3306,
+            "database": "nyala",
+            "username": "nyala",
+            "password": "not-persisted",
+            "sslMode": "prefer",
+            "readOnly": false,
+            "createIfMissing": false
+        }))
+        .unwrap();
+
+        assert_eq!(input.kind, SqlConnectionKind::MySql);
+    }
+
+    #[test]
     fn driver_id_dto_into_driver_id() {
         assert_eq!(DriverId::from(DriverIdDto::Sqlite), DriverId::Sqlite);
         assert_eq!(DriverId::from(DriverIdDto::Mysql), DriverId::MySql);
@@ -519,6 +637,7 @@ mod phase01_tests {
             port: None,
             database: None,
             username: None,
+            ssl_mode: Some(SqlSslMode::Require),
             file_path: Some("/tmp/x.db".into()),
             remember_in_memory: false,
             created_at_ms: 0,
@@ -529,6 +648,42 @@ mod phase01_tests {
         assert!(!json.contains("secret"));
         assert!(!json.contains("credential"));
         assert!(json.contains("filePath"));
+        assert!(json.contains("\"sslMode\":\"require\""));
+    }
+
+    #[test]
+    fn connection_profile_deserializes_missing_camel_case_or_snake_case_ssl_mode() {
+        let without_ssl: ConnectionProfile = serde_json::from_value(serde_json::json!({
+            "id": "p1",
+            "label": "demo",
+            "driver": "mysql",
+            "readOnly": false,
+            "createdAtMs": 0
+        }))
+        .unwrap();
+        assert_eq!(without_ssl.ssl_mode, None);
+
+        let current_ssl: ConnectionProfile = serde_json::from_value(serde_json::json!({
+            "id": "p1",
+            "label": "demo",
+            "driver": "mysql",
+            "readOnly": false,
+            "sslMode": "require",
+            "createdAtMs": 0
+        }))
+        .unwrap();
+        assert_eq!(current_ssl.ssl_mode, Some(SqlSslMode::Require));
+
+        let legacy_ssl: ConnectionProfile = serde_json::from_value(serde_json::json!({
+            "id": "p1",
+            "label": "demo",
+            "driver": "mysql",
+            "readOnly": false,
+            "ssl_mode": "require",
+            "createdAtMs": 0
+        }))
+        .unwrap();
+        assert_eq!(legacy_ssl.ssl_mode, Some(SqlSslMode::Require));
     }
 
     #[test]
@@ -558,5 +713,34 @@ mod phase01_tests {
         let json = serde_json::to_string(&value).unwrap();
         assert!(json.contains("\"code\":\"open_failed\""));
         assert!(json.contains("\"message\":\"boom\""));
+    }
+
+    #[test]
+    fn sql_command_error_preserves_mysql_validation_codes() {
+        for code in [
+            "invalid_input",
+            "connection_failed",
+            "ddl_failed",
+            "insert_failed",
+            "select_failed",
+            "drop_failed",
+        ] {
+            let value = serde_json::to_value(SqlCommandError::new(code, "boom")).unwrap();
+            assert_eq!(value["code"], code);
+            assert_eq!(value["message"], "boom");
+        }
+    }
+
+    #[test]
+    fn sql_command_error_append_message_keeps_code() {
+        let value = SqlCommandError::new("insert_failed", "insert denied")
+            .append_message("; temporary table cleanup failed");
+        let json = serde_json::to_value(&value).unwrap();
+
+        assert_eq!(json["code"], "insert_failed");
+        assert_eq!(
+            json["message"],
+            "insert denied; temporary table cleanup failed"
+        );
     }
 }

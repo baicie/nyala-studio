@@ -23,9 +23,7 @@ import { ISqlQueryService } from '../../../services/sql/common/sqlQuery.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
 import { ISqlEditorEventService } from '../../sqlEditor/common/sqlEditorEvents.js';
 import { SqlEditorExecutionSource } from '../../sqlEditor/common/sqlEditorModel.js';
-import {
-	SQL_QUERY_HISTORY_VIEW_ID
-} from '../common/sqlQueryHistory.js';
+import { SQL_QUERY_HISTORY_VIEW_ID } from '../common/sqlQueryHistory.js';
 import {
 	getHistoryEntryDetail,
 	getHistoryEntryLabel,
@@ -41,7 +39,7 @@ export class SqlQueryHistoryView extends ViewPane {
 	private readonly renderDisposables = this._register(new DisposableStore());
 
 	private container!: HTMLElement;
-	private toolbar!: HTMLElement;
+	private bodyToolbar!: HTMLElement;
 	private contentElement!: HTMLElement;
 	private statusElement!: HTMLElement;
 	private clearButton!: HTMLButtonElement;
@@ -79,10 +77,10 @@ export class SqlQueryHistoryView extends ViewPane {
 
 	protected override renderBody(container: HTMLElement): void {
 		this.container = append(container, $('.sql-query-history-view'));
-		this.toolbar = append(this.container, $('.sql-query-history-toolbar'));
+		this.bodyToolbar = append(this.container, $('.sql-query-history-toolbar'));
 
 		this.clearButton = append(
-			this.toolbar,
+			this.bodyToolbar,
 			$('button.sql-query-history-button', { type: 'button' }, 'Clear History')
 		) as HTMLButtonElement;
 
@@ -127,10 +125,13 @@ export class SqlQueryHistoryView extends ViewPane {
 	}
 
 	private renderEntry(parent: HTMLElement, entry: SqlQueryHistoryEntry): void {
-		const item = append(parent, $('.sql-query-history-item', {
-			role: 'listitem',
-			'data-entry-id': entry.id
-		}));
+		const item = append(
+			parent,
+			$('.sql-query-history-item', {
+				role: 'listitem',
+				'data-entry-id': entry.id
+			})
+		);
 
 		item.classList.add(entry.status === SqlQueryHistoryStatus.Success ? 'success' : 'error');
 

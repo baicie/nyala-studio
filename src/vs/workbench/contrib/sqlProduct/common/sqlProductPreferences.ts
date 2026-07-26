@@ -4,10 +4,7 @@
 
 import { SQL_EDITOR_MAX_RESTORED_DRAFTS } from '../../sqlEditor/common/sqlEditor.js';
 import { SQL_RESULT_MAX_RENDER_ROWS } from '../../sqlResult/common/sqlResult.js';
-import {
-	SQL_PRODUCT_DEFAULT_QUERY,
-	SQL_PRODUCT_STORAGE_PREFIX
-} from './sqlProduct.js';
+import { SQL_PRODUCT_DEFAULT_QUERY, SQL_PRODUCT_STORAGE_PREFIX } from './sqlProduct.js';
 
 export const SQL_PRODUCT_PREFERENCES_STORAGE_KEY = `${SQL_PRODUCT_STORAGE_PREFIX}.preferences`;
 
@@ -31,7 +28,7 @@ export type SqlProductPreferenceKey = keyof SqlProductPreferences;
 
 export const DEFAULT_SQL_PRODUCT_PREFERENCES: SqlProductPreferences = {
 	restoreSqlLayoutOnStartup: true,
-	openWelcomeQueryOnFirstLaunch: false,
+	openWelcomeQueryOnFirstLaunch: true,
 	restoreEditorDraftsOnStartup: true,
 	autoSaveEditorDrafts: true,
 	resultMaxRows: SQL_RESULT_MAX_RENDER_ROWS,
@@ -80,10 +77,7 @@ export function normalizeSqlProductPreferences(raw: unknown): SqlProductPreferen
 			SQL_PRODUCT_MAX_RESTORED_DRAFTS,
 			DEFAULT_SQL_PRODUCT_PREFERENCES.maxRestoredEditorDrafts
 		),
-		defaultQuery: normalizeDefaultQuery(
-			value.defaultQuery,
-			DEFAULT_SQL_PRODUCT_PREFERENCES.defaultQuery
-		)
+		defaultQuery: normalizeDefaultQuery(value.defaultQuery, DEFAULT_SQL_PRODUCT_PREFERENCES.defaultQuery)
 	};
 }
 

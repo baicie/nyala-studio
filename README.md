@@ -21,11 +21,11 @@ This repository is currently in the SQL MVP productization phase.
 
 Runtime driver status:
 
-| Driver | Status | Notes |
-| --- | --- | --- |
-| SQLite | MVP stable | File database, `:memory:`, metadata, query execution, cancellation and read-only mode are enabled. |
-| MySQL | Preview | Connection, metadata and query execution are enabled for local/dev validation. Query cancellation is not supported yet. |
-| PostgreSQL | Planned | Protocol fields exist, but the runtime driver is not enabled yet. |
+| Driver     | Status     | Notes                                                                                                                   |
+| ---------- | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
+| SQLite     | MVP stable | File database, `:memory:`, metadata, query execution, cancellation and read-only mode are enabled.                      |
+| MySQL      | Preview    | Connection, metadata and query execution are enabled for local/dev validation. Query cancellation is not supported yet. |
+| PostgreSQL | Planned    | Protocol fields exist, but the runtime driver is not enabled yet.                                                       |
 
 The immediate MVP target is:
 
@@ -134,8 +134,10 @@ user reach a runnable query in under a minute.
 - On first launch (or on demand), the workbench calls the
   `sql_bootstrap_demo` Tauri command, which seeds
   `<data_dir>/nyala-studio/demo.db` with a `users` table (5 rows) and an
-  `orders` table (5 rows joined to users), then registers a
-  `Demo (SQLite)` connection profile (id `demo-sqlite`) and opens it.
+  `orders` table (5 rows joined to users), then registers and opens a
+  `Demo (SQLite)` profile (id `demo-sqlite`) in both connection runtimes.
+  The visible metadata tree and query path currently use V1; V2 is kept in
+  sync as an explicit compatibility bridge until the connection stacks merge.
 - The seeder is idempotent: subsequent launches reuse the existing file
   rather than duplicating rows.
 - Override the data directory for tests or sandboxed runs:
@@ -172,9 +174,11 @@ pnpm run test
 ```
 
 `pnpm run test` is a chain that runs the branding guard, the runtime
-status consistency check, the Rust `cargo test --lib` suite (currently
-~157 tests), and every per-subsystem frontend suite
-(`test:sql-services`, `test:sql-domain`, `test:sql-connections`,
+status consistency check, the demo data-directory suite, the Rust
+`cargo test --lib` suite (currently 176 passing tests plus 1 ignored live
+integration test), the Tauri search cancellation suite, and every
+per-subsystem frontend suite (`test:seed-demo`, `test:search`,
+`test:sql-services`, `test:sql-domain`, `test:sql-connections`,
 `test:sql-editor`, `test:sql-result`, `test:sql-history`,
 `test:sql-product`, `test:sql-advanced`).
 
@@ -193,11 +197,12 @@ pnpm run test:mysql-integration
 
 The full Phase 08 acceptance checklist lives in
 [`docs/sql-mvp-phases/phase-08-mvp-packaging.md`](./docs/sql-mvp-phases/phase-08-mvp-packaging.md).
-The P0 deliverable (demo seed + MySQL Preview validation + Welcome view
-model + Release Readiness doc) is shipped at commit `34128dc5`; the
-remaining items are the `ViewPane` subclass that renders the welcome
-tiles and a true transient-open API for the MySQL Preview profile, both
-covered in `docs/sql-mvp-phases/README.md` Phase 08 footer.
+The automated P0 deliverable includes the demo seed, real Welcome ViewPane,
+transient MySQL Preview command, Connect form validation, and CI release gate.
+MySQL validation sends `{ input, secret }` directly to the dedicated Tauri
+command and never creates or saves a temporary profile. The Windows/Tauri
+Demo-to-query walkthrough was recorded green on 2026-07-26; the remaining
+Phase 08 gate is the opt-in live MySQL run.
 
 ## Development
 

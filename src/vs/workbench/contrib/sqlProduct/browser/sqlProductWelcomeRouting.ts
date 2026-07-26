@@ -6,7 +6,7 @@
  * unit tests can import it without dragging in `paneviewlet.css`.
  *--------------------------------------------------------------------------------------------*/
 
-import { SQL_CONNECTIONS_FOCUS_COMMAND_ID } from '../../sqlConnections/common/sqlConnections.js';
+import { SQL_CONNECTIONS_ADD_COMMAND_ID } from '../../sqlConnections/common/sqlConnections.js';
 import { SQL_QUERY_HISTORY_VIEW_ID } from '../../sqlHistory/common/sqlQueryHistory.js';
 import { SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID } from '../common/sqlProduct.js';
 import { WELCOME_ACTION_IDS } from './sqlProductWelcomeView.js';
@@ -22,11 +22,11 @@ export function mapWelcomeActionToCommandId(actionId: string): string | undefine
 		case WELCOME_ACTION_IDS.openDemo:
 			return SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID;
 		case WELCOME_ACTION_IDS.newConnection:
-			return SQL_CONNECTIONS_FOCUS_COMMAND_ID;
+			return SQL_CONNECTIONS_ADD_COMMAND_ID;
 		case WELCOME_ACTION_IDS.openHistory:
 			return `${SQL_QUERY_HISTORY_VIEW_ID}.focus`;
 		case WELCOME_ACTION_IDS.docsShortcuts:
-			return 'workbench.action.showCommands';
+			return 'workbench.action.openGlobalKeybindings';
 		default:
 			return undefined;
 	}
