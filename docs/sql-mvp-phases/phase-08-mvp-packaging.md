@@ -26,7 +26,7 @@
 ### 当前状态（2026-07-27）
 
 - Demo seed、V1/V2 兼容注册、Welcome ViewPane、Connect 表单优化、瞬时 MySQL validation 与 release gate 均已实现并有自动化覆盖。
-- Windows/Tauri 实机 Demo → query panel walkthrough 与隔离 MySQL 8 live Preview validation 均已记录通过，Phase 08 的 P0 验收已完成，详见 §3 与 §4。
+- Windows/Tauri 实机 Demo → query panel walkthrough 与隔离 MySQL 8 上的 live command validation 均已记录通过；Phase 08 仍为**部分完成**，仅缺原生连接页对 live MySQL 的 Validate 点击记录，详见 §3 与 §4。
 
 ## 2. 设计
 
@@ -91,7 +91,7 @@ Welcome 已实现为注册在 SQL Results container 的 `SqlProductWelcomePane`�
 
 ### 2.7 README 与 Release Gate
 
-Root `README.md` 记录 SQLite Demo Flow、完整本地 release commands 与 opt-in MySQL integration。CI 通过 `.github/workflows/sql-mvp-gate.yml` 在 `main` / `mvp` 的 push 与 PR 上执行同一套 pnpm/Rust gate；`release.yml` 在跨平台打包前调用该 reusable workflow。MySQL live flow 仅在手动 opt-in 时启动隔离 MySQL service。
+Root `README.md` 记录 SQLite Demo Flow、完整本地 release commands 与 opt-in MySQL integration。CI 通过 `.github/workflows/sql-mvp-gate.yml` 在 `mvp` 的 push 与以 `mvp` 为目标的 PR 上执行同一套 pnpm/Rust gate；`release.yml` 在跨平台打包前调用该 reusable workflow。MySQL live flow 仅在手动 opt-in 时启动隔离 MySQL service。
 
 ### 2.8 主要实现文件
 
@@ -112,7 +112,7 @@ src/vs/workbench/contrib/sqlProduct/browser/sqlProductWelcomePane.ts
 
 ## 3. 自动化验证
 
-2026-07-26 当前工作树的定向结果：
+2026-07-27 当前工作树的定向结果：
 
 | 检查                                | 结果                 | 覆盖重点                                                                                                 |
 | ----------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -158,6 +158,7 @@ Windows/Tauri 原生走查（2026-07-26）exit 0：
 - [x] 跑 `SELECT COUNT(*) FROM users` 返回 5；
 - [x] 跑 `SELECT u.name, o.amount FROM users u JOIN orders o ON u.id=o.user_id` 在 panel 出现 5 行；
 - [x] 连接页 `MysqlPreviewValidationController` 覆盖 MySQL Preview Validate 的字段与瞬时 secret 转发；隔离 MySQL 8 上的同一 Tauri command 返回成功报告与 cancellation warning（2026-07-27）。
+- [ ] 选择 MySQL Preview 并填 host/port/database/username（账户需要时填写 password），点 Validate，live MySQL 返回成功报告与 cancellation warning；已有相同 command 的 live contract 记录，尚缺原生 WebView 点击证据。
 
 ## 5. 风险
 
@@ -184,4 +185,5 @@ Windows/Tauri 原生走查（2026-07-26）exit 0：
 - [x] 真有 README release checklist 与 CI release gate；
 - [x] 真有 Phase 00–07 自动化回归覆盖；
 - [x] 真有 Tauri 实机 Demo → query panel walkthrough 记录；
-- [x] 真有 live MySQL Preview validation 记录。
+- [x] 真有 live MySQL Preview command validation 记录。
+- [ ] 真有原生连接页 live MySQL Preview Validate 记录。

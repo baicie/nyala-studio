@@ -162,7 +162,7 @@ and [`src-tauri/src/commands/sql/product.rs`](./src-tauri/src/commands/sql/produ
 
 Before publishing a build, every check below must pass locally. The
 GitHub Actions workflows under `.github/workflows/` enforce the same
-gates on `main` and on every pull request.
+gates on pushes to `mvp` and pull requests targeting `mvp`.
 
 ```bash
 pnpm run lint
@@ -197,13 +197,14 @@ pnpm run test:mysql-integration
 
 The full Phase 08 acceptance checklist lives in
 [`docs/sql-mvp-phases/phase-08-mvp-packaging.md`](./docs/sql-mvp-phases/phase-08-mvp-packaging.md).
-The automated P0 deliverable includes the demo seed, real Welcome ViewPane,
+The implemented deliverable includes the demo seed, real Welcome ViewPane,
 transient MySQL Preview command, Connect form validation, and CI release gate.
 MySQL validation sends `{ input, secret }` directly to the dedicated Tauri
 command and never creates or saves a temporary profile. The Windows/Tauri
 Demo-to-query walkthrough was recorded green on 2026-07-26, and the opt-in
-live MySQL Preview validation passed against an isolated MySQL 8 instance on
-2026-07-27.
+live MySQL Preview command validation passed against an isolated MySQL 8
+instance on 2026-07-27. The corresponding native WebView Validate click
+against a live MySQL instance is still an unrecorded Phase 08 acceptance item.
 
 ## Development
 
