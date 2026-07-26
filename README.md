@@ -175,7 +175,7 @@ pnpm run test
 
 `pnpm run test` is a chain that runs the branding guard, the runtime
 status consistency check, the demo data-directory suite, the Rust
-`cargo test --lib` suite (currently 176 passing tests plus 1 ignored live
+`cargo test --lib` suite (currently 176 passing tests plus 2 ignored live
 integration test), the Tauri search cancellation suite, and every
 per-subsystem frontend suite (`test:seed-demo`, `test:search`,
 `test:sql-services`, `test:sql-domain`, `test:sql-connections`,
@@ -201,8 +201,9 @@ The automated P0 deliverable includes the demo seed, real Welcome ViewPane,
 transient MySQL Preview command, Connect form validation, and CI release gate.
 MySQL validation sends `{ input, secret }` directly to the dedicated Tauri
 command and never creates or saves a temporary profile. The Windows/Tauri
-Demo-to-query walkthrough was recorded green on 2026-07-26; the remaining
-Phase 08 gate is the opt-in live MySQL run.
+Demo-to-query walkthrough was recorded green on 2026-07-26, and the opt-in
+live MySQL Preview validation passed against an isolated MySQL 8 instance on
+2026-07-27.
 
 ## Development
 
