@@ -1,0 +1,57 @@
+name: Feature request
+description: Propose a focused improvement to the SQL workbench
+title: '[Feature]: '
+body:
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and the SQL MVP roadmap.
+          required: true
+        - label: This request does not contain credentials, database data, or other sensitive information.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Describe the workflow problem and who encounters it.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Proposed outcome
+      description: Describe observable behavior, not only an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Explain current workarounds or smaller alternatives.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Connections
+        - Metadata explorer
+        - SQL editor and execution
+        - Result panel
+        - History and advanced SQL tools
+        - Packaging and startup
+        - Workbench shell
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: architecture
+    attributes:
+      label: Architecture and risk notes
+      description: Note affected services, native commands, extension-host surfaces, or security boundaries if known.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add mockups or examples that clarify the request without exposing sensitive data.
