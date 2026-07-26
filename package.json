@@ -83,5 +83,12 @@
 		"typescript-eslint": "^8.62.1",
 		"vite": "^8.1.3",
 		"vite-plugin-static-copy": "^4.1.1"
+	},
+	"pnpm": {
+		"overrides": {
+			"minimatch>brace-expansion": "5.0.8",
+			"monaco-editor>dompurify": "3.4.12",
+			"vite>postcss": "8.5.23"
+		}
 	}
 }
