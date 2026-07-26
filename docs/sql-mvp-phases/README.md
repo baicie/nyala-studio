@@ -1,6 +1,6 @@
 # Phase 00 – 08 设计总索引
 
-> Last verified green: current working tree on `fix/mvp-ux-polish` (based on `9b9cea90`; `pnpm run test` exit 0, 2026-07-26).
+> Last verified green: current working tree on `codex/phase08-live-mysql-validation` (based on `53d546b9`; release checks and opt-in MySQL validation recorded on 2026-07-27).
 > Reference: `AGENTS.md §Current Status`.
 
 | Phase | 文档                                                                                               | P 等级 | 状态（仓库当前）                         | 验证记录                                                                                                                         | 完成标志                                                                                       |
@@ -13,13 +13,13 @@
 | 05    | [phase-05-history-formatter-snippets-explain.md](./phase-05-history-formatter-snippets-explain.md) | P0     | 已具备 P0 测试覆盖                       | `test:sql-history` 28/28 + `test:sql-advanced` 63/63 绿                                                                          | History/Snippets/Formatter/Explain 可用                                                        |
 | 06    | [phase-06-ai-helper-foundation.md](./phase-06-ai-helper-foundation.md)                             | P0     | 已具备 P0 测试覆盖                       | `test:sql-advanced` 63/63 绿                                                                                                     | Deterministic provider + Capability Guard                                                      |
 | 07    | [phase-07-plugin-api-mvp.md](./phase-07-plugin-api-mvp.md)                                         | P0     | 已具备 P0 测试覆盖                       | `test:sql-product` 65/65 + `test:sql-advanced` 63/63 绿                                                                          | 13 类 contribution points + local-only loader                                                  |
-| 08    | [phase-08-mvp-packaging.md](./phase-08-mvp-packaging.md)                                           | P0     | 部分完成：仅 live MySQL 待验             | `pnpm run test` 绿：Rust 176 passed, 1 ignored；Services 69/69；Connections 112/112；Results 58/58；Product 65/65；原生 Demo 走查绿 | demo.db、Welcome、validation、release gate 与实机 Demo 已验；live MySQL 记录待补                |
+| 08    | [phase-08-mvp-packaging.md](./phase-08-mvp-packaging.md)                                           | P0     | 部分完成：原生 MySQL Validate 待验        | `pnpm run test` 绿；`pnpm run test:mysql-integration` 1/1 绿；原生 Demo 走查绿                  | demo.db、Welcome、validation、release gate、原生 Demo 与 live command 已验；原生 Validate 待验  |
 
 > **如何读这张表**：`状态（仓库当前）` 列写的是**仓库当前代码里有没有该 phase 的 P0 deliverable**；`验证记录` 列写的是**最近一次 green test run 的哪几个 suite 覆盖了它**；`完成标志` 列写的是 phase doc §验收 里列的 acceptance checklist。两列同时是绿的，行才算"met"。
 >
 > `已具备雏形` 是 00 单独的标签——它代表 runtime status 表是稳定的 source-of-truth，所有上层 phase 都消费它，不是 0/1 完成的简单标志。
 >
-> Phase 08 目前只可标为"部分完成"。自动化覆盖 demo seed、`sql_bootstrap_demo`（以同一 `demo-sqlite` ID 同时注册 V1/V2）、瞬时 `sql_validate_mysql_preview(input, secret)` 命令、`MysqlPreviewValidationController`、已注册的 Welcome ViewPane、连接器表单和 root README/CI release gate。Windows/Tauri 实机 Demo → query panel walkthrough 已于 2026-07-26 验收；当前只缺有 `NYALA_TEST_MYSQL_*` 环境的 live MySQL validation 记录。
+> Phase 08 目前仍为"部分完成"。自动化覆盖 demo seed、`sql_bootstrap_demo`（以同一 `demo-sqlite` ID 同时注册 V1/V2）、瞬时 `sql_validate_mysql_preview(input, secret)` 命令、`MysqlPreviewValidationController`、已注册的 Welcome ViewPane、连接器表单和 root README/CI release gate。Windows/Tauri 实机 Demo → query panel walkthrough 于 2026-07-26 验收；隔离 MySQL 8 上调用同一 Tauri command 的 live Preview validation 于 2026-07-27 验收。尚缺原生连接页针对 live MySQL 的 Validate 点击记录。
 
 ## 不变量
 
