@@ -392,7 +392,7 @@ impl vte::Perform for Performer<'_> {
         _ignore: bool,
         action: char,
     ) {
-        if intermediates == [b'?'] {
+        if intermediates == *b"?" {
             match action {
                 'h' => {
                     self.handle_dec_set(params);
