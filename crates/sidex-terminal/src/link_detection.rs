@@ -252,13 +252,7 @@ fn detect_absolute_paths(text: &str, row: u16, links: &mut Vec<TerminalLink>) {
         let start = if cfg!(target_os = "windows") {
             remaining
                 .find(|c: char| c.is_ascii_alphabetic())
-                .and_then(|i| {
-                    if remaining.get(i + 1..i + 3) == Some(":\\") {
-                        Some(i)
-                    } else {
-                        None
-                    }
-                })
+                .filter(|&i| remaining.get(i + 1..i + 3) == Some(":\\"))
         } else {
             remaining
                 .find('/')
@@ -388,6 +382,7 @@ mod tests {
         assert_eq!(links[0].url, "http://localhost:3000/api");
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn detect_absolute_path_unix() {
         let cells = cells_from_str("Error in /usr/local/bin/app.rs");
@@ -398,6 +393,19 @@ mod tests {
             .collect();
         assert!(!path_links.is_empty());
         assert!(path_links[0].url.starts_with("/usr/local/bin/app.rs"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn detect_absolute_path_windows() {
+        let cells = cells_from_str(r"C:\Users\nyala\query.sql");
+        let links = detect_links(&cells);
+        let path_links: Vec<_> = links
+            .iter()
+            .filter(|l| l.kind == LinkKind::FilePath)
+            .collect();
+        assert!(!path_links.is_empty());
+        assert_eq!(path_links[0].url, r"C:\Users\nyala\query.sql");
     }
 
     #[test]

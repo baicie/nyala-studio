@@ -13,7 +13,7 @@ import {
 	ConnectionSecret,
 	IConnectionWithStatus,
 	ISqlConnectionServiceV2,
-	ConnectionStatus,
+	ConnectionStatus
 } from '../common/sqlConnection.js';
 import { SqlServiceError, ISqlCommandExecutor, TauriSqlCommandExecutor } from './sqlCommandExecutor.js';
 
@@ -23,9 +23,7 @@ export class SqlConnectionServiceV2 extends Disposable implements ISqlConnection
 	private readonly _onChange = this._register(new Emitter<void>());
 	private profiles: IConnectionWithStatus[] = [];
 
-	constructor(
-		private readonly executor: ISqlCommandExecutor = new TauriSqlCommandExecutor(),
-	) {
+	constructor(private readonly executor: ISqlCommandExecutor = new TauriSqlCommandExecutor()) {
 		super();
 	}
 
@@ -33,8 +31,10 @@ export class SqlConnectionServiceV2 extends Disposable implements ISqlConnection
 
 	async list(): Promise<IConnectionWithStatus[]> {
 		const dtos = await this.executor.execute<ConnectionProfile[]>('sql_list_connections_v2');
-		this.profiles = dtos.map((profile) => this.toWithStatus(profile, { kind: 'idle' }));
-		this._onChange.fire();
+		this.profiles = dtos.map(profile => this.toWithStatus(profile, { kind: 'idle' }));
+		// `list` is the read path used by connection-tree rebuilds. Emitting
+		// from here would cause a subscriber that calls `list()` to recursively
+		// schedule another rebuild. Mutating operations below own change events.
 		return this.profiles.slice();
 	}
 
@@ -44,7 +44,7 @@ export class SqlConnectionServiceV2 extends Disposable implements ISqlConnection
 
 	async open(profile: ConnectionProfile, secret: ConnectionSecret): Promise<string> {
 		const id = await this.executor.execute<string>('sql_open_connection_v2', { profile, secret });
-		const existing = this.profiles.findIndex((entry) => entry.profile.id === profile.id);
+		const existing = this.profiles.findIndex(entry => entry.profile.id === profile.id);
 		const next: IConnectionWithStatus = this.toWithStatus(profile, { kind: 'open' });
 		if (existing >= 0) {
 			this.profiles[existing] = next;
@@ -57,18 +57,16 @@ export class SqlConnectionServiceV2 extends Disposable implements ISqlConnection
 
 	async close(profileId: string): Promise<void> {
 		await this.executor.execute<void>('sql_close_connection_v2', { profileId }, { allowVoid: true });
-		const existing = this.profiles.findIndex((entry) => entry.profile.id === profileId);
+		const existing = this.profiles.findIndex(entry => entry.profile.id === profileId);
 		if (existing >= 0) {
 			this.profiles[existing] = this.toWithStatus(this.profiles[existing].profile, { kind: 'idle' });
-			this._onChange.fire();
 		}
+		this._onChange.fire();
 	}
 
 	async forgetAllSecrets(): Promise<void> {
 		await this.executor.execute<void>('sql_forget_secrets', undefined, { allowVoid: true });
-		this.profiles = this.profiles.map((entry) =>
-			this.toWithStatus(entry.profile, { kind: 'idle' })
-		);
+		this.profiles = this.profiles.map(entry => this.toWithStatus(entry.profile, { kind: 'idle' }));
 		this._onChange.fire();
 	}
 

@@ -123,6 +123,7 @@ mod tests {
             port: None,
             database: None,
             username: None,
+            ssl_mode: None,
             file_path: None,
             remember_in_memory: true,
             created_at_ms: 0,

@@ -5,6 +5,7 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Nyala</title>
 		<link rel="icon" type="image/png" href="/favicon.png" />
+		<link rel="stylesheet" href="/splash.css" />
 		<script>
 			// VS Code globals — must be set before any module loads
 			globalThis._VSCODE_FILE_ROOT = window.location.origin + '/src/';
@@ -81,5 +82,13 @@
 	</head>
 	<body aria-label="">
 		<div id="workbench"></div>
+		<div id="nyala-splash" class="nyala-splash" role="status" aria-live="polite">
+			<div class="nyala-splash__brand">
+				<img class="nyala-splash__logo" src="/favicon.png" alt="" />
+				<span class="nyala-splash__name">Nyala Studio</span>
+			</div>
+			<div class="nyala-splash__spinner" aria-hidden="true"></div>
+			<div class="nyala-splash__status">Booting workbench…</div>
+		</div>
 	</body>
 </html>

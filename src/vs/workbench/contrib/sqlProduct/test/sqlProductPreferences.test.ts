@@ -12,16 +12,14 @@ import {
 	updateSqlProductPreference
 } from '../common/sqlProductPreferences.js';
 
-test('normalizeSqlProductPreferences returns defaults for invalid input', () => {
-	assert.deepEqual(
-		normalizeSqlProductPreferences(undefined),
-		DEFAULT_SQL_PRODUCT_PREFERENCES
-	);
+test('default preferences show the first-launch Welcome flow', () => {
+	assert.equal(DEFAULT_SQL_PRODUCT_PREFERENCES.openWelcomeQueryOnFirstLaunch, true);
+});
 
-	assert.deepEqual(
-		normalizeSqlProductPreferences(null),
-		DEFAULT_SQL_PRODUCT_PREFERENCES
-	);
+test('normalizeSqlProductPreferences returns defaults for invalid input', () => {
+	assert.deepEqual(normalizeSqlProductPreferences(undefined), DEFAULT_SQL_PRODUCT_PREFERENCES);
+
+	assert.deepEqual(normalizeSqlProductPreferences(null), DEFAULT_SQL_PRODUCT_PREFERENCES);
 });
 
 test('normalizeSqlProductPreferences normalizes booleans and numbers', () => {
@@ -88,15 +86,14 @@ test('serializeSqlProductPreferences and deserializeSqlProductPreferences round 
 test('deserializeSqlProductPreferences rejects unknown document', () => {
 	assert.deepEqual(deserializeSqlProductPreferences(undefined), DEFAULT_SQL_PRODUCT_PREFERENCES);
 	assert.deepEqual(deserializeSqlProductPreferences({ version: 2, preferences: {} }), DEFAULT_SQL_PRODUCT_PREFERENCES);
-	assert.deepEqual(deserializeSqlProductPreferences({ version: 1, preferences: 'bad' }), DEFAULT_SQL_PRODUCT_PREFERENCES);
+	assert.deepEqual(
+		deserializeSqlProductPreferences({ version: 1, preferences: 'bad' }),
+		DEFAULT_SQL_PRODUCT_PREFERENCES
+	);
 });
 
 test('updateSqlProductPreference updates one preference', () => {
-	const next = updateSqlProductPreference(
-		DEFAULT_SQL_PRODUCT_PREFERENCES,
-		'restoreSqlLayoutOnStartup',
-		false
-	);
+	const next = updateSqlProductPreference(DEFAULT_SQL_PRODUCT_PREFERENCES, 'restoreSqlLayoutOnStartup', false);
 
 	assert.equal(next.restoreSqlLayoutOnStartup, false);
 	assert.equal(next.openWelcomeQueryOnFirstLaunch, DEFAULT_SQL_PRODUCT_PREFERENCES.openWelcomeQueryOnFirstLaunch);

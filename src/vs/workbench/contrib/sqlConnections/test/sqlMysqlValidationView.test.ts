@@ -1,125 +1,95 @@
 /*---------------------------------------------------------------------------------------------
- * SQL Studio Next - MySQL Preview validation controller tests (Phase 08 §3.5).
- *
- * Covers the contract documented in
- * `docs/sql-mvp-phases/phase-08-mvp-packaging.md` §3.5:
- *
- *   * success path (DDL + SELECT both pass) returns `ok: true`;
- *   * validator exceptions are forwarded to the caller with their
- *     code + message preserved;
- *   * the secret password reaches the connection service unchanged;
- *   * the controller never auto-closes the profile (Phase 08 forces
- *     validation to be transient: keep the pool alive so a
- *     follow-up query can reuse the credentials).
- *
- * Tests stay at the controller layer by injecting two fakes:
- *   * a `FakeConn` that mimics `ISqlConnectionServiceV2` with
- *     just enough surface area to capture `open()` calls;
- *   * a `FakeVal` that mimics `IMysqlPreviewValidator` with a
- *     configurable `validate()` result.
+ * Nyala Studio - MySQL Preview validation controller tests.
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { MysqlPreviewValidationController } from '../browser/mysqlValidationView.js';
+import { SqlSslMode } from '../../../services/sql/common/sqlTypes.js';
 
-class FakeConn {
-	openCalls: { profile: unknown; secret: unknown }[] = [];
-	closeCalls: string[] = [];
-
-	async open(profile: unknown, secret: unknown): Promise<string> {
-		this.openCalls.push({ profile, secret });
-		return 'tmp';
-	}
-
-	async close(id: string): Promise<void> {
-		this.closeCalls.push(id);
-	}
-
-	async forgetAllSecrets(): Promise<void> {}
-
-	async list() {
-		return [];
-	}
-
-	async test() {}
-}
-
-class FakeVal {
-	result: { selectOk: boolean; ddlOk: boolean; droppedTable: boolean; warnings: string[] } = {
+class FakeProductService {
+	readonly calls: Array<{ input: unknown; secret: unknown }> = [];
+	result = {
 		selectOk: true,
 		ddlOk: true,
 		droppedTable: true,
-		warnings: []
+		elapsedMs: 4,
+		warnings: [] as string[]
 	};
+	error: unknown;
 
-	setResult(next: typeof this.result): void {
-		this.result = next;
-	}
-
-	async validate(_id: string): Promise<typeof this.result> {
+	async validateMysqlPreview(input: unknown, secret: unknown): Promise<typeof this.result> {
+		this.calls.push({ input, secret });
+		if (this.error !== undefined) {
+			throw this.error;
+		}
 		return this.result;
 	}
 }
 
-test('validate succeeds when DDL and SELECT pass', async () => {
-	const c = new FakeConn();
-	const v = new FakeVal();
-	const ctrl = new MysqlPreviewValidationController(c as never, v as never);
-	const r = await ctrl.validate('p', '127.0.0.1', 3306, 'u', 'p');
-	assert.equal(r.ok, true);
-	assert.equal(c.openCalls.length, 1);
+test('validate forwards transient fields and secret without opening a profile', async () => {
+	const service = new FakeProductService();
+	const controller = new MysqlPreviewValidationController(service as never);
+
+	const result = await controller.validate('127.0.0.1', 3307, 'app', 'user', 'PWN', SqlSslMode.Require);
+
+	assert.equal(result.ok, true);
+	assert.deepEqual(service.calls, [
+		{
+			input: {
+				host: '127.0.0.1',
+				port: 3307,
+				database: 'app',
+				username: 'user',
+				sslMode: SqlSslMode.Require
+			},
+			secret: { password: 'PWN' }
+		}
+	]);
 });
 
-test('validate forwards exceptions to caller', async () => {
-	const c = new FakeConn();
-	const v = new FakeVal();
-	v.setResult({ selectOk: false, ddlOk: false, droppedTable: false, warnings: [] });
-	v.validate = async () => {
-		throw Object.assign(new Error('failed'), { code: 'X' });
+test('validate requires SELECT, DDL, and cleanup to pass', async () => {
+	const service = new FakeProductService();
+	service.result = {
+		selectOk: true,
+		ddlOk: false,
+		droppedTable: true,
+		elapsedMs: 2,
+		warnings: ['preview']
 	};
-	const ctrl = new MysqlPreviewValidationController(c as never, v as never);
-	const r = await ctrl.validate('p', '127.0.0.1', 3306, 'u', 'p');
-	assert.equal(r.ok, false);
-	assert.equal(r.code, 'X');
-	assert.equal(r.message, 'failed');
+	const controller = new MysqlPreviewValidationController(service as never);
+
+	const result = await controller.validate('localhost', 3306, 'mysql', 'root', '', SqlSslMode.Disable);
+
+	assert.equal(result.ok, false);
+	assert.deepEqual(result.warnings, ['preview']);
+
+	service.result = {
+		selectOk: true,
+		ddlOk: true,
+		droppedTable: false,
+		elapsedMs: 2,
+		warnings: ['cleanup failed']
+	};
+
+	const cleanupResult = await controller.validate('localhost', 3306, 'mysql', 'root', '', SqlSslMode.Disable);
+
+	assert.equal(cleanupResult.ok, false);
+	assert.deepEqual(cleanupResult.warnings, ['cleanup failed']);
 });
 
-test('validate forwards secret password unchanged', async () => {
-	const c = new FakeConn();
-	const v = new FakeVal();
-	const ctrl = new MysqlPreviewValidationController(c as never, v as never);
-	await ctrl.validate('p', '127.0.0.1', 3306, 'u', 'PWN');
-	const sent = c.openCalls[0].secret as { password: string };
-	assert.equal(sent.password, 'PWN');
-});
+test('validate preserves structured service errors', async () => {
+	const service = new FakeProductService();
+	service.error = Object.assign(new Error('DDL denied'), { code: 'ddl_failed' });
+	const controller = new MysqlPreviewValidationController(service as never);
 
-test('validate does not auto-close the profile', async () => {
-	const c = new FakeConn();
-	const v = new FakeVal();
-	const ctrl = new MysqlPreviewValidationController(c as never, v as never);
-	await ctrl.validate('p', '127.0.0.1', 3306, 'u', 'p');
-	// Phase 08 forces the profile to stay open so a follow-up query
-	// can reuse the credentials. Auto-close would surprise the user.
-	assert.equal(c.closeCalls.length, 0);
-});
+	const result = await controller.validate('localhost', 3306, 'mysql', 'root', '', SqlSslMode.Disable);
 
-test('validate uses a tmp-prefixed profile id', async () => {
-	const c = new FakeConn();
-	const v = new FakeVal();
-	const ctrl = new MysqlPreviewValidationController(c as never, v as never);
-	await ctrl.validate('p', '127.0.0.1', 3306, 'u', 'p');
-	const profile = c.openCalls[0].profile as { id: string };
-	assert.ok(profile.id.startsWith('tmp-'), `expected tmp- prefix, got ${profile.id}`);
-});
-
-test('validate forwards non-mysql driver report as ok=false', async () => {
-	const c = new FakeConn();
-	const v = new FakeVal();
-	v.setResult({ selectOk: false, ddlOk: true, droppedTable: true, warnings: ['preview'] });
-	const ctrl = new MysqlPreviewValidationController(c as never, v as never);
-	const r = await ctrl.validate('p', '127.0.0.1', 3306, 'u', 'p');
-	assert.equal(r.ok, false);
-	assert.deepEqual(r.warnings, ['preview']);
+	assert.deepEqual(result, {
+		ok: false,
+		warnings: [],
+		code: 'ddl_failed',
+		message: 'DDL denied'
+	});
 });

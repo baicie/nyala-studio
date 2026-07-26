@@ -2,11 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { SqlDriverCatalogService } from '../browser/sqlDriverCatalogService.js';
-import {
-	ISqlCommandExecutor,
-	SqlServiceError,
-	TauriSqlCommandExecutor
-} from '../browser/sqlCommandExecutor.js';
+import { ISqlCommandExecutor, SqlServiceError, TauriSqlCommandExecutor } from '../browser/sqlCommandExecutor.js';
 import { SqlRuntimeDriverId, SqlRuntimeStatus } from '../common/sqlDriverCatalog.js';
 
 class FakeSqlCommandExecutor implements ISqlCommandExecutor {
@@ -90,7 +86,10 @@ test('SqlDriverCatalogService caches the snapshot for subsequent reads', async (
 
 test('SqlDriverCatalogService returns offline fallback when tauri backend is unavailable', async () => {
 	const executor = new FakeSqlCommandExecutor();
-	executor.errors.set('sql_list_driver_runtime_status', new SqlServiceError('Tauri runtime is not available', 'sql_list_driver_runtime_status'));
+	executor.errors.set(
+		'sql_list_driver_runtime_status',
+		new SqlServiceError('Tauri runtime is not available', 'sql_list_driver_runtime_status')
+	);
 
 	const service = new SqlDriverCatalogService(executor);
 
@@ -109,10 +108,7 @@ test('SqlDriverCatalogService throws when getCachedRuntimeStatus is called befor
 	const executor = new FakeSqlCommandExecutor();
 	const service = new SqlDriverCatalogService(executor);
 
-	assert.throws(
-		() => service.getCachedRuntimeStatus(),
-		/not been initialised/
-	);
+	assert.throws(() => service.getCachedRuntimeStatus(), /not been initialised/);
 });
 
 test('SqlDriverCatalogService.isDriverRunnable only allows Stable and Preview', async () => {
@@ -179,6 +175,81 @@ test('SqlDriverCatalogService normalises postgresql alias to postgres', async ()
 	assert.equal(entries[0].id, SqlRuntimeDriverId.Postgres);
 });
 
+test('SqlDriverCatalogService.assertAtLeast enforces the complete runtime maturity matrix', async () => {
+	const expectations: Record<SqlRuntimeStatus, Record<SqlRuntimeStatus, boolean>> = {
+		[SqlRuntimeStatus.Stable]: {
+			[SqlRuntimeStatus.Stable]: true,
+			[SqlRuntimeStatus.Preview]: true,
+			[SqlRuntimeStatus.Planned]: true,
+			[SqlRuntimeStatus.Disabled]: true
+		},
+		[SqlRuntimeStatus.Preview]: {
+			[SqlRuntimeStatus.Stable]: false,
+			[SqlRuntimeStatus.Preview]: true,
+			[SqlRuntimeStatus.Planned]: true,
+			[SqlRuntimeStatus.Disabled]: true
+		},
+		[SqlRuntimeStatus.Planned]: {
+			[SqlRuntimeStatus.Stable]: false,
+			[SqlRuntimeStatus.Preview]: false,
+			[SqlRuntimeStatus.Planned]: true,
+			[SqlRuntimeStatus.Disabled]: true
+		},
+		[SqlRuntimeStatus.Disabled]: {
+			[SqlRuntimeStatus.Stable]: false,
+			[SqlRuntimeStatus.Preview]: false,
+			[SqlRuntimeStatus.Planned]: false,
+			[SqlRuntimeStatus.Disabled]: false
+		}
+	};
+	const statuses: readonly SqlRuntimeStatus[] = [
+		SqlRuntimeStatus.Stable,
+		SqlRuntimeStatus.Preview,
+		SqlRuntimeStatus.Planned,
+		SqlRuntimeStatus.Disabled
+	];
+
+	for (const current of statuses) {
+		const executor = new FakeSqlCommandExecutor();
+		executor.responses.set('sql_list_driver_runtime_status', [
+			{ id: 'sqlite', displayName: 'SQLite', status: current, summary: 's', notes: [] }
+		]);
+		const service = new SqlDriverCatalogService(executor);
+		await service.getRuntimeStatus();
+
+		for (const minimum of statuses) {
+			const shouldPass = expectations[current][minimum];
+			const assertStatus = () => service.assertAtLeast(SqlRuntimeDriverId.Sqlite, minimum);
+
+			if (shouldPass) {
+				assert.doesNotThrow(assertStatus, `current=${current}, minimum=${minimum}`);
+			} else {
+				assert.throws(assertStatus, undefined, `current=${current}, minimum=${minimum}`);
+			}
+		}
+
+		service.dispose();
+	}
+});
+
+test('SqlDriverCatalogService disposes change listeners with the service', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	executor.responses.set('sql_list_driver_runtime_status', [
+		{ id: 'sqlite', displayName: 'SQLite', status: 'stable', summary: 's', notes: [] }
+	]);
+	const service = new SqlDriverCatalogService(executor);
+	let changeCount = 0;
+	const subscription = service.onChange(() => changeCount++);
+
+	assert.equal(typeof service.dispose, 'function');
+	assert.equal(typeof subscription.dispose, 'function');
+	service.dispose();
+	await service.getRuntimeStatus();
+
+	assert.equal(changeCount, 0);
+	subscription.dispose();
+});
+
 test('TauriSqlCommandExecutor handles sql_list_driver_runtime_status and sql_assert_driver_runtime_status', async () => {
 	const previousWindow = globalThis.window;
 	try {
@@ -202,7 +273,11 @@ test('TauriSqlCommandExecutor handles sql_list_driver_runtime_status and sql_ass
 		const result = await executor.execute('sql_list_driver_runtime_status', {}, { allowVoid: true });
 		assert.deepEqual(result, []);
 
-		await executor.execute('sql_assert_driver_runtime_status', { driverId: 'sqlite', minimum: 'stable' }, { allowVoid: true });
+		await executor.execute(
+			'sql_assert_driver_runtime_status',
+			{ driverId: 'sqlite', minimum: 'stable' },
+			{ allowVoid: true }
+		);
 		assert.equal(calls.length, 2);
 		assert.equal(calls[1].cmd, 'sql_assert_driver_runtime_status');
 	} finally {

@@ -16,7 +16,7 @@
 	border-radius: 999px;
 	font-size: 10px;
 	font-weight: 600;
-	letter-spacing: 0.04em;
+	letter-spacing: 0;
 	text-transform: uppercase;
 	white-space: nowrap;
 	vertical-align: middle;
@@ -64,8 +64,35 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
+	min-width: 0;
+	max-width: 100%;
 }
 
 .sql-driver-status-strip-name {
+	flex: 0 0 auto;
 	font-weight: 600;
+}
+
+.sql-driver-status-strip-summary {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+@container (max-width: 260px) {
+	.sql-driver-status-strip {
+		flex-direction: column;
+	}
+
+	.sql-driver-status-strip-item {
+		align-items: flex-start;
+		flex-wrap: wrap;
+	}
+
+	.sql-driver-status-strip-summary {
+		flex-basis: 100%;
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
 }

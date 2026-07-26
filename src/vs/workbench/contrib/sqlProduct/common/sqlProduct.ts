@@ -11,6 +11,7 @@ export const SQL_PRODUCT_HOME_COMMAND_ID = 'sqlStudio.product.home';
 export const SQL_PRODUCT_NEW_QUERY_COMMAND_ID = 'sqlStudio.product.newQuery';
 export const SQL_PRODUCT_OPEN_RESULTS_COMMAND_ID = 'sqlStudio.product.openResults';
 export const SQL_PRODUCT_OPEN_WELCOME_COMMAND_ID = 'sqlStudio.product.openWelcome';
+export const SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID = 'sqlStudio.product.bootstrapDemo';
 
 // Re-exported in common so the bootstrap model can build the
 // `${viewId}.focus` command id without reaching into `browser/`

@@ -7,6 +7,7 @@
  * exactly; the `verify-sql-runtime-status.mjs` script enforces this.
  *--------------------------------------------------------------------------------------------*/
 
+import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 
 export const enum SqlRuntimeDriverId {
@@ -79,5 +80,5 @@ export interface ISqlDriverCatalogService {
 	 * Subscribe to backend changes. The listener fires whenever the
 	 * catalog is re-fetched from the Rust backend.
 	 */
-	onChange(listener: () => void): () => void;
+	onChange(listener: () => void): IDisposable;
 }

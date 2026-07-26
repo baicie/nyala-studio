@@ -170,6 +170,7 @@ mod tests {
             port: None,
             database: None,
             username: None,
+            ssl_mode: None,
             file_path: Some(format!("/tmp/{id}.db")),
             remember_in_memory: false,
             created_at_ms: 0,

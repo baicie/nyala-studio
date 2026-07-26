@@ -5,6 +5,8 @@
 import './media/sqlConnections.css';
 
 import { localize, localize2 } from '../../../../nls.js';
+import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
+import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
@@ -20,6 +22,7 @@ import { IExtensionService } from '../../../services/extensions/common/extension
 import { IWorkbenchLayoutService } from '../../../services/layout/browser/layoutService.js';
 import { IViewDescriptorService } from '../../../common/views.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
+import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import {
 	Extensions,
 	IViewContainersRegistry,
@@ -28,13 +31,58 @@ import {
 	ViewContainerLocation
 } from '../../../common/views.js';
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
+import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { SqlConnectionsView } from './sqlConnectionsView.js';
 import {
 	SQL_CONNECTIONS_FOCUS_COMMAND_ID,
+	SQL_CONNECTIONS_ADD_COMMAND_ID,
+	SQL_CONNECTIONS_REFRESH_COMMAND_ID,
 	SQL_CONNECTIONS_STORAGE_ID,
 	SQL_CONNECTIONS_VIEW_ID,
 	SQL_CONNECTIONS_VIEWLET_ID
 } from '../common/sqlConnections.js';
+
+class SqlAddConnectionAction extends Action2 {
+	constructor() {
+		super({
+			id: SQL_CONNECTIONS_ADD_COMMAND_ID,
+			title: localize2('sqlConnectionsAdd', 'Nyala: Add Connection'),
+			category: Categories.View,
+			f1: true,
+			menu: {
+				id: MenuId.CommandPalette
+			}
+		});
+	}
+
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		const view = await accessor.get(IViewsService).openView<SqlConnectionsView>(SQL_CONNECTIONS_VIEW_ID, true);
+		view?.openConnectionForm();
+	}
+}
+
+class SqlRefreshConnectionsAction extends Action2 {
+	constructor() {
+		super({
+			id: SQL_CONNECTIONS_REFRESH_COMMAND_ID,
+			title: localize2('sqlConnectionsRefresh', 'Nyala: Refresh Connections'),
+			category: Categories.View,
+			f1: true,
+			menu: {
+				id: MenuId.CommandPalette
+			}
+		});
+	}
+
+	override async run(accessor: ServicesAccessor, options?: { readonly revealConnectionId?: string }): Promise<void> {
+		const view = await accessor.get(IViewsService).openView<SqlConnectionsView>(SQL_CONNECTIONS_VIEW_ID, true);
+		if (typeof options?.revealConnectionId === 'string') {
+			await view?.refreshAndRevealConnection(options.revealConnectionId);
+			return;
+		}
+		await view?.refresh();
+	}
+}
 
 const sqlConnectionsIcon = registerIcon(
 	'sql-connections-view-icon',
@@ -117,3 +165,6 @@ viewsRegistry.registerViews(
 	],
 	SQL_CONNECTIONS_VIEW_CONTAINER
 );
+
+registerAction2(SqlAddConnectionAction);
+registerAction2(SqlRefreshConnectionsAction);

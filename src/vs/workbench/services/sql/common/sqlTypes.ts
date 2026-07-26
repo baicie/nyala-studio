@@ -19,6 +19,29 @@ export const enum SqlSslMode {
 	Require = 'require'
 }
 
+export interface SqlDemoBootstrapResult {
+	readonly dbPath: string;
+	readonly reused: boolean;
+	readonly connected: boolean;
+	readonly sampleConnectionId: string;
+}
+
+export interface MysqlPreviewValidationInput {
+	readonly host: string;
+	readonly port: number;
+	readonly database: string;
+	readonly username?: string;
+	readonly sslMode?: SqlSslMode;
+}
+
+export interface MysqlPreviewValidationReport {
+	readonly selectOk: boolean;
+	readonly ddlOk: boolean;
+	readonly droppedTable: boolean;
+	readonly elapsedMs: number;
+	readonly warnings: readonly string[];
+}
+
 export interface SqlConnectionInput {
 	id?: string;
 	name?: string;

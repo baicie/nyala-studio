@@ -1,0 +1,97 @@
+/*---------------------------------------------------------------------------------------------
+ * SQL Studio Next - Startup splash overlay.
+ *
+ * Nyala-branded full-bleed overlay that masks the workbench boot so a
+ * native window zoom (or a slow Tauri WebView warm-up) does not look
+ * like a blank white screen. The overlay is part of the static HTML
+ * shell so it appears immediately - before any TypeScript bundle
+ * executes - and is dismissed by the SqlWorkbenchSplashContribution
+ * once the workbench reaches `WorkbenchPhase.AfterRestored`.
+ *
+ * The element default state is visible (`display: flex`); the
+ * dismissing contribution adds `.nyala-splash--hidden` which fades
+ * and removes the overlay. Avoid any state where the splash is
+ * permanently on-screen; if the JS boot fails for any reason the
+ * spinner remains calm and never produces a flash of bright content.
+ *--------------------------------------------------------------------------------------------*/
+
+.nyala-splash {
+	position: fixed;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 18px;
+	color: #3b3b3b;
+	background-color: #ffffff;
+	font-family:
+		-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans',
+		'Helvetica Neue', sans-serif;
+	font-size: 13px;
+	z-index: 9999;
+	opacity: 1;
+	transition: opacity 220ms ease-in-out;
+}
+
+.nyala-splash--hidden {
+	opacity: 0;
+	pointer-events: none;
+	visibility: hidden;
+}
+
+.nyala-splash__brand {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+}
+
+.nyala-splash__logo {
+	width: 56px;
+	height: 56px;
+	image-rendering: -webkit-optimize-contrast;
+}
+
+.nyala-splash__name {
+	font-size: 22px;
+	font-weight: 600;
+	letter-spacing: 0;
+	color: #1f1f1f;
+}
+
+.nyala-splash__status {
+	font-size: 12px;
+	opacity: 0.7;
+	letter-spacing: 0;
+}
+
+.nyala-splash__spinner {
+	width: 22px;
+	height: 22px;
+	border-radius: 50%;
+	border: 2px solid rgba(0, 0, 0, 0.12);
+	border-top-color: #3565b3;
+	animation: nyala-splash-spin 0.9s linear infinite;
+}
+
+@keyframes nyala-splash-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@media (prefers-color-scheme: dark) {
+	.nyala-splash {
+		background-color: #1e1e1e;
+		color: #d4d4d4;
+	}
+
+	.nyala-splash__name {
+		color: #ffffff;
+	}
+
+	.nyala-splash__spinner {
+		border-color: rgba(255, 255, 255, 0.16);
+		border-top-color: #5a9bd8;
+	}
+}

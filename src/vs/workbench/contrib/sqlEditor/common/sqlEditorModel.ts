@@ -64,6 +64,15 @@ export function normalizeExecutableSql(sql: string): string {
 	return sql.trim();
 }
 
+/** Browser previews have no native connection store to query. */
+export function canLoadSqlEditorConnections(isNativeRuntime: boolean): boolean {
+	return isNativeRuntime;
+}
+
+export function shouldResolveDefaultSqlConnection(isNativeRuntime: boolean, connectionId: string | undefined): boolean {
+	return canLoadSqlEditorConnections(isNativeRuntime) && !connectionId;
+}
+
 export function createExecutePayload(
 	connectionId: string | undefined,
 	sql: string,

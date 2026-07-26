@@ -4,16 +4,29 @@ use super::types::{
 };
 use mysql::prelude::Queryable;
 use mysql::{OptsBuilder, Pool, PooledConn, Row, SslOpts, Value};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+pub const MYSQL_TCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+pub const MYSQL_IO_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Creates the common `MySQL` options builder used by every connection path.
+/// Keeping the limits here prevents UI validation, V1, and V2 from having
+/// different behavior when a host is unreachable or stops responding.
+pub fn mysql_opts_builder() -> OptsBuilder {
+    OptsBuilder::new()
+        .tcp_connect_timeout(Some(MYSQL_TCP_CONNECT_TIMEOUT))
+        .read_timeout(Some(MYSQL_IO_TIMEOUT))
+        .write_timeout(Some(MYSQL_IO_TIMEOUT))
+}
 
 pub fn open_mysql_pool(input: &SqlConnectionInput) -> Result<Pool, String> {
     let host = required(input.host.as_deref(), "host")?;
     let database = required(input.database.as_deref(), "database")?;
     let port = input.port.unwrap_or(3306);
     let username = optional(input.username.as_deref());
-    let password = optional(input.password.as_deref());
+    let password = optional_password(input.password.as_deref());
 
-    let mut builder = OptsBuilder::new()
+    let mut builder = mysql_opts_builder()
         .ip_or_hostname(Some(host))
         .tcp_port(port)
         .db_name(Some(database));
@@ -282,6 +295,13 @@ fn optional(value: Option<&str>) -> Option<String> {
     }
 }
 
+fn optional_password(value: Option<&str>) -> Option<String> {
+    match value {
+        Some("") | None => None,
+        Some(value) => Some(value.to_string()),
+    }
+}
+
 fn elapsed_ms(started_at: Instant) -> u64 {
     u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
@@ -289,8 +309,7 @@ fn elapsed_ms(started_at: Instant) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mysql::Value;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use mysql::{Opts, Value};
 
     #[test]
     fn mysql_value_to_cell_handles_null() {
@@ -329,91 +348,32 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires NYALA_TEST_MYSQL_HOST and NYALA_TEST_MYSQL_DATABASE"]
-    fn mysql_live_preview_flow() -> Result<(), String> {
-        let host = required_test_env("NYALA_TEST_MYSQL_HOST")?;
-        let database = required_test_env("NYALA_TEST_MYSQL_DATABASE")?;
-        let port = std::env::var("NYALA_TEST_MYSQL_PORT")
-            .ok()
-            .map(|value| {
-                value
-                    .parse::<u16>()
-                    .map_err(|err| format!("invalid NYALA_TEST_MYSQL_PORT: {err}"))
-            })
-            .transpose()?
-            .unwrap_or(3306);
+    fn mysql_options_builder_bounds_network_operations() {
+        let opts = Opts::from(mysql_opts_builder());
 
-        let input = SqlConnectionInput {
-            id: Some("nyala-mysql-integration".to_string()),
-            name: Some("Nyala MySQL Integration".to_string()),
-            kind: super::super::types::SqlConnectionKind::MySql,
-            database_path: None,
-            host: Some(host),
-            port: Some(port),
-            database: Some(database.clone()),
-            username: std::env::var("NYALA_TEST_MYSQL_USERNAME").ok(),
-            password: std::env::var("NYALA_TEST_MYSQL_PASSWORD").ok(),
-            ssl_mode: Some(SqlSslMode::Prefer),
-            read_only: false,
-            create_if_missing: false,
-        };
-
-        let pool = open_mysql_pool(&input)?;
-        test_mysql_connection(&pool)?;
-
-        let databases = list_mysql_databases(&pool)?;
-        if !databases.iter().any(|item| item.name == database) {
-            return Err(format!("configured database '{database}' was not listed"));
-        }
-
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|err| format!("system clock error: {err}"))?
-            .as_millis();
-        let table_name = format!("nyala_integration_{suffix}");
-        let create_sql = format!(
-            "CREATE TABLE `{table_name}` (id BIGINT PRIMARY KEY, name VARCHAR(64) NOT NULL)"
+        assert_eq!(
+            opts.get_tcp_connect_timeout(),
+            Some(MYSQL_TCP_CONNECT_TIMEOUT)
         );
-        let drop_sql = format!("DROP TABLE IF EXISTS `{table_name}`");
-
-        execute_mysql_query(&pool, &create_sql, 100)?;
-
-        let verification = (|| -> Result<(), String> {
-            let tables = list_mysql_tables(&pool, Some(&database))?;
-            if !tables.iter().any(|table| table.name == table_name) {
-                return Err(format!("integration table '{table_name}' was not listed"));
-            }
-
-            let columns = list_mysql_columns(&pool, Some(&database), &table_name)?;
-            if columns.len() != 2 || columns[0].name != "id" || columns[1].name != "name" {
-                return Err(format!("unexpected integration columns: {columns:?}"));
-            }
-
-            let result = execute_mysql_query(&pool, "SELECT 1 AS value", 100)?;
-            if result.row_count != 1
-                || result.columns.first().map(|column| column.name.as_str()) != Some("value")
-            {
-                return Err(format!("unexpected SELECT 1 result: {result:?}"));
-            }
-
-            Ok(())
-        })();
-
-        let cleanup = execute_mysql_query(&pool, &drop_sql, 100).map(|_| ());
-        verification?;
-        cleanup
+        assert_eq!(opts.get_read_timeout().copied(), Some(MYSQL_IO_TIMEOUT));
+        assert_eq!(opts.get_write_timeout().copied(), Some(MYSQL_IO_TIMEOUT));
     }
 
-    fn required_test_env(name: &str) -> Result<String, String> {
-        std::env::var(name)
-            .map(|value| value.trim().to_string())
-            .map_err(|_| format!("{name} must be set for the ignored MySQL integration test"))
-            .and_then(|value| {
-                if value.is_empty() {
-                    Err(format!("{name} must not be empty"))
-                } else {
-                    Ok(value)
-                }
-            })
+    #[test]
+    fn optional_password_preserves_leading_and_trailing_whitespace() {
+        assert_eq!(
+            optional_password(Some(" secret ")),
+            Some(" secret ".to_string())
+        );
+    }
+
+    #[test]
+    fn optional_password_preserves_whitespace_only_value() {
+        assert_eq!(optional_password(Some("   ")), Some("   ".to_string()));
+    }
+
+    #[test]
+    fn optional_password_omits_empty_value() {
+        assert_eq!(optional_password(Some("")), None);
     }
 }

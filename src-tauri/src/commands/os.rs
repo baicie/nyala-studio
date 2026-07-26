@@ -1,6 +1,8 @@
-use serde::Serialize;
 use std::env;
 use std::path::PathBuf;
+
+use serde::Serialize;
+use tauri::Manager;
 
 #[derive(Debug, Serialize)]
 pub struct OsInfo {
@@ -90,7 +92,6 @@ pub(crate) fn resolve_user_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, S
         return Ok(config_dir.join("SideX").join("UserData"));
     }
 
-    use tauri::Manager;
     let dir = app
         .path()
         .app_data_dir()

@@ -13,17 +13,12 @@ import {
 } from '../../../common/contributions.js';
 import { Extensions as ViewExtensions, IViewsRegistry } from '../../../common/views.js';
 import { SQL_RESULT_VIEW_CONTAINER } from '../../sqlResult/browser/sqlResult.contribution.js';
-import {
-	ISqlProductPreferencesService,
-	SqlProductPreferencesService
-} from '../common/sqlProductPreferencesService.js';
+import { ISqlProductPreferencesService, SqlProductPreferencesService } from '../common/sqlProductPreferencesService.js';
 import { SqlProductBootstrapContribution } from './sqlProductBootstrap.js';
-import {
-	SQL_PRODUCT_PREFERENCES_VIEW_ID,
-	SqlProductPreferencesView
-} from './sqlProductPreferencesView.js';
+import { SQL_PRODUCT_PREFERENCES_VIEW_ID, SqlProductPreferencesView } from './sqlProductPreferencesView.js';
 import { SqlProductWelcomePane, SQL_PRODUCT_WELCOME_VIEW_ID } from './sqlProductWelcomePane.js';
 import { SqlProductWelcomeView, WELCOME_ACTION_IDS } from './sqlProductWelcomeView.js';
+import { SqlWorkbenchSplashContribution } from './sqlWorkbenchSplash.js';
 import './sqlProductActions.js';
 import './media/sqlProductPreferences.css';
 import './media/sqlProductWelcome.css';
@@ -62,6 +57,15 @@ Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).regi
 	'workbench.contrib.sqlProductBootstrap',
 	SqlProductBootstrapContribution,
 	WorkbenchPhase.AfterRestored
+);
+
+// Register at startup so the 12-second safety timer also protects a
+// workbench that never reaches Restored. The contribution itself waits
+// for Restored before beginning the normal dismissal transition.
+Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).registerWorkbenchContribution2(
+	SqlWorkbenchSplashContribution.ID,
+	SqlWorkbenchSplashContribution,
+	WorkbenchPhase.BlockStartup
 );
 
 // Phase 08 §2.6 welcome view model + ViewPane. The pane is the

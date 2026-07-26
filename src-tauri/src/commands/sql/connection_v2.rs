@@ -24,7 +24,7 @@ use super::connection_manager::SharedConnectionManager;
 use super::types::{ConnectionProfile, ConnectionSecret, SqlCommandError};
 
 #[tauri::command]
-pub fn sql_test_connection_v2(
+pub async fn sql_test_connection_v2(
     manager: State<'_, SharedConnectionManager>,
     profile: ConnectionProfile,
     secret: ConnectionSecret,
@@ -32,21 +32,40 @@ pub fn sql_test_connection_v2(
     // Test path: open-then-close. The secret is consumed by
     // `open_for_test`, which is responsible for clearing it from the
     // manager afterwards.
-    manager.open_for_test(&profile, secret)
+    let manager = manager.inner().clone();
+
+    tauri::async_runtime::spawn_blocking(move || manager.open_for_test(&profile, secret))
+        .await
+        .map_err(|_| {
+            SqlCommandError::new(
+                "internal",
+                "Connection test task stopped before it could complete",
+            )
+        })?
 }
 
 #[tauri::command]
-pub fn sql_open_connection_v2(
+pub async fn sql_open_connection_v2(
     manager: State<'_, SharedConnectionManager>,
     profile: ConnectionProfile,
     secret: ConnectionSecret,
 ) -> Result<String, SqlCommandError> {
     // Save the profile first so that even a failed open still leaves
-    // the profile available for re-attempt. Open path keeps the secret
-    // in memory.
-    manager.upsert_profile(profile.clone())?;
-    manager.put_secret(&profile.id, secret.clone());
-    manager.open(&profile, secret)
+    // the profile available for re-attempt. `ConnectionManager::open`
+    // stores the secret only after the driver has opened successfully.
+    let manager = manager.inner().clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        manager.upsert_profile(profile.clone())?;
+        manager.open(&profile, secret)
+    })
+    .await
+    .map_err(|_| {
+        SqlCommandError::new(
+            "internal",
+            "Connection open task stopped before it could complete",
+        )
+    })?
 }
 
 #[tauri::command]
@@ -94,6 +113,7 @@ mod tests {
             port: None,
             database: None,
             username: None,
+            ssl_mode: None,
             file_path: None,
             remember_in_memory: false,
             created_at_ms: 0,

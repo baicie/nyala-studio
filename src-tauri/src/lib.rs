@@ -369,6 +369,11 @@ fn resolve_product_data_file(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[allow(clippy::too_many_lines)]
 pub fn run() {
+    let sql_connection_manager = build_default_manager(None);
+    if let Err(error) = sql_connection_manager.load_persisted() {
+        log::warn!("V2 SQL connection profiles could not be restored: {error}");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
@@ -388,9 +393,7 @@ pub fn run() {
         .manage(ExtensionDiagnosticsStore::new())
         .manage(Arc::new(SettingsStore::new()))
         .manage(Arc::new(SqlConnectionStore::new()))
-        .manage(build_default_manager(Some(
-            std::path::PathBuf::from("nyala.connections.v1").join("connections.json"),
-        )))
+        .manage(sql_connection_manager)
         .manage(Arc::new(sidex_extension_api::CommandRegistry::new()))
         .manage(Arc::new(RemoteManagerStore::new()))
         .manage(Arc::new(

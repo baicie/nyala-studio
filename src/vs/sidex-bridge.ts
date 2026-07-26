@@ -1,8 +1,10 @@
 /*---------------------------------------------------------------------------------------------
  * SQL Studio Next — Low-level Tauri IPC bridge.
- * Wraps `window.__TAURI__` with a graceful fallback when running outside
+ * Wraps the Tauri v2 core API with a graceful fallback when running outside
  * the Tauri webview, such as in a plain browser during development.
  *--------------------------------------------------------------------------------------------*/
+
+import { invoke as tauriInvoke, isTauri as isTauriRuntime } from '@tauri-apps/api/core';
 
 declare global {
 	interface Window {
@@ -14,7 +16,7 @@ declare global {
 	}
 }
 
-let _invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null = null;
+type TauriInvoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 function getTauriWindow(): Window | undefined {
 	if (typeof window === 'undefined') {
@@ -24,16 +26,15 @@ function getTauriWindow(): Window | undefined {
 	return window;
 }
 
-function getInvoke(): ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null {
-	if (_invoke) {
-		return _invoke;
-	}
-
+function getInvoke(): TauriInvoke | null {
 	const tauriWindow = getTauriWindow();
 
 	if (tauriWindow?.__TAURI__?.core?.invoke) {
-		_invoke = tauriWindow.__TAURI__.core.invoke;
-		return _invoke;
+		return tauriWindow.__TAURI__.core.invoke;
+	}
+
+	if (isTauriRuntime()) {
+		return tauriInvoke;
 	}
 
 	return null;

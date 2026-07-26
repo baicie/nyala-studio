@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use crate::runtime_status::DriverId;
 
 use super::metadata_v2::{ColumnDto, SchemaObjectDto, SchemataDto};
-use super::types::{ConnectionProfile, ConnectionSecret, DriverIdDto, SqlCommandError};
+use super::types::{ConnectionProfile, ConnectionSecret, DriverIdDto, SqlCommandError, SqlSslMode};
 
 /// A live SQL connection. Concrete drivers own the underlying handle and
 /// expose a tiny set of operations the rest of the SQL MVP cares about.
@@ -287,9 +287,42 @@ impl SqlConnection for SqliteConnection {
 // hand out a connection; it does *not* actually run queries.
 // ---------------------------------------------------------------------------
 
-use mysql::prelude::Queryable;
+use mysql::{prelude::Queryable, SslOpts};
 
 pub struct MysqlDriver;
+
+impl MysqlDriver {
+    fn options(
+        profile: &ConnectionProfile,
+        secret: &ConnectionSecret,
+    ) -> Result<mysql::OptsBuilder, String> {
+        let host = non_empty(profile.host.as_deref(), "host")?;
+        let database = non_empty(profile.database.as_deref(), "database")?;
+        let port = profile.port.unwrap_or(3306);
+
+        let mut builder = super::mysql_runtime::mysql_opts_builder()
+            .ip_or_hostname(Some(host))
+            .tcp_port(port)
+            .db_name(Some(database));
+
+        if let Some(username) = profile
+            .username
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            builder = builder.user(Some(username));
+        }
+        if let Some(password) = secret.password.as_deref() {
+            builder = builder.pass(Some(password));
+        }
+        if matches!(profile.ssl_mode, Some(SqlSslMode::Require)) {
+            builder = builder.ssl_opts(Some(SslOpts::default()));
+        }
+
+        Ok(builder)
+    }
+}
 
 impl SqlDriver for MysqlDriver {
     fn id(&self) -> DriverId {
@@ -301,29 +334,10 @@ impl SqlDriver for MysqlDriver {
         profile: &ConnectionProfile,
         secret: &ConnectionSecret,
     ) -> Result<BoxedConnection, String> {
-        let host = non_empty(profile.host.as_deref(), "host")?;
-        let database = non_empty(profile.database.as_deref(), "database")?;
-        let port = profile.port.unwrap_or(3306);
-
         // We intentionally call the same builder used by Phase 03 but
         // immediately drop the pool after one round-trip. Phase 03 will
         // lift the pool into a real executor.
-        let mut builder = mysql::OptsBuilder::new()
-            .ip_or_hostname(Some(host))
-            .tcp_port(port)
-            .db_name(Some(database));
-
-        if let Some(username) = profile
-            .username
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            builder = builder.user(Some(username));
-        }
-        if let Some(password) = secret.password.as_deref() {
-            builder = builder.pass(Some(password));
-        }
+        let builder = Self::options(profile, secret)?;
 
         let pool = mysql::Pool::new(builder)
             .map_err(|err| format!("failed to build MySQL pool: {err}"))?;
@@ -412,6 +426,7 @@ fn non_empty(value: Option<&str>, field: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mysql::Opts;
 
     fn profile(driver: DriverIdDto) -> ConnectionProfile {
         ConnectionProfile {
@@ -423,6 +438,7 @@ mod tests {
             port: None,
             database: None,
             username: None,
+            ssl_mode: None,
             file_path: None,
             remember_in_memory: false,
             created_at_ms: 0,
@@ -487,6 +503,27 @@ mod tests {
         p.host = Some("127.0.0.1".to_string());
         let err = driver.open(&p, &ConnectionSecret::default()).unwrap_err();
         assert!(err.contains("database"));
+    }
+
+    #[test]
+    fn mysql_driver_requires_tls_for_require_ssl_mode() {
+        let mut p = profile(DriverIdDto::Mysql);
+        p.host = Some("127.0.0.1".to_string());
+        p.database = Some("app".to_string());
+        p.ssl_mode = Some(SqlSslMode::Require);
+
+        let opts = Opts::from(MysqlDriver::options(&p, &ConnectionSecret::default()).unwrap());
+        assert!(opts.get_ssl_opts().is_some());
+    }
+
+    #[test]
+    fn mysql_driver_leaves_tls_optional_without_require_ssl_mode() {
+        let mut p = profile(DriverIdDto::Mysql);
+        p.host = Some("127.0.0.1".to_string());
+        p.database = Some("app".to_string());
+
+        let opts = Opts::from(MysqlDriver::options(&p, &ConnectionSecret::default()).unwrap());
+        assert!(opts.get_ssl_opts().is_none());
     }
 
     #[test]

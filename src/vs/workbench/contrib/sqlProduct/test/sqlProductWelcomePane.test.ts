@@ -23,19 +23,16 @@ test('mapWelcomeActionToCommandId routes open.demo to bootstrap demo', () => {
 	assert.equal(mapWelcomeActionToCommandId(WELCOME_ACTION_IDS.openDemo), 'sqlStudio.product.bootstrapDemo');
 });
 
-test('mapWelcomeActionToCommandId routes new.connection to connections viewlet', () => {
-	assert.equal(
-		mapWelcomeActionToCommandId(WELCOME_ACTION_IDS.newConnection),
-		'workbench.view.sqlConnections'
-	);
+test('mapWelcomeActionToCommandId routes new.connection to the focused connection form', () => {
+	assert.equal(mapWelcomeActionToCommandId(WELCOME_ACTION_IDS.newConnection), 'sqlStudio.connections.add');
 });
 
 test('mapWelcomeActionToCommandId routes open.history to history view focus', () => {
 	assert.equal(mapWelcomeActionToCommandId(WELCOME_ACTION_IDS.openHistory), `${SQL_QUERY_HISTORY_VIEW_ID}.focus`);
 });
 
-test('mapWelcomeActionToCommandId routes docs.shortcuts to command palette', () => {
-	assert.equal(mapWelcomeActionToCommandId(WELCOME_ACTION_IDS.docsShortcuts), 'workbench.action.showCommands');
+test('mapWelcomeActionToCommandId routes docs.shortcuts to keyboard shortcuts', () => {
+	assert.equal(mapWelcomeActionToCommandId(WELCOME_ACTION_IDS.docsShortcuts), 'workbench.action.openGlobalKeybindings');
 });
 
 test('mapWelcomeActionToCommandId returns undefined for unknown ids', () => {
@@ -46,11 +43,7 @@ test('mapWelcomeActionToCommandId covers every canonical welcome action id', () 
 	// Guard against a future action being added to the model
 	// without a corresponding routing entry in the pane.
 	for (const id of Object.values(WELCOME_ACTION_IDS)) {
-		assert.notEqual(
-			mapWelcomeActionToCommandId(id),
-			undefined,
-			`action id "${id}" must have a routing entry`
-		);
+		assert.notEqual(mapWelcomeActionToCommandId(id), undefined, `action id "${id}" must have a routing entry`);
 	}
 });
 

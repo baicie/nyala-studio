@@ -5,6 +5,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { isCancellationError } from '../../../../base/common/errors.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { URI } from '../../../../base/common/uri.js';
 import { IModelService } from '../../../../editor/common/services/model.js';
@@ -28,6 +29,7 @@ import {
 	SearchRange
 } from '../common/search.js';
 import { SearchService } from '../common/searchService.js';
+import { raceTauriSearchRequest } from '../common/tauriSearchCancellation.js';
 
 interface RustFileMatch {
 	path: string;
@@ -65,17 +67,25 @@ class TauriSearchProvider extends Disposable implements ISearchResultProvider {
 			}
 
 			try {
-				const matches = await invoke<RustTextMatch[]>('search_text', {
-					root: fq.folder.fsPath,
-					query: query.contentPattern.pattern,
-					options: {
-						max_results: query.maxResults ?? 500,
-						case_sensitive: query.contentPattern.isCaseSensitive ?? false,
-						is_regex: query.contentPattern.isRegExp ?? false,
-						include: query.includePattern ? Object.keys(query.includePattern) : [],
-						exclude: query.excludePattern ? Object.keys(query.excludePattern) : []
-					}
-				});
+				const matches = await this.invokeSearch<RustTextMatch[]>(
+					'search_text',
+					{
+						root: fq.folder.fsPath,
+						query: query.contentPattern.pattern,
+						options: {
+							max_results: query.maxResults ?? 500,
+							case_sensitive: query.contentPattern.isCaseSensitive ?? false,
+							is_regex: query.contentPattern.isRegExp ?? false,
+							include: query.includePattern ? Object.keys(query.includePattern) : [],
+							exclude: query.excludePattern ? Object.keys(query.excludePattern) : []
+						}
+					},
+					token
+				);
+
+				if (token?.isCancellationRequested) {
+					break;
+				}
 
 				const byFile = new Map<string, RustTextMatch[]>();
 				for (const m of matches) {
@@ -113,6 +123,9 @@ class TauriSearchProvider extends Disposable implements ISearchResultProvider {
 					limitHit = true;
 				}
 			} catch (err) {
+				if (isCancellationError(err)) {
+					throw err;
+				}
 				this.logService.error('[Nyala-Search] textSearch failed:', err);
 			}
 		}
@@ -130,15 +143,23 @@ class TauriSearchProvider extends Disposable implements ISearchResultProvider {
 			}
 
 			try {
-				const matches = await invoke<RustFileMatch[]>('search_files', {
-					root: fq.folder.fsPath,
-					pattern: query.filePattern ?? '',
-					options: {
-						max_results: query.maxResults ?? 500,
-						include: query.includePattern ? Object.keys(query.includePattern) : [],
-						exclude: query.excludePattern ? Object.keys(query.excludePattern) : []
-					}
-				});
+				const matches = await this.invokeSearch<RustFileMatch[]>(
+					'search_files',
+					{
+						root: fq.folder.fsPath,
+						pattern: query.filePattern ?? '',
+						options: {
+							max_results: query.maxResults ?? 500,
+							include: query.includePattern ? Object.keys(query.includePattern) : [],
+							exclude: query.excludePattern ? Object.keys(query.excludePattern) : []
+						}
+					},
+					token
+				);
+
+				if (token?.isCancellationRequested) {
+					break;
+				}
 
 				for (const m of matches) {
 					results.push({ resource: URI.file(m.path) });
@@ -148,6 +169,9 @@ class TauriSearchProvider extends Disposable implements ISearchResultProvider {
 					limitHit = true;
 				}
 			} catch (err) {
+				if (isCancellationError(err)) {
+					throw err;
+				}
 				this.logService.error('[Nyala-Search] fileSearch failed:', err);
 			}
 		}
@@ -157,6 +181,15 @@ class TauriSearchProvider extends Disposable implements ISearchResultProvider {
 
 	async clearCache(_cacheKey: string): Promise<void> {
 		// Rust search is stateless, nothing to clear
+	}
+
+	private invokeSearch<T>(
+		command: 'search_text' | 'search_files',
+		args: Record<string, unknown>,
+		token?: CancellationToken
+	): Promise<T> {
+		const request = invoke<T>(command, args);
+		return raceTauriSearchRequest(request, token);
 	}
 }
 

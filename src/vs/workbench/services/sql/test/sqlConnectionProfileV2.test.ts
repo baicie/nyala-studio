@@ -5,11 +5,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-	ConnectionProfile,
-	ConnectionSecret,
-} from '../common/sqlConnection.js';
+import { ConnectionProfile, ConnectionSecret } from '../common/sqlConnection.js';
 import { SqlRuntimeDriverId } from '../common/sqlDriverCatalog.js';
+import { SqlSslMode } from '../common/sqlTypes.js';
 
 test('connection profile serializes without secret fields', () => {
 	const profile: ConnectionProfile = {
@@ -18,7 +16,7 @@ test('connection profile serializes without secret fields', () => {
 		driver: SqlRuntimeDriverId.Sqlite,
 		readOnly: false,
 		filePath: '/tmp/a.db',
-		createdAtMs: 0,
+		createdAtMs: 0
 	};
 
 	const json = JSON.stringify(profile);
@@ -35,7 +33,7 @@ test('connection secret can be cleared without affecting profile', () => {
 		readOnly: true,
 		host: '127.0.0.1',
 		port: 3306,
-		createdAtMs: 0,
+		createdAtMs: 0
 	};
 	const cleared: ConnectionSecret = { password: undefined };
 	assert.equal(cleared.password, undefined);
@@ -46,7 +44,7 @@ test('connection profile driver must be a runtime driver id', () => {
 	const allowed: SqlRuntimeDriverId[] = [
 		SqlRuntimeDriverId.Sqlite,
 		SqlRuntimeDriverId.MySql,
-		SqlRuntimeDriverId.Postgres,
+		SqlRuntimeDriverId.Postgres
 	];
 	for (const driver of allowed) {
 		const profile: Pick<ConnectionProfile, 'driver'> = { driver };
@@ -60,7 +58,7 @@ test('connection profile readOnly flag survives round-trip', () => {
 		label: 'p',
 		driver: SqlRuntimeDriverId.Sqlite,
 		readOnly: true,
-		createdAtMs: 0,
+		createdAtMs: 0
 	};
 	const round = JSON.parse(JSON.stringify(profile));
 	assert.equal(round.readOnly, true);
@@ -73,7 +71,7 @@ test('memory-mode SQLite profile has no host or port', () => {
 		driver: SqlRuntimeDriverId.Sqlite,
 		readOnly: false,
 		rememberInMemory: true,
-		createdAtMs: 0,
+		createdAtMs: 0
 	};
 	assert.equal(profile.host, undefined);
 	assert.equal(profile.port, undefined);
@@ -85,10 +83,13 @@ test('saved file never contains password even after import', async () => {
 	const { writeFileSync, readFileSync, unlinkSync } = await import('node:fs');
 
 	const path = join(tmpdir(), `nyala-ct-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
-	writeFileSync(path, JSON.stringify({
-		version: 1,
-		profiles: [{ id: 'a', label: 'a', driver: 'sqlite', readOnly: false, password: 'PWN' }],
-	}));
+	writeFileSync(
+		path,
+		JSON.stringify({
+			version: 1,
+			profiles: [{ id: 'a', label: 'a', driver: 'sqlite', readOnly: false, password: 'PWN' }]
+		})
+	);
 
 	try {
 		const text = readFileSync(path, 'utf8');
@@ -106,7 +107,11 @@ test('saved file never contains password even after import', async () => {
 		const after = readFileSync(path, 'utf8');
 		assert.ok(!after.includes('PWN'));
 	} finally {
-		try { unlinkSync(path); } catch { /* best-effort cleanup */ }
+		try {
+			unlinkSync(path);
+		} catch {
+			/* best-effort cleanup */
+		}
 	}
 });
 
@@ -120,12 +125,14 @@ test('connection profile host/port/database fields survive JSON round-trip', () 
 		port: 3306,
 		database: 'app',
 		username: 'user',
-		createdAtMs: 42,
+		sslMode: SqlSslMode.Require,
+		createdAtMs: 42
 	};
 	const round = JSON.parse(JSON.stringify(profile));
 	assert.equal(round.host, '127.0.0.1');
 	assert.equal(round.port, 3306);
 	assert.equal(round.database, 'app');
 	assert.equal(round.username, 'user');
+	assert.equal(round.sslMode, SqlSslMode.Require);
 	assert.equal(round.createdAtMs, 42);
 });

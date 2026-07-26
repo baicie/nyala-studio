@@ -234,6 +234,9 @@ pub fn build_default_manager(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_PATH_ID: AtomicU64 = AtomicU64::new(0);
 
     fn profile(id: &str, driver: DriverIdDto) -> ConnectionProfile {
         ConnectionProfile {
@@ -245,17 +248,23 @@ mod tests {
             port: None,
             database: None,
             username: None,
+            ssl_mode: None,
             file_path: None,
             remember_in_memory: false,
             created_at_ms: 0,
         }
     }
 
+    fn temp_path(label: &str) -> std::path::PathBuf {
+        let id = NEXT_TEMP_PATH_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "nyala-conn-mgr-{}-{label}-{id}.json",
+            std::process::id()
+        ))
+    }
+
     fn fresh_manager() -> ConnectionManager {
-        ConnectionManager::new(
-            default_registry(),
-            std::env::temp_dir().join("nyala-conn-mgr.json"),
-        )
+        ConnectionManager::new(default_registry(), temp_path("fresh"))
     }
 
     #[test]
@@ -380,8 +389,35 @@ mod tests {
 
     #[test]
     fn build_default_manager_uses_default_registry() {
-        let manager = build_default_manager(None);
+        let manager = build_default_manager(Some(temp_path("default-registry")));
         // Can list profiles (empty list is fine).
         assert!(manager.list_profiles().is_empty());
+    }
+
+    #[test]
+    fn load_persisted_restores_profiles_without_secrets() {
+        let path = temp_path("reload");
+        let writer = ConnectionManager::new(default_registry(), path.clone());
+        writer
+            .upsert_profile(profile("saved", DriverIdDto::Sqlite))
+            .unwrap();
+        writer.put_secret(
+            "saved",
+            ConnectionSecret {
+                password: Some("must-not-persist".into()),
+            },
+        );
+
+        let restored = ConnectionManager::new(default_registry(), path.clone());
+        restored.load_persisted().expect("restore profiles");
+
+        assert_eq!(restored.list_profiles().len(), 1);
+        assert_eq!(restored.list_profiles()[0].id, "saved");
+        assert!(restored.get_secret("saved").is_none());
+        assert!(!std::fs::read_to_string(&path)
+            .expect("read persisted document")
+            .contains("must-not-persist"));
+
+        let _ = std::fs::remove_file(path);
     }
 }

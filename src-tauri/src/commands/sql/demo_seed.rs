@@ -25,9 +25,8 @@ use super::types::SqlCommandError;
 
 /// Inline schema + seed data for the demo database.
 ///
-/// `INSERT OR IGNORE` keeps the seeder idempotent: the second invocation
-/// after a fresh create is a no-op for rows, and re-running against an
-/// existing file with the same rows leaves the file unchanged.
+/// `NOT EXISTS` keeps later runs idempotent without deleting or rewriting
+/// rows that the user added to an existing demo database.
 const DEMO_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users (
     id    INTEGER PRIMARY KEY,
@@ -46,12 +45,31 @@ INSERT OR IGNORE INTO users(id, name, email) VALUES
     (3, 'Carol', 'carol@example.com'),
     (4, 'Dave',  'dave@example.com'),
     (5, 'Eve',   'eve@example.com');
-INSERT OR IGNORE INTO orders(user_id, amount, created_at) VALUES
-    (1, 100, '2026-07-01'),
-    (1, 250, '2026-07-02'),
-    (2,  80, '2026-07-01'),
-    (3,  40, '2026-07-02'),
-    (3, 110, '2026-07-03');
+INSERT INTO orders(user_id, amount, created_at)
+SELECT 1, 100, '2026-07-01'
+WHERE NOT EXISTS (
+    SELECT 1 FROM orders WHERE user_id = 1 AND amount = 100 AND created_at = '2026-07-01'
+);
+INSERT INTO orders(user_id, amount, created_at)
+SELECT 1, 250, '2026-07-02'
+WHERE NOT EXISTS (
+    SELECT 1 FROM orders WHERE user_id = 1 AND amount = 250 AND created_at = '2026-07-02'
+);
+INSERT INTO orders(user_id, amount, created_at)
+SELECT 2, 80, '2026-07-01'
+WHERE NOT EXISTS (
+    SELECT 1 FROM orders WHERE user_id = 2 AND amount = 80 AND created_at = '2026-07-01'
+);
+INSERT INTO orders(user_id, amount, created_at)
+SELECT 3, 40, '2026-07-02'
+WHERE NOT EXISTS (
+    SELECT 1 FROM orders WHERE user_id = 3 AND amount = 40 AND created_at = '2026-07-02'
+);
+INSERT INTO orders(user_id, amount, created_at)
+SELECT 3, 110, '2026-07-03'
+WHERE NOT EXISTS (
+    SELECT 1 FROM orders WHERE user_id = 3 AND amount = 110 AND created_at = '2026-07-03'
+);
 ";
 
 /// Returns the demo database directory.
@@ -127,6 +145,61 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
             .expect("count users");
         assert_eq!(n, 5, "idempotent seed must not duplicate users");
+        let orders: i64 = conn
+            .query_row("SELECT COUNT(*) FROM orders", [], |r| r.get(0))
+            .expect("count orders");
+        assert_eq!(orders, 5, "idempotent seed must not duplicate orders");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn ensure_demo_db_preserves_user_rows_matching_seed_values() {
+        let path = temp_demo_path("preserves_matching_user_rows");
+        let _ = std::fs::remove_file(&path);
+        ensure_demo_db(&path).expect("initial seed");
+
+        {
+            let conn = Connection::open(&path).expect("open for custom row setup");
+            conn.execute_batch(
+                "
+                INSERT INTO orders(user_id, amount, created_at)
+                VALUES (1, 100, '2026-07-01');
+                INSERT INTO orders(user_id, amount, created_at)
+                VALUES (5, 999, '2026-07-26');
+                ",
+            )
+            .expect("insert matching and distinct custom rows");
+        }
+
+        ensure_demo_db(&path).expect("repeat seed");
+        let conn = Connection::open(&path).expect("reopen database");
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM orders", [], |r| r.get(0))
+            .expect("count preserved orders");
+        let matching_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM orders
+                 WHERE user_id = 1 AND amount = 100 AND created_at = '2026-07-01'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count matching custom rows");
+        let custom_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM orders
+                 WHERE user_id = 5 AND amount = 999 AND created_at = '2026-07-26'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count custom rows");
+
+        assert_eq!(total, 7);
+        assert_eq!(
+            matching_rows, 2,
+            "bootstrap must not delete matching user data"
+        );
+        assert_eq!(custom_rows, 1, "bootstrap must preserve distinct user data");
+        drop(conn);
         let _ = std::fs::remove_file(&path);
     }
 
