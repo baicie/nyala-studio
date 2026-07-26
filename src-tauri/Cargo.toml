@@ -36,7 +36,7 @@ notify = { version = "7", features = ["macos_fsevent"] }
 portable-pty = "0.8"
 walkdir = "2"
 rusqlite = { version = "0.31", features = ["bundled"] }
-mysql = "26"
+mysql = { version = "28", features = ["rustls-tls-ring"] }
 tokio = { version = "1", features = ["full"] }
 hostname = "0.4"
 dirs = "5"
@@ -80,14 +80,15 @@ arboard = "3"
 open = "5"
 url = "2"
 
-# WASM extension runtime
-wasmtime = { version = "43", default-features = false, features = [
+# WASM extension runtime. Wasmtime 36 is the newest fully patched line that
+# remains compatible with the workspace's Rust 1.91 minimum (45+ needs 1.93).
+wasmtime = { version = "36.0.12", default-features = false, features = [
   "runtime",
   "component-model",
   "cranelift",
   "async",
 ] }
-wasmtime-wasi = "43"
+wasmtime-wasi = "36.0.12"
 toml = "0.8"
 anyhow = "1"
 sidex-db = { path = "../crates/sidex-db" }

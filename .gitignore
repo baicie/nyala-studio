@@ -21,8 +21,8 @@ build/
 /extensions/
 
 # ── Cargo.lock for library crates ───────────────────────────────────────────
-# Library lock files should not be committed (Cargo best practice).
-# The application lock (src-tauri/Cargo.lock) IS committed.
+# Standalone library/example lock files are not committed.
+# The workspace application lock (Cargo.lock at the repository root) is committed.
 sidex-extension-sdk/Cargo.lock
 extensions-rust/Cargo.lock
 examples/**/Cargo.lock

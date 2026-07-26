@@ -437,8 +437,19 @@ impl SideXServer {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
-        let mut cmd = Command::new("sh");
-        cmd.arg("-c").arg(command);
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut cmd = Command::new("cmd");
+            cmd.arg("/C");
+            cmd
+        };
+        #[cfg(not(windows))]
+        let mut cmd = {
+            let mut cmd = Command::new("sh");
+            cmd.arg("-c");
+            cmd
+        };
+        cmd.arg(command);
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
         }

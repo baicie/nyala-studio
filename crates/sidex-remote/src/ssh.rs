@@ -6,7 +6,6 @@
 
 use std::collections::HashMap;
 use std::fmt::Write;
-use std::io::BufRead;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,7 +13,13 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{bail, Context, Result};
 use russh::client;
-use russh_keys::key;
+use russh::keys::agent::client::{AgentClient, AgentStream};
+use russh::keys::agent::AgentIdentity;
+use russh::keys::known_hosts::known_host_keys_path;
+use russh::keys::{
+    check_known_hosts_path, load_secret_key, Algorithm, Error as KeyError, HashAlg, PrivateKey,
+    PrivateKeyWithHashAlg, PublicKey,
+};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
@@ -330,51 +335,45 @@ pub enum KnownHostStatus {
 }
 
 /// Check a host key against `~/.ssh/known_hosts`.
-pub fn check_known_host(
-    hostname: &str,
-    port: u16,
-    _server_key: &key::PublicKey,
-) -> KnownHostStatus {
+pub fn check_known_host(hostname: &str, port: u16, server_key: &PublicKey) -> KnownHostStatus {
     let path = match dirs::home_dir() {
         Some(h) => h.join(".ssh/known_hosts"),
         None => {
             return KnownHostStatus::Unknown {
-                fingerprint: "unknown".into(),
+                fingerprint: server_key.fingerprint(HashAlg::Sha256).to_string(),
             }
         }
     };
 
-    let target = if port == 22 {
-        hostname.to_string()
-    } else {
-        format!("[{hostname}]:{port}")
-    };
+    check_known_host_path(hostname, port, server_key, &path)
+}
 
-    let fp = "SHA256:<key>".to_string();
-
-    let Ok(file) = std::fs::File::open(&path) else {
-        return KnownHostStatus::Unknown { fingerprint: fp };
-    };
-
-    for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
-        let line = line.trim().to_string();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
+fn check_known_host_path(
+    hostname: &str,
+    port: u16,
+    server_key: &PublicKey,
+    path: &Path,
+) -> KnownHostStatus {
+    let new_fingerprint = server_key.fingerprint(HashAlg::Sha256).to_string();
+    match check_known_hosts_path(hostname, port, server_key, path) {
+        Ok(true) => KnownHostStatus::Trusted,
+        Err(KeyError::KeyChanged { line }) => {
+            let old_fingerprint = known_host_keys_path(hostname, port, path)
+                .ok()
+                .and_then(|keys| keys.into_iter().find(|(entry_line, _)| *entry_line == line))
+                .map_or_else(
+                    || "unknown".to_string(),
+                    |(_, key)| key.fingerprint(HashAlg::Sha256).to_string(),
+                );
+            KnownHostStatus::Changed {
+                old_fingerprint,
+                new_fingerprint,
+            }
         }
-        let parts: Vec<&str> = line.splitn(3, ' ').collect();
-        if parts.len() < 3 {
-            continue;
-        }
-        let hosts = parts[0];
-        if hosts
-            .split(',')
-            .any(|h| h.trim() == target || h.trim() == hostname)
-        {
-            return KnownHostStatus::Trusted;
-        }
+        Ok(false) | Err(_) => KnownHostStatus::Unknown {
+            fingerprint: new_fingerprint,
+        },
     }
-
-    KnownHostStatus::Unknown { fingerprint: fp }
 }
 
 // ---------------------------------------------------------------------------
@@ -477,18 +476,175 @@ pub fn parse_ssh_config(path: &Path) -> Result<Vec<SshHostConfig>> {
 // Client handler
 // ---------------------------------------------------------------------------
 
-pub struct ClientHandler;
+pub struct ClientHandler {
+    host: String,
+    port: u16,
+    known_hosts_path: PathBuf,
+}
 
-#[async_trait::async_trait]
+impl ClientHandler {
+    fn new(host: &str, port: u16) -> Result<Self> {
+        let known_hosts_path = dirs::home_dir()
+            .map(|home| home.join(".ssh/known_hosts"))
+            .context("locating the home directory for SSH host-key verification")?;
+        Ok(Self::with_known_hosts_path(host, port, known_hosts_path))
+    }
+
+    fn with_known_hosts_path(host: &str, port: u16, known_hosts_path: PathBuf) -> Self {
+        Self {
+            host: host.to_string(),
+            port,
+            known_hosts_path,
+        }
+    }
+}
+
 impl client::Handler for ClientHandler {
     type Error = anyhow::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &key::PublicKey,
+        server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        match check_known_hosts_path(
+            &self.host,
+            self.port,
+            server_public_key,
+            &self.known_hosts_path,
+        ) {
+            Ok(true) => Ok(true),
+            Ok(false) => bail!(
+                "unknown SSH host key for {}:{} ({}); add it to your SSH known_hosts file before connecting",
+                self.host,
+                self.port,
+                server_public_key.fingerprint(HashAlg::Sha256)
+            ),
+            Err(error) => Err(error).with_context(|| {
+                format!("verifying SSH host key for {}:{}", self.host, self.port)
+            }),
+        }
     }
+}
+
+type DynamicAgentClient = AgentClient<Box<dyn AgentStream + Send + Unpin>>;
+const SSH_AGENT_AUTH_TIMEOUT: Duration = Duration::from_mins(1);
+#[cfg(windows)]
+const SSH_AGENT_PIPE_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+
+#[cfg(unix)]
+async fn connect_ssh_agent() -> Result<DynamicAgentClient> {
+    AgentClient::connect_env()
+        .await
+        .map_err(|_| anyhow::anyhow!("unable to connect to the SSH agent from SSH_AUTH_SOCK"))
+        .map(AgentClient::dynamic)
+}
+
+#[cfg(windows)]
+async fn connect_ssh_agent() -> Result<DynamicAgentClient> {
+    let configured_socket = std::env::var_os("SSH_AUTH_SOCK");
+    let pipe_path = select_windows_agent_pipe(configured_socket.as_deref());
+
+    let pipe_attempt = tokio::time::timeout(
+        SSH_AGENT_PIPE_CONNECT_TIMEOUT,
+        AgentClient::connect_named_pipe(&pipe_path),
+    )
+    .await;
+    if let Ok(Ok(agent)) = pipe_attempt {
+        return Ok(agent.dynamic());
+    }
+
+    AgentClient::connect_pageant()
+        .await
+        .map(AgentClient::dynamic)
+        .map_err(|_| {
+            anyhow::anyhow!("unable to connect to either the Windows OpenSSH agent or Pageant")
+        })
+}
+
+#[cfg(windows)]
+fn select_windows_agent_pipe(configured_socket: Option<&std::ffi::OsStr>) -> std::ffi::OsString {
+    const NAMED_PIPE_PREFIX: &[u8] = br"\\.\pipe\";
+    const DEFAULT_OPENSSH_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
+
+    configured_socket
+        .filter(|value| {
+            value
+                .to_string_lossy()
+                .as_bytes()
+                .get(..NAMED_PIPE_PREFIX.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(NAMED_PIPE_PREFIX))
+        })
+        .map_or_else(
+            || std::ffi::OsString::from(DEFAULT_OPENSSH_PIPE),
+            std::ffi::OsStr::to_os_string,
+        )
+}
+
+#[cfg(not(any(unix, windows)))]
+async fn connect_ssh_agent() -> Result<DynamicAgentClient> {
+    bail!("SSH agent authentication is unsupported on this platform")
+}
+
+fn is_supported_agent_algorithm(algorithm: &Algorithm) -> bool {
+    matches!(
+        algorithm,
+        Algorithm::Ed25519
+            | Algorithm::Ecdsa { .. }
+            | Algorithm::SkEcdsaSha2NistP256
+            | Algorithm::SkEd25519
+    )
+}
+
+async fn authenticate_agent_identities<S: AgentStream + Send + Unpin>(
+    session: &mut client::Handle<ClientHandler>,
+    user: &str,
+    agent: &mut AgentClient<S>,
+) -> Result<client::AuthResult> {
+    let identities = agent
+        .request_identities()
+        .await
+        .context("requesting identities from the SSH agent")?;
+    let mut last_failure = None;
+
+    for identity in identities {
+        if !is_supported_agent_algorithm(&identity.public_key().algorithm()) {
+            continue;
+        }
+
+        let auth_result = match identity {
+            AgentIdentity::PublicKey { key, .. } => session
+                .authenticate_publickey_with(user, key, None, agent)
+                .await
+                .context("authenticating with an SSH agent public key")?,
+            AgentIdentity::Certificate { certificate, .. } => session
+                .authenticate_certificate_with(user, certificate, None, agent)
+                .await
+                .context("authenticating with an SSH agent certificate")?,
+        };
+
+        if auth_result.success() {
+            return Ok(auth_result);
+        }
+        last_failure = Some(auth_result);
+    }
+
+    last_failure.context("the SSH agent has no supported Ed25519, ECDSA, or security-key identity")
+}
+
+async fn authenticate_with_agent(
+    session: &mut client::Handle<ClientHandler>,
+    user: &str,
+) -> Result<client::AuthResult> {
+    tokio::time::timeout(SSH_AGENT_AUTH_TIMEOUT, async {
+        let mut agent = connect_ssh_agent().await?;
+        authenticate_agent_identities(session, user, &mut agent).await
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("SSH agent authentication timed out"))?
+}
+
+fn load_configured_private_key(path: &Path, passphrase: Option<&str>) -> Result<PrivateKey> {
+    load_secret_key(path, passphrase).context("loading the configured SSH private key")
 }
 
 // ---------------------------------------------------------------------------
@@ -546,12 +702,12 @@ impl SshConnectionPool {
         user: &str,
     ) -> Result<client::Handle<ClientHandler>> {
         let config = Arc::new(client::Config::default());
-        let handler = ClientHandler;
+        let handler = ClientHandler::new(host, port)?;
         let mut session = client::connect(config, (host, port), handler)
             .await
             .with_context(|| format!("SSH connect to {host}:{port}"))?;
 
-        let ok = match auth {
+        let auth_result = match auth {
             SshAuth::Password(ref pw) => session
                 .authenticate_password(user, pw)
                 .await
@@ -560,32 +716,18 @@ impl SshConnectionPool {
                 ref path,
                 ref passphrase,
             } => {
-                let pair = russh_keys::load_secret_key(path, passphrase.as_deref())
-                    .with_context(|| format!("loading SSH key {}", path.display()))?;
+                let pair = load_configured_private_key(path, passphrase.as_deref())?;
                 session
-                    .authenticate_publickey(user, Arc::new(pair))
+                    .authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::new(pair), None))
                     .await
                     .context("SSH pubkey auth")?
             }
-            SshAuth::Agent => {
-                let default_key = dirs::home_dir()
-                    .map(|h| h.join(".ssh/id_ed25519"))
-                    .or_else(|| dirs::home_dir().map(|h| h.join(".ssh/id_rsa")));
-                let Some(kp) = default_key.filter(|p| p.exists()) else {
-                    bail!("SSH agent auth: no default key found in ~/.ssh/");
-                };
-                let pair = russh_keys::load_secret_key(&kp, None)
-                    .with_context(|| format!("loading SSH key {}", kp.display()))?;
-                session
-                    .authenticate_publickey(user, Arc::new(pair))
-                    .await
-                    .context("SSH agent auth")?
-            }
+            SshAuth::Agent => authenticate_with_agent(&mut session, user).await?,
             SshAuth::KeyboardInteractive => {
                 bail!("keyboard-interactive auth not yet supported in batch mode")
             }
         };
-        if !ok {
+        if !auth_result.success() {
             bail!("SSH authentication failed for {user}@{host}:{port}");
         }
         Ok(session)
@@ -1029,10 +1171,23 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
+    const ED25519_KEY_A: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ";
+    const ED25519_KEY_B: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA6rWI3G1sz07DnfFlrouTcysQlj2P+jpNSOEWD9OJ3X";
+    const HASHED_EXAMPLE_HOST: &str =
+        "|1|O33ESRMWPVkMYIwJ1Uw+n877jTo=|nuuC5vEqXlEZ/8BXQR7m619W6Ak=";
+    const HASHED_EXAMPLE_KEY: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILIG2T/B0l0gaqj3puu510tu9N1OkQ4znY3LYuEm5zCF";
+
     fn write_config(content: &str) -> NamedTempFile {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(content.as_bytes()).unwrap();
         f
+    }
+
+    fn parse_public_key(value: &str) -> PublicKey {
+        PublicKey::from_openssh(value).expect("valid Ed25519 fixture")
     }
 
     #[test]
@@ -1090,15 +1245,203 @@ Host *.example.com
 
     #[test]
     fn known_host_unknown() {
-        let fake_key =
-            key::PublicKey::Ed25519(russh_keys::key::ed25519::PublicKey::from_bytes(&[0u8; 32]));
-        let status = check_known_host("nonexistent.test", 22, &fake_key);
-        matches!(status, KnownHostStatus::Unknown { .. });
+        let dir = tempfile::tempdir().unwrap();
+        let server_key = parse_public_key(ED25519_KEY_A);
+        let status = check_known_host_path(
+            "nonexistent.test",
+            22,
+            &server_key,
+            &dir.path().join("known_hosts"),
+        );
+        assert!(matches!(status, KnownHostStatus::Unknown { .. }));
+    }
+
+    #[test]
+    fn known_host_requires_matching_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        std::fs::write(
+            &path,
+            "database.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ\n",
+        )
+        .unwrap();
+
+        let trusted_key = parse_public_key(ED25519_KEY_A);
+        let changed_key = parse_public_key(ED25519_KEY_B);
+
+        assert_eq!(
+            check_known_host_path("database.example", 22, &trusted_key, &path),
+            KnownHostStatus::Trusted
+        );
+        assert!(matches!(
+            check_known_host_path("database.example", 22, &changed_key, &path),
+            KnownHostStatus::Changed { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn client_handler_rejects_unknown_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        std::fs::write(&path, format!("other.example {ED25519_KEY_A}\n")).unwrap();
+        let mut handler = ClientHandler::with_known_hosts_path("database.example", 22, path);
+
+        let error =
+            client::Handler::check_server_key(&mut handler, &parse_public_key(ED25519_KEY_A))
+                .await
+                .expect_err("an unknown host must be rejected");
+
+        assert!(error.to_string().contains("unknown SSH host key"));
+    }
+
+    #[tokio::test]
+    async fn client_handler_rejects_changed_host_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        std::fs::write(&path, format!("database.example {ED25519_KEY_A}\n")).unwrap();
+        let mut handler = ClientHandler::with_known_hosts_path("database.example", 22, path);
+
+        let error =
+            client::Handler::check_server_key(&mut handler, &parse_public_key(ED25519_KEY_B))
+                .await
+                .expect_err("a changed host key must be rejected");
+
+        assert!(format!("{error:#}").to_lowercase().contains("key changed"));
+    }
+
+    #[tokio::test]
+    async fn client_handler_rejects_missing_known_hosts_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut handler = ClientHandler::with_known_hosts_path(
+            "database.example",
+            22,
+            dir.path().join("missing_known_hosts"),
+        );
+
+        client::Handler::check_server_key(&mut handler, &parse_public_key(ED25519_KEY_A))
+            .await
+            .expect_err("a missing known_hosts file must fail closed");
+    }
+
+    #[tokio::test]
+    async fn client_handler_error_does_not_disclose_known_hosts_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("private_known_hosts");
+        let path_text = path.display().to_string();
+        let mut handler = ClientHandler::with_known_hosts_path("database.example", 22, path);
+
+        let error =
+            client::Handler::check_server_key(&mut handler, &parse_public_key(ED25519_KEY_A))
+                .await
+                .expect_err("a missing known_hosts file must fail closed");
+
+        assert!(!format!("{error:#}").contains(&path_text));
+    }
+
+    #[tokio::test]
+    async fn client_handler_rejects_unreadable_known_hosts_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut handler =
+            ClientHandler::with_known_hosts_path("database.example", 22, dir.path().to_path_buf());
+
+        client::Handler::check_server_key(&mut handler, &parse_public_key(ED25519_KEY_A))
+            .await
+            .expect_err("an unreadable known_hosts path must fail closed");
+    }
+
+    #[tokio::test]
+    async fn client_handler_accepts_matching_key_on_nonstandard_port() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        std::fs::write(&path, format!("[database.example]:2222 {ED25519_KEY_A}\n")).unwrap();
+        let mut handler = ClientHandler::with_known_hosts_path("database.example", 2222, path);
+
+        let accepted =
+            client::Handler::check_server_key(&mut handler, &parse_public_key(ED25519_KEY_A))
+                .await
+                .expect("a matching nonstandard-port host key must be accepted");
+
+        assert!(accepted);
+    }
+
+    #[tokio::test]
+    async fn client_handler_accepts_hashed_host_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        std::fs::write(
+            &path,
+            format!("{HASHED_EXAMPLE_HOST} {HASHED_EXAMPLE_KEY}\n"),
+        )
+        .unwrap();
+        let mut handler = ClientHandler::with_known_hosts_path("example.com", 22, path);
+
+        let accepted =
+            client::Handler::check_server_key(&mut handler, &parse_public_key(HASHED_EXAMPLE_KEY))
+                .await
+                .expect("a matching hashed host key must be accepted");
+
+        assert!(accepted);
+    }
+
+    #[test]
+    fn agent_algorithm_policy_accepts_ed25519() {
+        assert!(is_supported_agent_algorithm(&Algorithm::Ed25519));
+    }
+
+    #[test]
+    fn agent_algorithm_policy_accepts_ecdsa() {
+        assert!(is_supported_agent_algorithm(&Algorithm::Ecdsa {
+            curve: russh::keys::EcdsaCurve::NistP256,
+        }));
+    }
+
+    #[test]
+    fn agent_algorithm_policy_accepts_security_keys() {
+        assert!(is_supported_agent_algorithm(
+            &Algorithm::SkEcdsaSha2NistP256
+        ));
+        assert!(is_supported_agent_algorithm(&Algorithm::SkEd25519));
+    }
+
+    #[test]
+    fn agent_algorithm_policy_rejects_rsa() {
+        assert!(!is_supported_agent_algorithm(&Algorithm::Rsa {
+            hash: None
+        }));
+    }
+
+    #[test]
+    fn agent_algorithm_policy_rejects_dsa() {
+        assert!(!is_supported_agent_algorithm(&Algorithm::Dsa));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_agent_pipe_accepts_only_named_pipe_paths() {
+        use std::ffi::{OsStr, OsString};
+
+        let configured = select_windows_agent_pipe(Some(OsStr::new(r"\\.\PIPE\custom-agent")));
+        let msys_socket = select_windows_agent_pipe(Some(OsStr::new("C:/tmp/ssh-agent.sock")));
+
+        assert_eq!(configured, OsString::from(r"\\.\PIPE\custom-agent"));
+        assert_eq!(msys_socket, OsString::from(r"\\.\pipe\openssh-ssh-agent"));
+    }
+
+    #[test]
+    fn private_key_load_error_does_not_disclose_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("private_key");
+        let path_text = path.display().to_string();
+
+        let error = load_configured_private_key(&path, None)
+            .expect_err("a missing private key must return an error");
+
+        assert!(!format!("{error:#}").contains(&path_text));
     }
 
     #[test]
     fn pool_creation() {
         let pool = SshConnectionPool::new(300);
-        assert_eq!(pool.max_idle, Duration::from_secs(300));
+        assert_eq!(pool.max_idle, Duration::from_mins(5));
     }
 }

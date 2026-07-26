@@ -89,7 +89,10 @@ gix = { version = "0.68", default-features = false }
 rusqlite = { version = "0.31", features = ["bundled", "backup"] }
 
 # Remote
-russh = "0.46"
+russh = { version = "0.62.4", default-features = false, features = [
+  "flate2",
+  "ring",
+] }
 bollard = "0.18"
 tokio-tungstenite = "0.26"
 
