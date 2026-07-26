@@ -4,6 +4,8 @@ A Cloudflare Worker that gives SideX a Cursor-style extension
 marketplace: one endpoint, two backends (Microsoft Marketplace + Open
 VSX), merged and cached at the edge.
 
+Requires Node.js 22 or later.
+
 ## Why a Worker (vs self-hosting)
 
 - No origin to operate. Runs globally on Cloudflare's edge network.

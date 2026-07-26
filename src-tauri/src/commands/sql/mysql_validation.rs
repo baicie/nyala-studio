@@ -332,6 +332,16 @@ mod tests {
     #[test]
     #[ignore = "requires NYALA_TEST_MYSQL_HOST, DATABASE, and USERNAME"]
     fn mysql_preview_validation_live_contract() -> Result<(), String> {
+        validate_live_mysql(SqlSslMode::Prefer)
+    }
+
+    #[test]
+    #[ignore = "requires a TLS-enabled MySQL server and NYALA_TEST_MYSQL_* variables"]
+    fn mysql_preview_validation_require_tls_live_contract() -> Result<(), String> {
+        validate_live_mysql(SqlSslMode::Require)
+    }
+
+    fn validate_live_mysql(ssl_mode: SqlSslMode) -> Result<(), String> {
         let host = required_live_env("NYALA_TEST_MYSQL_HOST")?;
         let database = required_live_env("NYALA_TEST_MYSQL_DATABASE")?;
         let username = required_live_env("NYALA_TEST_MYSQL_USERNAME")?;
@@ -351,7 +361,7 @@ mod tests {
                 port: Some(port),
                 database: Some(database),
                 username: Some(username),
-                ssl_mode: Some(SqlSslMode::Prefer),
+                ssl_mode: Some(ssl_mode),
             },
             ConnectionSecret {
                 password: std::env::var("NYALA_TEST_MYSQL_PASSWORD").ok(),
