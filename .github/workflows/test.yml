@@ -2,23 +2,26 @@ name: Tests
 
 on:
   push:
-    branches: [main]
+    branches: [mvp]
     paths:
-      - ".github/workflows/test.yml"
-      - "crates/**"
-      - "src-tauri/**"
-      - "sidex-extension-sdk/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
+      - '.github/workflows/test.yml'
+      - 'crates/**'
+      - 'src-tauri/**'
+      - 'sidex-extension-sdk/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
   pull_request:
-    branches: [main]
+    branches: [mvp]
     paths:
-      - ".github/workflows/test.yml"
-      - "crates/**"
-      - "src-tauri/**"
-      - "sidex-extension-sdk/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
+      - '.github/workflows/test.yml'
+      - 'crates/**'
+      - 'src-tauri/**'
+      - 'sidex-extension-sdk/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+permissions:
+  contents: read
 
 env:
   RUST_BACKTRACE: 1
@@ -41,7 +44,9 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
@@ -55,12 +60,12 @@ jobs:
             libssl-dev
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: "./src-tauri -> target"
+          workspaces: '. -> target'
           key: test-${{ matrix.os }}
 
       - name: Run tests

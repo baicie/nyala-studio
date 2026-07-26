@@ -2,14 +2,16 @@ name: Unused Dependencies
 
 on:
   push:
-    branches: [main]
+    branches: [mvp]
     paths:
-      - ".github/workflows/udeps.yml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "src-tauri/Cargo.toml"
-      - "src-tauri/Cargo.lock"
-      - "crates/**/Cargo.toml"
+      - '.github/workflows/udeps.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src-tauri/Cargo.toml'
+      - 'crates/**/Cargo.toml'
+
+permissions:
+  contents: read
 
 env:
   RUST_BACKTRACE: 1
@@ -24,7 +26,9 @@ jobs:
     name: cargo-udeps
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Linux system dependencies
         run: |
@@ -37,15 +41,15 @@ jobs:
             libssl-dev
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@4fd1da8b0805d2d2e936788875a7d65dbd677dc2 # nightly
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: "./src-tauri -> target"
+          workspaces: '. -> target'
 
       - name: Install cargo-udeps
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
         with:
           tool: cargo-udeps
 
