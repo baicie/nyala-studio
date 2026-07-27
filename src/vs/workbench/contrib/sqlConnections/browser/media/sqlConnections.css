@@ -21,6 +21,15 @@
 	border-bottom: 1px solid var(--vscode-editorGroup-border);
 }
 
+.sql-data-sources-actions {
+	flex: 0 0 auto;
+	display: flex;
+	justify-content: flex-end;
+	gap: 2px;
+	padding-bottom: 4px;
+	border-bottom: 1px solid var(--vscode-editorGroup-border);
+}
+
 .sql-connections-form-header {
 	display: flex;
 	align-items: center;

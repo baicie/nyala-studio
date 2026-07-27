@@ -173,11 +173,11 @@ pnpm run rust:clippy
 pnpm run test
 ```
 
-`pnpm run test` is a chain that runs the branding guard, the runtime
-status consistency check, the demo data-directory suite, the Rust
+`pnpm run test` is a chain that runs the branding and application-icon guards,
+the runtime status consistency check, the demo data-directory suite, the Rust
 `cargo test --lib` suite (currently 176 passing tests plus 2 ignored live
 integration test), the Tauri search cancellation suite, and every
-per-subsystem frontend suite (`test:seed-demo`, `test:search`,
+per-subsystem frontend suite (`test:icons`, `test:seed-demo`, `test:search`,
 `test:sql-services`, `test:sql-domain`, `test:sql-connections`,
 `test:sql-editor`, `test:sql-result`, `test:sql-history`,
 `test:sql-product`, `test:sql-advanced`).
@@ -198,7 +198,8 @@ pnpm run test:mysql-integration
 The full Phase 08 acceptance checklist lives in
 [`docs/sql-mvp-phases/phase-08-mvp-packaging.md`](./docs/sql-mvp-phases/phase-08-mvp-packaging.md).
 The implemented deliverable includes the demo seed, real Welcome ViewPane,
-transient MySQL Preview command, Connect form validation, and CI release gate.
+separate Data Sources and Connectors workbench surfaces, transient MySQL
+Preview command, Connect form validation, and CI release gate.
 MySQL validation sends `{ input, secret }` directly to the dedicated Tauri
 command and never creates or saves a temporary profile. The Windows/Tauri
 Demo-to-query walkthrough was recorded green on 2026-07-26, and the opt-in

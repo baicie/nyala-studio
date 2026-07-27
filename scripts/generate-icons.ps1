@@ -191,13 +191,14 @@ Write-Icns $icnsMap "$OutputDir/icon.icns"
 
 # 5) Build .ico
 $icoEntries = @(
-  @{ size = 16;  path = "$tmpDir/16.png" },
-  @{ size = 24;  path = "$tmpDir/24.png" },
-  @{ size = 32;  path = "$tmpDir/32.png" },
-  @{ size = 48;  path = "$tmpDir/48.png" },
-  @{ size = 64;  path = "$tmpDir/64.png" },
+  # Tauri's Windows icon loader uses the first ICO entry.
+  @{ size = 256; path = "$tmpDir/256.png" },
   @{ size = 128; path = "$tmpDir/128.png" },
-  @{ size = 256; path = "$tmpDir/256.png" }
+  @{ size = 64;  path = "$tmpDir/64.png" },
+  @{ size = 48;  path = "$tmpDir/48.png" },
+  @{ size = 32;  path = "$tmpDir/32.png" },
+  @{ size = 24;  path = "$tmpDir/24.png" },
+  @{ size = 16;  path = "$tmpDir/16.png" }
 )
 Write-Ico $icoEntries "$OutputDir/icon.ico"
 

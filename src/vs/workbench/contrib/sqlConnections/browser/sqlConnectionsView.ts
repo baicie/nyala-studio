@@ -64,7 +64,15 @@ import {
 	isSqlTableLikeNode,
 	SqlEditorDraft
 } from '../common/sqlConnectionQueryModel.js';
-import { SQL_CONNECTIONS_VIEW_ID } from '../common/sqlConnections.js';
+import {
+	SQL_CONNECTIONS_ADD_COMMAND_ID,
+	SQL_CONNECTIONS_VIEW_ID,
+	SQL_CONNECTORS_VIEW_ID
+} from '../common/sqlConnections.js';
+import {
+	refreshDataSourcesAfterConnection,
+	requestSavedMysqlDataSourceForm
+} from '../common/sqlConnectionNavigation.js';
 import {
 	refreshAndRequireSqlConnection,
 	restoreSavedConnectionsForRefresh,
@@ -97,7 +105,7 @@ interface SqlConnectionTreeSnapshotState {
 
 export class SqlConnectionsView extends ViewPane {
 	static readonly ID = SQL_CONNECTIONS_VIEW_ID;
-	static readonly NAME = localize('sqlConnectionsViewName', 'Connections');
+	static readonly NAME = localize('sqlDataSourcesViewName', 'Data Sources');
 
 	private readonly formDisposables = this._register(new DisposableStore());
 	private readonly treeRenderDisposables = this._register(new DisposableStore());
@@ -165,6 +173,7 @@ export class SqlConnectionsView extends ViewPane {
 
 	private savedConnections: SqlSavedConnection[] = [];
 	private didRestoreSavedConnections = false;
+	private readonly isConnectorView: boolean;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -199,6 +208,7 @@ export class SqlConnectionsView extends ViewPane {
 		);
 
 		this.contextViewService = contextViewService;
+		this.isConnectorView = options.id === SQL_CONNECTORS_VIEW_ID;
 		this.mysqlValidationController = this._register(
 			instantiationService.createInstance(MysqlPreviewValidationController)
 		);
@@ -208,13 +218,21 @@ export class SqlConnectionsView extends ViewPane {
 
 	protected override renderBody(container: HTMLElement): void {
 		this.body = append(container, $('.sql-connections-view'));
+
+		if (this.isConnectorView) {
+			this.renderConnectorBody();
+			return;
+		}
+
+		this.renderDataSourcesBody();
+	}
+
+	private renderConnectorBody(): void {
 		this.renderConnectionForm(this.body);
-		this.savedConnectionsElement = append(this.body, $('.sql-saved-connections'));
 		this.messageElement = append(
 			this.body,
 			$('.sql-connections-message', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' })
 		);
-		this.treeElement = append(this.body, $('.sql-connections-tree', { role: 'tree', tabIndex: 0 }));
 
 		const defaults = createDefaultSqlConnectionFormState(SqlConnectionKind.Sqlite);
 		this.applyFormState(defaults);
@@ -233,6 +251,30 @@ export class SqlConnectionsView extends ViewPane {
 			});
 		this.refreshDriverSelectOptions();
 		this.refreshDriverPreview();
+	}
+
+	private renderDataSourcesBody(): void {
+		const actions = append(this.body, $('.sql-data-sources-actions'));
+		const addDataSourceButton = this.appendIconButton(actions, 'add', 'New data source');
+		const refreshDataSourcesButton = this.appendIconButton(actions, 'refresh', 'Refresh data sources');
+
+		this._register(
+			addDisposableListener(addDataSourceButton, EventType.CLICK, () => {
+				this.commandService.executeCommand(SQL_CONNECTIONS_ADD_COMMAND_ID).catch(error => this.showError(error));
+			})
+		);
+		this._register(
+			addDisposableListener(refreshDataSourcesButton, EventType.CLICK, () => {
+				this.refresh().catch(error => this.showError(error));
+			})
+		);
+
+		this.savedConnectionsElement = append(this.body, $('.sql-saved-connections'));
+		this.messageElement = append(
+			this.body,
+			$('.sql-connections-message', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' })
+		);
+		this.treeElement = append(this.body, $('.sql-connections-tree', { role: 'tree', tabIndex: 0 }));
 
 		// Phase 01: only hit the Rust backend when it actually exists. In a
 		// plain browser dev session `isTauri()` is false and every SQL command
@@ -246,13 +288,33 @@ export class SqlConnectionsView extends ViewPane {
 	}
 
 	override focus(): void {
-		this.treeElement?.focus();
+		if (this.isConnectorView) {
+			this.driverSelect?.focus();
+		} else {
+			this.treeElement?.focus();
+		}
 		super.focus();
 	}
 
 	openConnectionForm(): void {
+		if (!this.isConnectorView) {
+			return;
+		}
+
 		this.resetConnectionForm();
 		this.revealConnectionForm();
+	}
+
+	openSavedConnectionForm(saved: SqlSavedConnection): void {
+		if (!this.isConnectorView) {
+			return;
+		}
+
+		this.applyFormState(createSqlConnectionFormStateFromSavedConnection(saved));
+		this.refreshDriverPreview();
+		this.revealConnectionForm();
+		this.passwordInput.focus();
+		this.showInfo(`Enter the password for ${saved.name} to connect.`);
 	}
 
 	private revealConnectionForm(): void {
@@ -261,6 +323,10 @@ export class SqlConnectionsView extends ViewPane {
 	}
 
 	async refresh(options: SqlConnectionRefreshOptions = {}): Promise<void> {
+		if (this.isConnectorView) {
+			return;
+		}
+
 		this.showInfo('Loading connections...');
 
 		try {
@@ -316,7 +382,6 @@ export class SqlConnectionsView extends ViewPane {
 		);
 
 		this.collapsedNodes.delete(getConnectionNodeId(connectionId));
-		this.setConnectionFormExpanded(false);
 		this.renderTree();
 		this.treeElement.focus();
 	}
@@ -363,11 +428,13 @@ export class SqlConnectionsView extends ViewPane {
 				connectionName = connection.name;
 			}
 
-			this.collapsedNodes.delete(getConnectionNodeId(connectionId));
-			await this.refresh();
 			this.showInfo(`Connected to ${connectionName}.`);
 			this.resetConnectionForm();
 			this.setConnectionFormExpanded(false);
+			await refreshDataSourcesAfterConnection(
+				(commandId, ...args) => this.commandService.executeCommand(commandId, ...args),
+				connectionId
+			);
 		});
 	}
 
@@ -457,11 +524,11 @@ export class SqlConnectionsView extends ViewPane {
 			this.formToggleButton,
 			$('span.codicon.codicon-chevron-down', { 'aria-hidden': 'true' })
 		);
-		append(this.formToggleButton, $('span.sql-connections-form-title', undefined, 'New connection'));
+		append(this.formToggleButton, $('span.sql-connections-form-title', undefined, 'New data source'));
 
 		const headerActions = append(header, $('.sql-connections-form-header-actions'));
-		this.resetButton = this.appendIconButton(headerActions, 'discard', 'Reset connection form');
-		this.refreshButton = this.appendIconButton(headerActions, 'refresh', 'Refresh connections');
+		this.resetButton = this.appendIconButton(headerActions, 'discard', 'Reset data source form');
+		this.refreshButton = this.appendIconButton(headerActions, 'refresh', 'Refresh connector availability');
 
 		this.form = append(
 			this.formSection,
@@ -670,7 +737,7 @@ export class SqlConnectionsView extends ViewPane {
 
 		this.formDisposables.add(
 			addDisposableListener(this.refreshButton, EventType.CLICK, () => {
-				this.refresh().catch(error => this.showError(error));
+				this.refreshConnectorCatalog().catch(error => this.showError(error));
 			})
 		);
 
@@ -998,6 +1065,13 @@ export class SqlConnectionsView extends ViewPane {
 		this.driverSelect.select(this.currentDriverIndex);
 	}
 
+	private async refreshConnectorCatalog(): Promise<void> {
+		await this.sqlDriverCatalogService.getRuntimeStatus();
+		this.refreshDriverSelectOptions();
+		this.refreshDriverPreview();
+		this.showInfo('Connector availability refreshed.');
+	}
+
 	private async loadConnectionMetadata(connection: SqlConnection): Promise<void> {
 		try {
 			let databases: SqlDatabase[] = [];
@@ -1229,7 +1303,7 @@ export class SqlConnectionsView extends ViewPane {
 		}
 
 		const title = append(this.savedConnectionsElement, $('.sql-saved-connections-title'));
-		title.textContent = 'Saved Connections';
+		title.textContent = 'Saved Data Sources';
 
 		for (const saved of this.savedConnections) {
 			const row = append(this.savedConnectionsElement, $('.sql-saved-connection-row'));
@@ -1394,11 +1468,10 @@ export class SqlConnectionsView extends ViewPane {
 		}
 
 		if (saved.kind === SqlConnectionKind.MySql) {
-			this.applyFormState(createSqlConnectionFormStateFromSavedConnection(saved));
-			this.refreshDriverPreview();
-			this.revealConnectionForm();
-			this.passwordInput.focus();
-			this.showInfo(`Enter the password for ${saved.name} to connect.`);
+			await requestSavedMysqlDataSourceForm(
+				(commandId, ...args) => this.commandService.executeCommand(commandId, ...args),
+				saved
+			);
 			return;
 		}
 

@@ -2,7 +2,12 @@
  * SQL Studio Next - Product profile and workbench trim list.
  *--------------------------------------------------------------------------------------------*/
 
-import { SQL_CONNECTIONS_VIEWLET_ID, SQL_CONNECTIONS_VIEW_ID } from '../../sqlConnections/common/sqlConnections.js';
+import {
+	SQL_CONNECTIONS_VIEWLET_ID,
+	SQL_CONNECTIONS_VIEW_ID,
+	SQL_CONNECTORS_VIEWLET_ID,
+	SQL_CONNECTORS_VIEW_ID
+} from '../../sqlConnections/common/sqlConnections.js';
 import { SQL_RESULT_VIEWLET_ID, SQL_RESULT_VIEW_ID } from '../../sqlResult/common/sqlResult.js';
 import { SQL_QUERY_HISTORY_VIEW_ID } from '../../sqlHistory/common/sqlQueryHistory.js';
 
@@ -23,13 +28,25 @@ export const SQL_PRODUCT_REQUIRED_SURFACES: readonly SqlProductWorkbenchSurface[
 	{
 		id: SQL_CONNECTIONS_VIEWLET_ID,
 		kind: SqlProductWorkbenchSurfaceKind.ViewContainer,
-		label: 'SQL Connections Container',
+		label: 'Data Sources Container',
 		required: true
 	},
 	{
 		id: SQL_CONNECTIONS_VIEW_ID,
 		kind: SqlProductWorkbenchSurfaceKind.View,
-		label: 'SQL Connections View',
+		label: 'Data Sources View',
+		required: true
+	},
+	{
+		id: SQL_CONNECTORS_VIEWLET_ID,
+		kind: SqlProductWorkbenchSurfaceKind.ViewContainer,
+		label: 'Connectors Container',
+		required: true
+	},
+	{
+		id: SQL_CONNECTORS_VIEW_ID,
+		kind: SqlProductWorkbenchSurfaceKind.View,
+		label: 'New Data Source View',
 		required: true
 	},
 	{
@@ -74,10 +91,7 @@ export interface SqlProductProfile {
 
 export const SQL_STUDIO_PRODUCT_PROFILE: SqlProductProfile = {
 	name: 'Nyala Studio',
-	primaryViewContainers: [
-		SQL_CONNECTIONS_VIEWLET_ID,
-		SQL_RESULT_VIEWLET_ID
-	],
+	primaryViewContainers: [SQL_CONNECTIONS_VIEWLET_ID, SQL_CONNECTORS_VIEWLET_ID, SQL_RESULT_VIEWLET_ID],
 	requiredSurfaces: SQL_PRODUCT_REQUIRED_SURFACES,
 	legacyWorkbenchViewlets: SQL_PRODUCT_LEGACY_WORKBENCH_VIEWLETS
 };
