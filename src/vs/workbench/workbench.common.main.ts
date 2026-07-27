@@ -206,7 +206,6 @@ import './contrib/files/browser/files.contribution.js';
 
 // SQL Studio
 import './contrib/sqlConnections/browser/sqlConnections.contribution.js';
-import './contrib/sqlConnections/browser/sqlExplorer.contribution.js';
 import './contrib/sqlEditor/browser/sqlEditor.contribution.js';
 import './contrib/sqlResult/browser/sqlResult.contribution.js';
 import './contrib/sqlProduct/browser/sqlProduct.contribution.js';

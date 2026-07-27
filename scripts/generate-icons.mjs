@@ -43,6 +43,10 @@ const iconsetSizes = [
 	['icon_512x512@2x.png', 1024],
 ];
 
+// Tauri's Windows icon loader uses the first ICO entry. Keep the largest
+// image first so Windows never scales the 16px rendition for app surfaces.
+const icoSizes = [256, 128, 64, 48, 32, 24, 16];
+
 function run(command, args) {
 	execFileSync(command, args, { stdio: 'pipe' });
 }
@@ -306,7 +310,7 @@ try data.write(to: URL(fileURLWithPath: destinationPath), options: .atomic)
 	}
 	run('iconutil', ['-c', 'icns', iconsetDir, '-o', join(outputDir, 'icon.icns')]);
 
-	const icoEntries = [16, 24, 32, 48, 64, 128, 256].map(size => {
+	const icoEntries = icoSizes.map(size => {
 		const path = join(workDir, `ico-${size}.png`);
 		render(path, size);
 		cleanWhiteEdges(path);

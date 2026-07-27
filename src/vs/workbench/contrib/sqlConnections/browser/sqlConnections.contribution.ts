@@ -33,20 +33,27 @@ import {
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { SqlConnectionsView } from './sqlConnectionsView.js';
+import type { SqlSavedConnection } from '../../../services/sql/common/sqlTypes.js';
+import { openNewSqlDataSourceForm, openSavedSqlDataSourceForm } from '../common/sqlConnectionNavigation.js';
 import {
 	SQL_CONNECTIONS_FOCUS_COMMAND_ID,
 	SQL_CONNECTIONS_ADD_COMMAND_ID,
 	SQL_CONNECTIONS_REFRESH_COMMAND_ID,
 	SQL_CONNECTIONS_STORAGE_ID,
 	SQL_CONNECTIONS_VIEW_ID,
-	SQL_CONNECTIONS_VIEWLET_ID
+	SQL_CONNECTIONS_VIEWLET_ID,
+	SQL_CONNECTORS_FOCUS_COMMAND_ID,
+	SQL_CONNECTORS_OPEN_SAVED_COMMAND_ID,
+	SQL_CONNECTORS_STORAGE_ID,
+	SQL_CONNECTORS_VIEW_ID,
+	SQL_CONNECTORS_VIEWLET_ID
 } from '../common/sqlConnections.js';
 
 class SqlAddConnectionAction extends Action2 {
 	constructor() {
 		super({
 			id: SQL_CONNECTIONS_ADD_COMMAND_ID,
-			title: localize2('sqlConnectionsAdd', 'Nyala: Add Connection'),
+			title: localize2('sqlConnectionsAdd', 'Nyala: New Data Source'),
 			category: Categories.View,
 			f1: true,
 			menu: {
@@ -56,8 +63,26 @@ class SqlAddConnectionAction extends Action2 {
 	}
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
-		const view = await accessor.get(IViewsService).openView<SqlConnectionsView>(SQL_CONNECTIONS_VIEW_ID, true);
-		view?.openConnectionForm();
+		await openNewSqlDataSourceForm((viewId, focus) =>
+			accessor.get(IViewsService).openView<SqlConnectionsView>(viewId, focus)
+		);
+	}
+}
+
+class SqlOpenSavedConnectionAction extends Action2 {
+	constructor() {
+		super({
+			id: SQL_CONNECTORS_OPEN_SAVED_COMMAND_ID,
+			title: localize2('sqlConnectorsOpenSaved', 'Nyala: Open Saved Data Source'),
+			f1: false
+		});
+	}
+
+	override async run(accessor: ServicesAccessor, saved?: SqlSavedConnection): Promise<void> {
+		await openSavedSqlDataSourceForm(
+			(viewId, focus) => accessor.get(IViewsService).openView<SqlConnectionsView>(viewId, focus),
+			saved
+		);
 	}
 }
 
@@ -84,14 +109,21 @@ class SqlRefreshConnectionsAction extends Action2 {
 	}
 }
 
-const sqlConnectionsIcon = registerIcon(
-	'sql-connections-view-icon',
-	Codicon.repo,
-	localize('sqlConnectionsViewIcon', 'View icon of the SQL Connections view.')
+const sqlDataSourcesIcon = registerIcon(
+	'sql-data-sources-view-icon',
+	Codicon.database,
+	localize('sqlDataSourcesViewIcon', 'View icon of the SQL data sources view.')
 );
 
-export class SqlConnectionsViewPaneContainer extends ViewPaneContainer {
+const sqlConnectorsIcon = registerIcon(
+	'sql-connectors-view-icon',
+	Codicon.plug,
+	localize('sqlConnectorsViewIcon', 'View icon of the SQL connectors view.')
+);
+
+class SqlConnectionViewPaneContainer extends ViewPaneContainer {
 	constructor(
+		viewletId: string,
 		@IWorkbenchLayoutService layoutService: IWorkbenchLayoutService,
 		@ITelemetryService telemetryService: ITelemetryService,
 		@IWorkspaceContextService contextService: IWorkspaceContextService,
@@ -105,7 +137,7 @@ export class SqlConnectionsViewPaneContainer extends ViewPaneContainer {
 		@ILogService logService: ILogService
 	) {
 		super(
-			SQL_CONNECTIONS_VIEWLET_ID,
+			viewletId,
 			{ mergeViewWithContainerWhenSingleView: true },
 			instantiationService,
 			configurationService,
@@ -132,18 +164,38 @@ const viewContainerRegistry = Registry.as<IViewContainersRegistry>(Extensions.Vi
 export const SQL_CONNECTIONS_VIEW_CONTAINER: ViewContainer = viewContainerRegistry.registerViewContainer(
 	{
 		id: SQL_CONNECTIONS_VIEWLET_ID,
-		title: localize2('sqlConnections', 'SQL Connections'),
-		ctorDescriptor: new SyncDescriptor(SqlConnectionsViewPaneContainer),
+		title: localize2('sqlDataSources', 'Data Sources'),
+		ctorDescriptor: new SyncDescriptor(SqlConnectionViewPaneContainer, [SQL_CONNECTIONS_VIEWLET_ID]),
 		storageId: SQL_CONNECTIONS_STORAGE_ID,
-		icon: sqlConnectionsIcon,
+		icon: sqlDataSourcesIcon,
 		alwaysUseContainerInfo: true,
 		hideIfEmpty: false,
 		order: 1,
 		openCommandActionDescriptor: {
 			id: SQL_CONNECTIONS_FOCUS_COMMAND_ID,
-			title: localize2('sqlConnections', 'SQL Connections'),
-			mnemonicTitle: localize({ key: 'miViewSqlConnections', comment: ['&& denotes a mnemonic'] }, 'SQL &&Connections'),
+			title: localize2('sqlDataSources', 'Data Sources'),
+			mnemonicTitle: localize({ key: 'miViewSqlDataSources', comment: ['&& denotes a mnemonic'] }, '&&Data Sources'),
 			order: 1
+		}
+	},
+	ViewContainerLocation.Sidebar
+);
+
+export const SQL_CONNECTORS_VIEW_CONTAINER: ViewContainer = viewContainerRegistry.registerViewContainer(
+	{
+		id: SQL_CONNECTORS_VIEWLET_ID,
+		title: localize2('sqlConnectors', 'Connectors'),
+		ctorDescriptor: new SyncDescriptor(SqlConnectionViewPaneContainer, [SQL_CONNECTORS_VIEWLET_ID]),
+		storageId: SQL_CONNECTORS_STORAGE_ID,
+		icon: sqlConnectorsIcon,
+		alwaysUseContainerInfo: true,
+		hideIfEmpty: false,
+		order: 2,
+		openCommandActionDescriptor: {
+			id: SQL_CONNECTORS_FOCUS_COMMAND_ID,
+			title: localize2('sqlConnectors', 'Connectors'),
+			mnemonicTitle: localize({ key: 'miViewSqlConnectors', comment: ['&& denotes a mnemonic'] }, '&&Connectors'),
+			order: 2
 		}
 	},
 	ViewContainerLocation.Sidebar
@@ -155,8 +207,8 @@ viewsRegistry.registerViews(
 	[
 		{
 			id: SQL_CONNECTIONS_VIEW_ID,
-			name: localize2('sqlConnectionsView', 'Connections'),
-			containerIcon: sqlConnectionsIcon,
+			name: localize2('sqlDataSourcesView', 'Data Sources'),
+			containerIcon: sqlDataSourcesIcon,
 			ctorDescriptor: new SyncDescriptor(SqlConnectionsView),
 			order: 0,
 			canMoveView: false,
@@ -166,5 +218,21 @@ viewsRegistry.registerViews(
 	SQL_CONNECTIONS_VIEW_CONTAINER
 );
 
+viewsRegistry.registerViews(
+	[
+		{
+			id: SQL_CONNECTORS_VIEW_ID,
+			name: localize2('sqlConnectorsView', 'New Data Source'),
+			containerIcon: sqlConnectorsIcon,
+			ctorDescriptor: new SyncDescriptor(SqlConnectionsView),
+			order: 0,
+			canMoveView: false,
+			canToggleVisibility: false
+		}
+	],
+	SQL_CONNECTORS_VIEW_CONTAINER
+);
+
 registerAction2(SqlAddConnectionAction);
+registerAction2(SqlOpenSavedConnectionAction);
 registerAction2(SqlRefreshConnectionsAction);

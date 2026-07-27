@@ -7,7 +7,7 @@
 1. 一条 **SQLite demo flow**：本地 demo.db / demo seeds，用户启动 Nyala 后 60 秒内能跑通完整闭环。
 2. 一条 **MySQL Preview opt-in validation flow**：用户在连接表单选 MySQL 并填写 host/port/database/username（账户需要时再填 password）后，可执行 Test / Validate / Connect；Validate 通过专用瞬时命令连接、跑 `SELECT 1`、跑 `CREATE / INSERT / SELECT / DROP` 临时表。`NYALA_TEST_MYSQL_*` 只用于 opt-in 集成测试，不控制 UI 是否显示。
 3. **全量 check**：每次 release 前 `pnpm run test` 一把过；CI 强制要求。
-4. **SQL-first 默认体验**：SQL Connections 是初始 Activity Bar；Welcome view 默认落地到 "Connect → Run"。
+4. **SQL-first 默认体验**：Data Sources 是初始 Activity Bar；Connectors 是独立 Activity Bar，Welcome view 默认落地到 "Connect → Run"。
 
 不在范围：
 
@@ -25,7 +25,7 @@
 
 ### 当前状态（2026-07-27）
 
-- Demo seed、V1/V2 兼容注册、Welcome ViewPane、Connect 表单优化、瞬时 MySQL validation 与 release gate 均已实现并有自动化覆盖。
+- Demo seed、V1/V2 兼容注册、Welcome ViewPane、Data Sources / Connectors 分离、Connect 表单优化、瞬时 MySQL validation 与 release gate 均已实现并有自动化覆盖。
 - Windows/Tauri 实机 Demo → query panel walkthrough 与隔离 MySQL 8 上的 live command validation 均已记录通过；Phase 08 仍为**部分完成**，仅缺原生连接页对 live MySQL 的 Validate 点击记录，详见 §3 与 §4。
 
 ## 2. 设计
@@ -68,7 +68,7 @@
 首次启动计划由 `createSqlProductStartupPlan` 生成，`SqlProductBootstrapContribution` 依序执行：
 
 1. `sqlStudio.product.bootstrapDemo`；
-2. 聚焦 Connections 与 Results；
+2. 聚焦 Data Sources 与 Results；
 3. 聚焦 Welcome ViewPane；
 4. 打开默认 SQL query。
 
@@ -78,6 +78,10 @@ Demo action 通过 `ISqlProductService.bootstrapDemo()` 访问 Tauri command；�
 
 `MysqlPreviewValidationController` 只依赖 `ISqlProductService`，把表单的公开字段与瞬时 secret 分开转发。Connect 页面提供：
 
+- 独立的 `Connectors` Activity Bar，仅负责选择 connector 并创建或补填一个数据源；
+- 独立的 `Data Sources` Activity Bar，仅负责已保存数据源、已打开连接与 metadata tree；
+- 已保存的 MySQL 数据源需要 password 时，Data Sources 会跳转到 Connectors；连接成功后自动刷新并聚焦 Data Sources；
+- 旧 V2 `SQL Explorer` 暂不注册到主导航，直到 V1 query bridge 与 V2 profile store 完成统一；
 - SQLite File / In-memory 模式；
 - SQLite、MySQL、disabled PostgreSQL 的 connector 选择；
 - Test / Validate / Connect 三个明确动作；
@@ -87,7 +91,7 @@ Demo action 通过 `ISqlProductService.bootstrapDemo()` 访问 Tauri command；�
 
 ### 2.6 Welcome Flow
 
-Welcome 已实现为注册在 SQL Results container 的 `SqlProductWelcomePane`，四个 action 分别路由到 Demo、展开 New connection 表单、History 与 Command Palette。首次启动默认打开；`Add a connection` 会聚焦并展开 Connect 表单，而不是只聚焦容器。
+Welcome 已实现为注册在 SQL Results container 的 `SqlProductWelcomePane`，四个 action 分别路由到 Demo、打开 Connectors 中的 New data source 表单、History 与 Command Palette。首次启动默认打开；`Add a connection` 会聚焦并展开 Connectors 表单，而不是只聚焦容器。
 
 ### 2.7 README 与 Release Gate
 
@@ -102,7 +106,9 @@ src-tauri/src/commands/sql/product.rs
 src-tauri/src/commands/sql/mysql_validation.rs
 src/vs/workbench/services/sql/common/sqlProduct.ts
 src/vs/workbench/services/sql/browser/sqlProductService.ts
+src/vs/workbench/contrib/sqlConnections/browser/sqlConnections.contribution.ts
 src/vs/workbench/contrib/sqlConnections/browser/sqlConnectionsView.ts
+src/vs/workbench/contrib/sqlConnections/common/sqlConnections.ts
 src/vs/workbench/contrib/sqlConnections/browser/mysqlValidationView.ts
 src/vs/workbench/contrib/sqlConnections/common/sqlConnectionSubmission.ts
 src/vs/workbench/contrib/sqlProduct/browser/sqlProductBootstrap.ts
@@ -121,7 +127,7 @@ src/vs/workbench/contrib/sqlProduct/browser/sqlProductWelcomePane.ts
 | `cargo test --lib mysql_validation` | 9 passed / 2 ignored | 输入、端口、TLS、共享网络超时、唯一表名、错误 code、清理失败告警；live contract 默认忽略                  |
 | `pnpm run test:search`              | 2/2                  | Tauri search cancellation race                                                                           |
 | `pnpm run test:sql-services`        | 69/69                | Product service、错误映射、driver catalog、V2 连接刷新事件                                               |
-| `pnpm run test:sql-connections`     | 112/112              | Connect form、strict refresh、保存同 id、失败清理、validation                                            |
+| `pnpm run test:sql-connections`     | 117/117              | Connect form、strict refresh、保存同 id、失败清理、validation、Data Sources / Connectors navigation      |
 | `pnpm run test:sql-result`          | 58/58                | 结果模型、复制、状态与稀疏数值列可见性                                                                   |
 | `pnpm run test:sql-history`         | 28/28                | History 模型、服务、ViewPane 生命周期                                                                    |
 | `pnpm run test:sql-product`         | 65/65                | first-launch plan、Welcome、startup splash、zoom                                                         |
@@ -150,7 +156,7 @@ Windows/Tauri 原生走查（2026-07-26）exit 0：
 - [x] `cargo test --lib demo_seed` 6/6 通过；
 - [x] `cargo test --lib mysql_validation` 9 passed / 2 ignored；
 - [x] `pnpm run test:sql-product` 65/65 通过；
-- [x] `pnpm run test:sql-connections` 112/112 通过；
+- [x] `pnpm run test:sql-connections` 117/117 通过；
 - [x] `pnpm run test:sql-result` 58/58 通过；
 - [x] Rust bootstrap 测试验证 Demo 同时进入 V1/V2，且 V1 查询 `users` 返回 5；
 - [x] CI/release workflow 强制执行 pnpm + Rust gate，并提供 live MySQL opt-in；
