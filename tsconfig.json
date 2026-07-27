@@ -21,6 +21,7 @@
     "allowJs": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": false,
+    "ignoreDeprecations": "6.0",
     "baseUrl": "src",
     "paths": {
       "vs/*": ["vs/*"]
