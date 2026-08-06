@@ -25,6 +25,9 @@ class StubCatalog implements ISqlDriverCatalogService {
 	getRuntimeStatus(): Promise<SqlRuntimeDriverEntry[]> {
 		return Promise.resolve([...this.entries.values()]);
 	}
+	refreshRuntimeStatus(): Promise<SqlRuntimeDriverEntry[]> {
+		return this.getRuntimeStatus();
+	}
 	getCachedRuntimeStatus(): SqlRuntimeDriverEntry[] {
 		return [...this.entries.values()];
 	}

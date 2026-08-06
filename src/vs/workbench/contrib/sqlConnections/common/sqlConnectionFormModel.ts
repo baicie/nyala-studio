@@ -28,6 +28,8 @@ export const enum SqliteConnectionMode {
 
 export type SqlConnectionFormMissingField = 'databasePath' | 'host' | 'port' | 'database' | 'username';
 
+export type SqlConnectionFormFieldRequirements = Readonly<Record<SqlConnectionFormMissingField, boolean>>;
+
 export interface SqlConnectionFormState {
 	readonly id?: string;
 	readonly kind: SqlConnectionKind;
@@ -180,6 +182,22 @@ export function setSqliteConnectionMode(
 		saveConnection: mode === SqliteConnectionMode.File && state.saveConnection === true,
 		autoConnect: mode === SqliteConnectionMode.File && state.autoConnect === true
 	});
+}
+
+export function getSqlConnectionFormFieldRequirements(
+	state: Pick<Partial<SqlConnectionFormState>, 'kind' | 'sqliteMode' | 'databasePath'>
+): SqlConnectionFormFieldRequirements {
+	const kind = state.kind ?? SqlConnectionKind.Sqlite;
+	const isSqlite = kind === SqlConnectionKind.Sqlite;
+	const isSqliteFile = isSqlite && getSqliteConnectionMode(state) === SqliteConnectionMode.File;
+
+	return {
+		databasePath: isSqliteFile,
+		host: !isSqlite,
+		port: !isSqlite,
+		database: !isSqlite,
+		username: kind === SqlConnectionKind.MySql
+	};
 }
 
 export function createSafeSqlConnectionFormDraft(state: Partial<SqlConnectionFormState>): SafeSqlConnectionFormDraft {

@@ -9,6 +9,7 @@ import {
 	createSqlConnectionFormPreview,
 	createSqlConnectionFormStateFromSavedConnection,
 	createSqlConnectionInputFromFormState,
+	getSqlConnectionFormFieldRequirements,
 	getSqliteConnectionMode,
 	getSqlConnectionFormStatus,
 	maskSqlConnectionInput,
@@ -175,6 +176,34 @@ test('SQLite mode helpers switch between file and memory without mutating the so
 	assert.equal(nextFileState.sqliteMode, SqliteConnectionMode.File);
 	assert.equal(nextFileState.databasePath, '');
 	assert.equal(memoryState.databasePath, ':memory:');
+});
+
+test('SQLite field requirements follow file and in-memory modes', () => {
+	assert.deepEqual(
+		getSqlConnectionFormFieldRequirements({
+			kind: SqlConnectionKind.Sqlite,
+			sqliteMode: SqliteConnectionMode.File,
+			databasePath: ''
+		}),
+		{ databasePath: true, host: false, port: false, database: false, username: false }
+	);
+	assert.deepEqual(
+		getSqlConnectionFormFieldRequirements({
+			kind: SqlConnectionKind.Sqlite,
+			sqliteMode: SqliteConnectionMode.Memory,
+			databasePath: ':memory:'
+		}),
+		{ databasePath: false, host: false, port: false, database: false, username: false }
+	);
+});
+
+test('network field requirements keep password optional', () => {
+	const mysql = getSqlConnectionFormFieldRequirements({ kind: SqlConnectionKind.MySql });
+	const postgres = getSqlConnectionFormFieldRequirements({ kind: SqlConnectionKind.PostgreSql });
+
+	assert.deepEqual(mysql, { databasePath: false, host: true, port: true, database: true, username: true });
+	assert.deepEqual(postgres, { databasePath: false, host: true, port: true, database: true, username: false });
+	assert.equal('password' in mysql, false);
 });
 
 test('normalizeSqlConnectionFormState disables save and autoConnect for PostgreSQL planned driver', () => {

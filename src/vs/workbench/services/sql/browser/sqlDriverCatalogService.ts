@@ -82,6 +82,7 @@ export class SqlDriverCatalogService extends Disposable implements ISqlDriverCat
 	declare readonly _serviceBrand: undefined;
 
 	private cache: SqlRuntimeDriverEntry[] | undefined;
+	private runtimeStatusLoad: Promise<SqlRuntimeDriverEntry[]> | undefined;
 	private readonly executor: TauriSqlCommandExecutor;
 	private readonly onDidChangeEmitter = this._register(new Emitter<void>());
 
@@ -94,11 +95,34 @@ export class SqlDriverCatalogService extends Disposable implements ISqlDriverCat
 		return this.onDidChangeEmitter.event(listener);
 	}
 
-	async getRuntimeStatus(): Promise<SqlRuntimeDriverEntry[]> {
+	getRuntimeStatus(): Promise<SqlRuntimeDriverEntry[]> {
 		if (this.cache !== undefined) {
-			return this.cache;
+			return Promise.resolve(this.cache);
 		}
 
+		return this.runtimeStatusLoad ?? this.loadRuntimeStatus();
+	}
+
+	refreshRuntimeStatus(): Promise<SqlRuntimeDriverEntry[]> {
+		if (this.runtimeStatusLoad) {
+			return this.runtimeStatusLoad;
+		}
+
+		this.cache = undefined;
+		return this.loadRuntimeStatus();
+	}
+
+	private loadRuntimeStatus(): Promise<SqlRuntimeDriverEntry[]> {
+		const load = this.fetchRuntimeStatus().finally(() => {
+			if (this.runtimeStatusLoad === load) {
+				this.runtimeStatusLoad = undefined;
+			}
+		});
+		this.runtimeStatusLoad = load;
+		return load;
+	}
+
+	private async fetchRuntimeStatus(): Promise<SqlRuntimeDriverEntry[]> {
 		try {
 			const raw = await this.executor.execute<RawDriverRuntimeEntry[]>(
 				'sql_list_driver_runtime_status',

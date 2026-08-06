@@ -44,6 +44,12 @@ export interface ISqlDriverCatalogService {
 	getRuntimeStatus(): Promise<SqlRuntimeDriverEntry[]>;
 
 	/**
+	 * Re-fetches the runtime status table from the backend, replacing the
+	 * session cache. Concurrent refreshes share the same in-flight request.
+	 */
+	refreshRuntimeStatus(): Promise<SqlRuntimeDriverEntry[]>;
+
+	/**
 	 * Synchronous accessor for the cached status table. Throws if the
 	 * catalog has not been initialised yet. Use `getRuntimeStatus()` if
 	 * you are not sure whether initialisation has run.

@@ -126,8 +126,8 @@ src/vs/workbench/contrib/sqlProduct/browser/sqlProductWelcomePane.ts
 | `cargo test --lib demo_seed`        | 6/6                  | seed、幂等复用、用户订单保留、V2 open、V1 查询                                                           |
 | `cargo test --lib mysql_validation` | 9 passed / 2 ignored | 输入、端口、TLS、共享网络超时、唯一表名、错误 code、清理失败告警；live contract 默认忽略                  |
 | `pnpm run test:search`              | 2/2                  | Tauri search cancellation race                                                                           |
-| `pnpm run test:sql-services`        | 69/69                | Product service、错误映射、driver catalog、V2 连接刷新事件                                               |
-| `pnpm run test:sql-connections`     | 117/117              | Connect form、strict refresh、保存同 id、失败清理、validation、Data Sources / Connectors navigation      |
+| `pnpm run test:sql-services`        | 75/75                | Product service、错误映射、driver catalog、V2 连接刷新事件、connector runtime guard                       |
+| `pnpm run test:sql-connections`     | 132/132              | Connect form、strict refresh、保存同 id、失败清理、validation、Data Sources / Connectors navigation      |
 | `pnpm run test:sql-result`          | 58/58                | 结果模型、复制、状态与稀疏数值列可见性                                                                   |
 | `pnpm run test:sql-history`         | 28/28                | History 模型、服务、ViewPane 生命周期                                                                    |
 | `pnpm run test:sql-product`         | 65/65                | first-launch plan、Welcome、startup splash、zoom                                                         |
@@ -156,7 +156,7 @@ Windows/Tauri 原生走查（2026-07-26）exit 0：
 - [x] `cargo test --lib demo_seed` 6/6 通过；
 - [x] `cargo test --lib mysql_validation` 9 passed / 2 ignored；
 - [x] `pnpm run test:sql-product` 65/65 通过；
-- [x] `pnpm run test:sql-connections` 117/117 通过；
+- [x] `pnpm run test:sql-connections` 132/132 通过；
 - [x] `pnpm run test:sql-result` 58/58 通过；
 - [x] Rust bootstrap 测试验证 Demo 同时进入 V1/V2，且 V1 查询 `users` 返回 5；
 - [x] CI/release workflow 强制执行 pnpm + Rust gate，并提供 live MySQL opt-in；

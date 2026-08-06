@@ -84,6 +84,39 @@ test('SqlDriverCatalogService caches the snapshot for subsequent reads', async (
 	assert.equal(executor.calls.length, 1);
 });
 
+test('SqlDriverCatalogService refreshes a cached snapshot from the backend', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	executor.responses.set('sql_list_driver_runtime_status', [
+		{ id: 'mysql', displayName: 'MySQL', status: 'preview', summary: 'before', notes: [] }
+	]);
+	const service = new SqlDriverCatalogService(executor);
+	let changeCount = 0;
+	const subscription = service.onChange(() => changeCount++);
+
+	const first = await service.getRuntimeStatus();
+	executor.responses.set('sql_list_driver_runtime_status', [
+		{ id: 'mysql', displayName: 'MySQL', status: 'disabled', summary: 'after', notes: [] }
+	]);
+
+	const cached = await service.getRuntimeStatus();
+	const firstRefresh = service.refreshRuntimeStatus();
+	const concurrentRefresh = service.refreshRuntimeStatus();
+	const refreshed = await firstRefresh;
+
+	assert.equal(cached, first);
+	assert.equal(firstRefresh, concurrentRefresh);
+	assert.notEqual(refreshed, first);
+	assert.equal(refreshed[0].status, SqlRuntimeStatus.Disabled);
+	assert.equal(refreshed[0].summary, 'after');
+	assert.equal(service.getCachedRuntimeStatus(), refreshed);
+	assert.equal(await service.getRuntimeStatus(), refreshed);
+	assert.equal(executor.calls.length, 2);
+	assert.equal(changeCount, 2);
+
+	subscription.dispose();
+	service.dispose();
+});
+
 test('SqlDriverCatalogService returns offline fallback when tauri backend is unavailable', async () => {
 	const executor = new FakeSqlCommandExecutor();
 	executor.errors.set(

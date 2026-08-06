@@ -8,7 +8,11 @@
  * badge updates in lockstep when the runtime status table changes.
  *--------------------------------------------------------------------------------------------*/
 
-import { ISqlDriverCatalogService, SqlRuntimeDriverId, SqlRuntimeStatus } from '../../../../workbench/services/sql/common/sqlDriverCatalog.js';
+import {
+	ISqlDriverCatalogService,
+	SqlRuntimeDriverId,
+	SqlRuntimeStatus
+} from '../../../../workbench/services/sql/common/sqlDriverCatalog.js';
 
 export interface SqlDriverStatusBadge {
 	readonly text: string;
@@ -56,6 +60,19 @@ export function buildSqlDriverStatusBadge(
 		title: entry.summary,
 		className: STATUS_CLASS[entry.status],
 		runnable: entry.status === SqlRuntimeStatus.Stable || entry.status === SqlRuntimeStatus.Preview
+	};
+}
+
+export function buildSqlDriverStatusPlaceholder(displayName: string, unavailable = false): SqlDriverStatusBadge {
+	const text = unavailable ? 'Unavailable' : 'Loading';
+	return {
+		text,
+		ariaLabel: `${displayName} runtime status: ${text}`,
+		title: unavailable
+			? 'Runtime availability could not be loaded. Refresh to retry.'
+			: 'Checking runtime availability...',
+		className: 'sql-driver-status-badge sql-driver-status-badge--disabled',
+		runnable: false
 	};
 }
 

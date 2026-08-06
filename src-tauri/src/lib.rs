@@ -1,6 +1,8 @@
 mod commands;
 pub(crate) mod product;
 pub mod runtime_status;
+#[cfg(target_os = "windows")]
+mod windows_icon;
 
 use commands::db_state::SidexDbState;
 use commands::debug::{DapClientStore, DebugAdapterStore};
@@ -374,7 +376,7 @@ pub fn run() {
         log::warn!("V2 SQL connection profiles could not be restored: {error}");
     }
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(UpdateManagerState::new())
@@ -445,6 +447,26 @@ pub fn run() {
                         .unwrap(),
                 );
             });
+        })
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "windows")]
+            if matches!(event, tauri::WindowEvent::ScaleFactorChanged { .. }) {
+                if let Err(error) = windows_icon::refresh_window_icons(window) {
+                    log::warn!("Windows window icons could not be refreshed: {error}");
+                }
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            let _ = (window, event);
+        })
+        .on_page_load(|webview, _payload| {
+            #[cfg(target_os = "windows")]
+            if let Err(error) = windows_icon::refresh_window_icons(&webview.window()) {
+                log::warn!("Windows window icons could not be finalized: {error}");
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            let _ = webview;
         })
         .setup(|app| {
             let app_data = app
@@ -912,6 +934,20 @@ pub fn run() {
             // Menu i18n
             commands::update_menu_labels,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    app.run(|app_handle, event| {
+        #[cfg(target_os = "windows")]
+        if matches!(event, tauri::RunEvent::Ready) {
+            if let Some(window) = app_handle.get_webview_window("main") {
+                if let Err(error) = windows_icon::set_webview_icons(&window) {
+                    log::warn!("Windows window icons could not be initialized: {error}");
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        let _ = (app_handle, event);
+    });
 }

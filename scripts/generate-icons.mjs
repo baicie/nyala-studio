@@ -27,7 +27,7 @@ const pngSizes = new Map([
 	['Square150x150Logo.png', 150],
 	['Square284x284Logo.png', 284],
 	['Square310x310Logo.png', 310],
-	['StoreLogo.png', 50],
+	['StoreLogo.png', 50]
 ]);
 
 const iconsetSizes = [
@@ -40,12 +40,13 @@ const iconsetSizes = [
 	['icon_256x256.png', 256],
 	['icon_256x256@2x.png', 512],
 	['icon_512x512.png', 512],
-	['icon_512x512@2x.png', 1024],
+	['icon_512x512@2x.png', 1024]
 ];
 
-// Tauri's Windows icon loader uses the first ICO entry. Keep the largest
-// image first so Windows never scales the 16px rendition for app surfaces.
-const icoSizes = [256, 128, 64, 48, 32, 24, 16];
+// Tauri decodes only the first ICO entry for its default Windows window icon
+// (ICON_SMALL). Keep a 32px rendition first; the remaining entries are
+// retained for the bundled executable and Windows shell size selection.
+const icoSizes = [32, 256, 128, 112, 96, 80, 72, 64, 56, 48, 40, 36, 28, 24, 20, 16];
 
 function run(command, args) {
 	execFileSync(command, args, { stdio: 'pipe' });
@@ -168,6 +169,15 @@ function cleanWhiteEdges(pngPath) {
 				pixels[offset + 2] = 0;
 				pixels[offset + 3] = 0;
 			}
+
+			if (width <= 48 && pixels[offset + 3] > 0) {
+				for (let channel = 0; channel < 3; channel++) {
+					pixels[offset + channel] = Math.max(
+						0,
+						Math.min(255, Math.round((pixels[offset + channel] - 128) * 1.3 + 128))
+					);
+				}
+			}
 		}
 	}
 
@@ -180,7 +190,7 @@ function cleanWhiteEdges(pngPath) {
 		file.slice(0, 8),
 		pngChunk('IHDR', ihdr),
 		pngChunk('IDAT', deflateSync(raw)),
-		pngChunk('IEND', Buffer.alloc(0)),
+		pngChunk('IEND', Buffer.alloc(0))
 	]);
 	writeFileSync(pngPath, png);
 }
@@ -221,12 +231,35 @@ for y in 0..<sourceHeight {
 	for x in 0..<sourceWidth {
 		var pixel = [Int](repeating: 0, count: 4)
 		source.getPixel(&pixel, atX: x, y: y)
-		if pixel[3] > 8 {
+		let belongsToDarkArtwork = pixel[0] < 245 || pixel[1] < 245 || pixel[2] < 245
+		if pixel[3] > 8 && belongsToDarkArtwork {
 			minX = min(minX, x)
 			minY = min(minY, y)
 			maxX = max(maxX, x)
 			maxY = max(maxY, y)
 		}
+	}
+}
+
+let sourceLogoMinX = Int((CGFloat(minX) + CGFloat(maxX - minX + 1) * 0.23).rounded(.down))
+let sourceLogoMaxX = Int((CGFloat(minX) + CGFloat(maxX - minX + 1) * 0.77).rounded(.up))
+let sourceLogoMinY = Int((CGFloat(minY) + CGFloat(maxY - minY + 1) * 0.14).rounded(.down))
+let sourceLogoMaxY = Int((CGFloat(minY) + CGFloat(maxY - minY + 1) * 0.88).rounded(.up))
+
+// Recover the alpha channel from the source's white matte before resizing.
+// The protected center keeps the white N artwork intact.
+for y in 0..<sourceHeight {
+	for x in 0..<sourceWidth {
+		let insideLogo = x >= sourceLogoMinX && x <= sourceLogoMaxX && y >= sourceLogoMinY && y <= sourceLogoMaxY
+		if insideLogo {
+			continue
+		}
+		var pixel = [Int](repeating: 0, count: 4)
+		source.getPixel(&pixel, atX: x, y: y)
+		let luminance = (pixel[0] + pixel[1] + pixel[2]) / 3
+		let recoveredAlpha = pixel[3] * (255 - luminance) / 255
+		var recovered = [0, 0, 0, recoveredAlpha]
+		source.setPixel(&recovered, atX: x, y: y)
 	}
 }
 
@@ -292,7 +325,7 @@ guard let data = bitmap.representation(using: .png, properties: [:]) else {
 }
 try data.write(to: URL(fileURLWithPath: destinationPath), options: .atomic)
 `,
-		'utf8',
+		'utf8'
 	);
 
 	run('swiftc', [rendererPath, '-o', rendererBin]);
