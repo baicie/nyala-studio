@@ -2,17 +2,16 @@
  * SQL Studio Next - SQL Result service.
  *
  * The service owns two parallel state shapes:
- *   - `state` / `onDidChangeResult` describe the in-flight query
- *     (Idle / Running / Success / Error / Cancelled). The Result View
- *     renders it directly as the live indicator.
+ *   - `state` / `onDidChangeResult` describe the live query lifecycle
+ *     (Idle / Running / Success / Error / Cancelled). Running state takes
+ *     display priority over terminal snapshots.
  *   - `panelState` / `onDidChangePanelState` describe the history of
  *     terminal queries (Success / Error / Cancelled snapshots, capped
- *     to SQL_RESULT_MAX_SNAPSHOTS). The Result View renders it as a
- *     history list with the latest entry active.
+ *     to SQL_RESULT_MAX_SNAPSHOTS). Its active snapshot drives terminal
+ *     content in the Result View.
  *
- * Both states are updated together on every terminal event so the
- * live indicator and the history list never disagree about which
- * query just finished.
+ * Terminal events update both states together. Explicit snapshot activation
+ * changes only panel state so users can inspect an older result.
  *--------------------------------------------------------------------------------------------*/
 
 import { Emitter, Event } from '../../../../base/common/event.js';
@@ -25,6 +24,7 @@ import {
 	SqlEditorQueryStartedEvent
 } from '../../sqlEditor/common/sqlEditorEvents.js';
 import {
+	activateSqlResultSnapshot,
 	addSqlResultSnapshot,
 	createCancelledResultSnapshotFromEvent,
 	createCancelledSqlResultState,
@@ -56,6 +56,7 @@ export interface ISqlResultService {
 	setSuccess(event: SqlEditorQueryCompletedEvent): void;
 	setError(event: SqlEditorQueryFailedEvent): void;
 	setCancelled(event: SqlEditorQueryCancelledEvent): void;
+	activateSnapshot(snapshotId: string): void;
 	removeSnapshot(snapshotId: string): void;
 	clear(): void;
 }
@@ -97,6 +98,13 @@ export class SqlResultService extends Disposable implements ISqlResultService {
 	setCancelled(event: SqlEditorQueryCancelledEvent): void {
 		this.setState(createCancelledSqlResultState(event));
 		this.addSnapshot(createCancelledResultSnapshotFromEvent(event));
+	}
+
+	activateSnapshot(snapshotId: string): void {
+		const panelState = activateSqlResultSnapshot(this._panelState, snapshotId);
+		if (panelState !== this._panelState) {
+			this.setPanelState(panelState);
+		}
 	}
 
 	removeSnapshot(snapshotId: string): void {

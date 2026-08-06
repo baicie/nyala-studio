@@ -2,11 +2,7 @@
  * SQL Studio Next - SQL Result pure model helpers.
  *--------------------------------------------------------------------------------------------*/
 
-import {
-	buildSqlResultGrid,
-	getSqlResultGridStatus,
-	SqlResultGrid
-} from './sqlResultGridModel.js';
+import { buildSqlResultGrid, getSqlResultGridStatus, SqlResultGrid } from './sqlResultGridModel.js';
 import { SqlCellKind, SqlCellValue, SqlQueryResult, SqlResultColumn } from '../../../services/sql/common/sqlTypes.js';
 import {
 	SqlEditorQueryCancelledEvent,
@@ -60,11 +56,7 @@ export interface SqlResultCancelledState {
 }
 
 export type SqlResultState =
-	| SqlResultIdleState
-	| SqlResultRunningState
-	| SqlResultSuccessState
-	| SqlResultErrorState
-	| SqlResultCancelledState;
+	SqlResultIdleState | SqlResultRunningState | SqlResultSuccessState | SqlResultErrorState | SqlResultCancelledState;
 
 export interface SqlResultDisplayGrid {
 	columns: string[];
@@ -274,10 +266,7 @@ export interface SqlResultCancelledSnapshot extends SqlResultSnapshotBase {
 	readonly message: string;
 }
 
-export type SqlResultSnapshot =
-	| SqlResultSuccessSnapshot
-	| SqlResultErrorSnapshot
-	| SqlResultCancelledSnapshot;
+export type SqlResultSnapshot = SqlResultSuccessSnapshot | SqlResultErrorSnapshot | SqlResultCancelledSnapshot;
 
 export interface SqlResultPanelState {
 	readonly snapshots: readonly SqlResultSnapshot[];
@@ -378,7 +367,9 @@ export function createErrorResultSnapshotFromEvent(event: SqlEditorQueryFailedEv
 	});
 }
 
-export function createCancelledResultSnapshotFromEvent(event: SqlEditorQueryCancelledEvent): SqlResultCancelledSnapshot {
+export function createCancelledResultSnapshotFromEvent(
+	event: SqlEditorQueryCancelledEvent
+): SqlResultCancelledSnapshot {
 	return createCancelledResultSnapshot({
 		id: createResultSnapshotId(event.editorId, event.completedAt),
 		editorId: event.editorId,
@@ -401,6 +392,15 @@ export function addSqlResultSnapshot(
 	return { snapshots, activeSnapshotId: snapshot.id };
 }
 
+export function activateSqlResultSnapshot(state: SqlResultPanelState, snapshotId: string): SqlResultPanelState {
+	const id = snapshotId.trim();
+	if (!id || state.activeSnapshotId === id || !state.snapshots.some(snapshot => snapshot.id === id)) {
+		return state;
+	}
+
+	return { ...state, activeSnapshotId: id };
+}
+
 export function removeSqlResultSnapshot(state: SqlResultPanelState, snapshotId: string): SqlResultPanelState {
 	const id = snapshotId.trim();
 	if (!id) {
@@ -415,6 +415,34 @@ export function removeSqlResultSnapshot(state: SqlResultPanelState, snapshotId: 
 
 export function getActiveSqlResultSnapshot(state: SqlResultPanelState): SqlResultSnapshot | undefined {
 	return state.snapshots.find(snapshot => snapshot.id === state.activeSnapshotId) ?? state.snapshots[0];
+}
+
+export function getSqlResultPanelContentState(state: SqlResultState, panelState: SqlResultPanelState): SqlResultState {
+	if (state.kind === SqlResultStateKind.Running) {
+		return state;
+	}
+
+	const snapshot = getActiveSqlResultSnapshot(panelState);
+	if (!snapshot) {
+		return state;
+	}
+
+	const query: SqlResultQueryInfo = {
+		editorId: snapshot.editorId,
+		connectionId: snapshot.connectionId,
+		sql: snapshot.sql,
+		startedAt: snapshot.createdAt,
+		completedAt: snapshot.createdAt
+	};
+
+	switch (snapshot.kind) {
+		case SqlResultSnapshotKind.Success:
+			return { kind: SqlResultStateKind.Success, query, result: snapshot.result };
+		case SqlResultSnapshotKind.Error:
+			return { kind: SqlResultStateKind.Error, query, errorMessage: snapshot.errorMessage };
+		case SqlResultSnapshotKind.Cancelled:
+			return { kind: SqlResultStateKind.Cancelled, query, message: snapshot.message };
+	}
 }
 
 export function createSqlResultPreview(sql: string, maxLength = SQL_RESULT_SQL_PREVIEW_LENGTH): string {
@@ -435,7 +463,12 @@ function normalizeSnapshotMessage(error: unknown): string {
 }
 
 function summarizeSnapshotMessage(message: string): string {
-	return message.split(/\r?\n/).find(line => line.trim())?.trim() || 'Query failed.';
+	return (
+		message
+			.split(/\r?\n/)
+			.find(line => line.trim())
+			?.trim() || 'Query failed.'
+	);
 }
 
 function hashEditorId(value: string): string {

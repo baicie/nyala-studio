@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { SqlCellKind, SqlQueryResult } from '../../../services/sql/common/sqlTypes.js';
 import {
+	activateSqlResultSnapshot,
 	addSqlResultSnapshot,
 	buildSqlResultDisplayGrid,
 	createCancelledResultSnapshot,
@@ -22,6 +23,7 @@ import {
 	formatColumnLabel,
 	formatSqlCellValue,
 	getActiveSqlResultSnapshot,
+	getSqlResultPanelContentState,
 	getSqlResultSummary,
 	removeSqlResultSnapshot,
 	sqlResultToCsv,
@@ -303,11 +305,7 @@ test('SqlResultService emits state changes for query lifecycle', () => {
 
 	service.clear();
 
-	assert.deepEqual(states, [
-		SqlResultStateKind.Running,
-		SqlResultStateKind.Success,
-		SqlResultStateKind.Idle
-	]);
+	assert.deepEqual(states, [SqlResultStateKind.Running, SqlResultStateKind.Success, SqlResultStateKind.Idle]);
 });
 
 test('SqlResultService records success error and cancelled snapshots', () => {
@@ -345,11 +343,7 @@ test('SqlResultService records success error and cancelled snapshots', () => {
 
 	assert.deepEqual(
 		service.panelState.snapshots.map(snapshot => snapshot.kind),
-		[
-			SqlResultSnapshotKind.Cancelled,
-			SqlResultSnapshotKind.Error,
-			SqlResultSnapshotKind.Success
-		]
+		[SqlResultSnapshotKind.Cancelled, SqlResultSnapshotKind.Error, SqlResultSnapshotKind.Success]
 	);
 	assert.equal(service.panelState.activeSnapshotId, service.panelState.snapshots[0].id);
 	assert.equal(service.state.kind, SqlResultStateKind.Cancelled);
@@ -375,6 +369,41 @@ test('SqlResultService emits panel state change when a snapshot is added', () =>
 
 	assert.equal(lastPanelState.snapshots.length, 1);
 	assert.equal(lastPanelState.snapshots[0].kind, SqlResultSnapshotKind.Success);
+});
+
+test('SqlResultService activates an existing snapshot', () => {
+	const service = new SqlResultService();
+
+	service.setSuccess({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 1,
+		completedAt: 2,
+		result: snapshotResult
+	});
+	service.setSuccess({
+		editorId: 'query-2',
+		connectionId: 'local',
+		sql: 'SELECT 2',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 3,
+		completedAt: 4,
+		result: snapshotResult
+	});
+
+	const firstSnapshotId = service.panelState.snapshots[1].id;
+	let activeSnapshotId: string | undefined;
+	service.onDidChangePanelState(state => {
+		activeSnapshotId = state.activeSnapshotId;
+	});
+
+	service.activateSnapshot(firstSnapshotId);
+
+	assert.equal(service.panelState.activeSnapshotId, firstSnapshotId);
+	assert.equal(activeSnapshotId, firstSnapshotId);
+	assert.equal(getActiveSqlResultSnapshot(service.panelState)?.sql, 'SELECT 1');
 });
 
 test('SqlResultService.removeSnapshot updates active snapshot', () => {
@@ -405,7 +434,10 @@ test('SqlResultService.removeSnapshot updates active snapshot', () => {
 
 	service.removeSnapshot(activeId!);
 
-	assert.equal(service.panelState.snapshots.find(s => s.id === activeId), undefined);
+	assert.equal(
+		service.panelState.snapshots.find(s => s.id === activeId),
+		undefined
+	);
 	assert.notEqual(service.panelState.activeSnapshotId, activeId);
 });
 
@@ -515,7 +547,10 @@ test('addSqlResultSnapshot puts newest first and limits size', () => {
 		);
 	}
 
-	assert.deepEqual(state.snapshots.map(item => item.id), ['r2', 'r1']);
+	assert.deepEqual(
+		state.snapshots.map(item => item.id),
+		['r2', 'r1']
+	);
 	assert.equal(state.activeSnapshotId, 'r2');
 });
 
@@ -559,6 +594,94 @@ test('addSqlResultSnapshot rejects non-positive maxSnapshots', () => {
 		() => addSqlResultSnapshot(createEmptySqlResultPanelState(), snapshot, 0),
 		/maxSnapshots must be a positive integer/
 	);
+});
+
+test('activateSqlResultSnapshot selects an existing snapshot', () => {
+	const r1 = createSuccessResultSnapshot({
+		id: 'r1',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 1',
+		result: snapshotResult,
+		createdAt: 1
+	});
+	const r2 = createSuccessResultSnapshot({
+		id: 'r2',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 2',
+		result: snapshotResult,
+		createdAt: 2
+	});
+
+	const state = addSqlResultSnapshot(addSqlResultSnapshot(createEmptySqlResultPanelState(), r1), r2);
+	const next = activateSqlResultSnapshot(state, ' r1 ');
+
+	assert.equal(next.activeSnapshotId, 'r1');
+	assert.equal(getActiveSqlResultSnapshot(next)?.id, 'r1');
+	assert.deepEqual(
+		next.snapshots.map(snapshot => snapshot.id),
+		['r2', 'r1']
+	);
+});
+
+test('getSqlResultPanelContentState returns the active snapshot result', () => {
+	const success = createSuccessResultSnapshot({
+		id: 'success',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 1',
+		result: snapshotResult,
+		createdAt: 1
+	});
+	const error = createErrorResultSnapshot({
+		id: 'error',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select from',
+		error: new Error('syntax error'),
+		createdAt: 2
+	});
+	let panelState = addSqlResultSnapshot(addSqlResultSnapshot(createEmptySqlResultPanelState(), success), error);
+	panelState = activateSqlResultSnapshot(panelState, success.id);
+	const liveState = createErrorSqlResultState({
+		editorId: 'e',
+		connectionId: 'c',
+		sql: error.sql,
+		startedAt: 1,
+		completedAt: 2,
+		error: new Error(error.errorMessage)
+	});
+
+	const contentState = getSqlResultPanelContentState(liveState, panelState);
+
+	assert.equal(contentState.kind, SqlResultStateKind.Success);
+	assert.equal(contentState.query.sql, success.sql);
+	if (contentState.kind === SqlResultStateKind.Success) {
+		assert.equal(contentState.result, success.result);
+	}
+});
+
+test('getSqlResultPanelContentState preserves an in-flight query', () => {
+	const snapshot = createSuccessResultSnapshot({
+		id: 'success',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 1',
+		result: snapshotResult,
+		createdAt: 1
+	});
+	const panelState = addSqlResultSnapshot(createEmptySqlResultPanelState(), snapshot);
+	const runningState = createRunningSqlResultState({
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 2',
+		startedAt: 2
+	});
+
+	const contentState = getSqlResultPanelContentState(runningState, panelState);
+
+	assert.equal(contentState, runningState);
 });
 
 test('removeSqlResultSnapshot moves active snapshot', () => {
