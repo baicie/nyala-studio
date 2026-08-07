@@ -24,10 +24,307 @@
 .sql-data-sources-actions {
 	flex: 0 0 auto;
 	display: flex;
-	justify-content: flex-end;
+	align-items: center;
 	gap: 2px;
 	padding-bottom: 4px;
 	border-bottom: 1px solid var(--vscode-editorGroup-border);
+}
+
+.sql-data-source-search-wrap {
+	position: relative;
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.sql-data-source-search-wrap > .codicon {
+	position: absolute;
+	left: 7px;
+	top: 6px;
+	color: var(--vscode-descriptionForeground);
+	pointer-events: none;
+}
+
+.sql-data-source-search {
+	box-sizing: border-box;
+	width: 100%;
+	height: 27px;
+	min-width: 0;
+	padding: 3px 7px 3px 26px;
+	border: 1px solid var(--vscode-input-border);
+	color: var(--vscode-input-foreground);
+	background: var(--vscode-input-background);
+	outline: none;
+}
+
+.sql-data-source-search:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.sql-data-source-summary,
+.sql-data-source-section-title {
+	flex: 0 0 auto;
+	color: var(--vscode-descriptionForeground);
+	font-size: 10px;
+}
+
+.sql-data-source-section-title {
+	padding-top: 3px;
+	font-weight: 600;
+	text-transform: uppercase;
+}
+
+.sql-data-source-list {
+	flex: 0 1 auto;
+	min-height: 0;
+	max-height: 42%;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	overflow: auto;
+}
+
+.sql-data-source-card {
+	box-sizing: border-box;
+	min-width: 0;
+	padding: 7px;
+	border: 1px solid var(--vscode-editorGroup-border);
+	border-radius: 2px;
+	background: var(--vscode-sideBar-background);
+}
+
+.sql-data-source-card.busy {
+	opacity: 0.72;
+}
+
+.sql-data-source-card-summary {
+	min-width: 0;
+	display: grid;
+	grid-template-columns: 26px minmax(0, 1fr);
+	align-items: start;
+	gap: 7px;
+}
+
+.sql-data-source-card-copy {
+	min-width: 0;
+}
+
+.sql-data-source-card-title {
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 5px;
+}
+
+.sql-data-source-card-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.sql-data-source-state {
+	flex: 0 0 auto;
+	height: 16px;
+	display: inline-flex;
+	align-items: center;
+	padding: 0 4px;
+	border: 1px solid var(--vscode-editorGroup-border);
+	color: var(--vscode-descriptionForeground);
+	font-size: 9px;
+}
+
+.sql-data-source-state.connected {
+	border-color: var(--vscode-testing-iconPassed, #2e9e55);
+	color: var(--vscode-testing-iconPassed, #2e9e55);
+}
+
+.sql-data-source-card-target {
+	margin-top: 3px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 10px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sql-data-source-card-actions {
+	min-width: 0;
+	display: flex;
+	justify-content: flex-end;
+	flex-wrap: wrap;
+	gap: 2px;
+	margin-top: 5px;
+	padding-left: 33px;
+}
+
+.sql-data-source-action {
+	box-sizing: border-box;
+	width: 24px;
+	height: 24px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: 0;
+	border-radius: 2px;
+	color: var(--vscode-foreground);
+	background: transparent;
+	cursor: pointer;
+}
+
+.sql-data-source-action:hover:not(:disabled),
+.sql-data-source-action:focus-visible {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.sql-data-source-action:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.sql-data-source-action:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.sql-data-source-action.danger {
+	color: var(--vscode-errorForeground);
+}
+
+.sql-data-source-empty {
+	padding: 12px 7px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	text-align: center;
+}
+
+.sql-connector-manager-toolbar {
+	flex: 0 0 auto;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding-bottom: 6px;
+	border-bottom: 1px solid var(--vscode-editorGroup-border);
+}
+
+.sql-connector-manager-search-wrap {
+	position: relative;
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.sql-connector-manager-search-wrap > .codicon {
+	position: absolute;
+	left: 7px;
+	top: 6px;
+	color: var(--vscode-descriptionForeground);
+	pointer-events: none;
+}
+
+.sql-connector-manager-search {
+	box-sizing: border-box;
+	width: 100%;
+	height: 27px;
+	min-width: 0;
+	padding: 3px 7px 3px 26px;
+	border: 1px solid var(--vscode-input-border);
+	color: var(--vscode-input-foreground);
+	background: var(--vscode-input-background);
+	outline: none;
+}
+
+.sql-connector-manager-search:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.sql-connector-manager-summary {
+	flex: 0 0 auto;
+	color: var(--vscode-descriptionForeground);
+	font-size: 10px;
+}
+
+.sql-connector-manager-list {
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+	overflow: auto;
+}
+
+.sql-connector-manager-card {
+	box-sizing: border-box;
+	min-width: 0;
+	display: grid;
+	grid-template-columns: 30px minmax(0, 1fr) 26px;
+	align-items: start;
+	gap: 8px;
+	padding: 9px 7px;
+	border: 1px solid var(--vscode-editorGroup-border);
+	background: var(--vscode-sideBar-background);
+}
+
+.sql-connector-manager-copy {
+	min-width: 0;
+}
+
+.sql-connector-manager-title {
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 5px;
+}
+
+.sql-connector-manager-name {
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.sql-connector-manager-description,
+.sql-connector-manager-runtime {
+	margin-top: 4px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 10px;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+
+.sql-connector-manager-runtime {
+	margin-top: 2px;
+}
+
+.sql-connector-manager-action {
+	box-sizing: border-box;
+	width: 26px;
+	height: 26px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: 0;
+	color: var(--vscode-foreground);
+	background: transparent;
+	cursor: pointer;
+}
+
+.sql-connector-manager-action:hover,
+.sql-connector-manager-action:focus-visible {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.sql-connector-manager-action:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.sql-connector-manager-empty {
+	padding: 18px 8px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	text-align: center;
 }
 
 .sql-connections-form-header {

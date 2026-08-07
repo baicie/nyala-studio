@@ -36,7 +36,7 @@ import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { IEditorPaneRegistry, EditorPaneDescriptor } from '../../../browser/editor.js';
 import { EditorExtensions } from '../../../common/editor.js';
 import { SqlConnectionsView } from './sqlConnectionsView.js';
-import type { SqlSavedConnection } from '../../../services/sql/common/sqlTypes.js';
+import { SqlConnectionKind, type SqlSavedConnection } from '../../../services/sql/common/sqlTypes.js';
 import { ISqlConnectionDialogService } from '../../../services/sql/common/sqlConnectionDialog.js';
 import { SqlConnectionEditorInput } from '../../../services/sql/common/sqlConnectionEditorInput.js';
 import { SqlConnectionDialogService } from './sqlConnectionDialogService.js';
@@ -69,8 +69,8 @@ class SqlAddConnectionAction extends Action2 {
 		});
 	}
 
-	override async run(accessor: ServicesAccessor): Promise<void> {
-		await openNewSqlDataSourceForm(accessor.get(ISqlConnectionDialogService));
+	override async run(accessor: ServicesAccessor, kind: SqlConnectionKind = SqlConnectionKind.Sqlite): Promise<void> {
+		await openNewSqlDataSourceForm(accessor.get(ISqlConnectionDialogService), kind);
 	}
 }
 

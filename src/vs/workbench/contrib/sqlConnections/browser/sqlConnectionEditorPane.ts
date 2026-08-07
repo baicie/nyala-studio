@@ -4,6 +4,7 @@
 
 import './media/sqlConnections.css';
 import './media/driverCardBadge.css';
+import './media/sqlConnectorBrand.css';
 import './media/sqlConnectionEditor.css';
 
 import { $, addDisposableListener, append, clearNode, Dimension, EventType } from '../../../../base/browser/dom.js';

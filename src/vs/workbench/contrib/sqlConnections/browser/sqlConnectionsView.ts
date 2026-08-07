@@ -4,27 +4,26 @@
 
 import './media/sqlConnections.css';
 import './media/driverCardBadge.css';
+import './media/sqlConnectorBrand.css';
 
 import { $, addDisposableListener, append, clearNode, EventType } from '../../../../base/browser/dom.js';
-import { SelectBox } from '../../../../base/browser/ui/selectBox/selectBox.js';
-import { Schemas } from '../../../../base/common/network.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
-import { IContextMenuService, IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
-import { defaultSelectBoxStyles } from '../../../../platform/theme/browser/defaultStyles.js';
 import { IViewDescriptorService } from '../../../common/views.js';
 import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
 import { ISqlConnectionService } from '../../../services/sql/common/sqlConnection.js';
+import { ISqlConnectionDialogService } from '../../../services/sql/common/sqlConnectionDialog.js';
 import { isTauri } from '../../../../sidex-bridge.js';
 import { ISqlDriverCatalogService } from '../../../services/sql/common/sqlDriverCatalog.js';
 import { ISqlMetadataService } from '../../../services/sql/common/sqlMetadata.js';
@@ -33,11 +32,9 @@ import { getDialectForConnectionKind, SqlDialect } from '../../../services/sql/c
 import {
 	SqlColumn,
 	SqlConnection,
-	SqlConnectionInput,
 	SqlConnectionKind,
 	SqlDatabase,
 	SqlSavedConnection,
-	SqlSslMode,
 	SqlTable
 } from '../../../services/sql/common/sqlTypes.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
@@ -52,6 +49,7 @@ import {
 import {
 	createCopyQualifiedNameTextFromTreeNode,
 	createCopyTableNameTextFromTreeNode,
+	createConnectionQueryDraft,
 	createCountDraftFromTreeNode,
 	createInsertDraftFromTreeNode,
 	createSelectDraftFromTreeNode,
@@ -67,34 +65,32 @@ import {
 	SQL_CONNECTIONS_VIEW_ID,
 	SQL_CONNECTORS_VIEW_ID
 } from '../common/sqlConnections.js';
+import { requestSavedMysqlDataSourceForm } from '../common/sqlConnectionNavigation.js';
 import {
-	refreshDataSourcesAfterConnection,
-	requestSavedMysqlDataSourceForm
-} from '../common/sqlConnectionNavigation.js';
+	createSafeSqlConnectionInputFromFormState,
+	createSqlConnectionFormStateFromSavedConnection
+} from '../common/sqlConnectionFormModel.js';
 import {
 	refreshAndRequireSqlConnection,
 	restoreSavedConnectionsForRefresh,
 	SqlConnectionRefreshOptions
 } from '../common/sqlConnectionRefresh.js';
-import { setSqlConnectionFormTextControlsBusy } from '../common/sqlConnectionFormBusyState.js';
-import { runSqlConnectionFormOperation } from '../common/sqlConnectionFormOperation.js';
 import {
-	createDefaultSqlConnectionFormState,
-	createSafeSqlConnectionInputFromFormState,
-	createSqlConnectionFormPreview,
-	createSqlConnectionFormStateFromSavedConnection,
-	createSqlConnectionInputFromFormState,
-	getSqlConnectionFormFieldRequirements,
-	getSqliteConnectionMode,
-	setSqliteConnectionMode,
-	SqlConnectionFormState,
-	SqliteConnectionMode
-} from '../common/sqlConnectionFormModel.js';
-import { getSqlConnectorPresentation, SQL_CONNECTOR_PRESENTATIONS } from '../common/sqlConnectorPresentationModel.js';
-import { openAndSaveMysqlConnection } from '../common/sqlConnectionSubmission.js';
+	filterSqlConnectorPresentations,
+	getSqlConnectorPresentation,
+	SQL_CONNECTOR_PRESENTATIONS,
+	SqlConnectorDelivery
+} from '../common/sqlConnectorPresentationModel.js';
+import {
+	buildSqlDataSourceManagementItems,
+	createSqlDataSourceRemovalRequest,
+	getSqlDataSourceManagementActions,
+	matchesSqlDataSourceManagementItem,
+	SqlDataSourceManagementAction,
+	SqlDataSourceManagementItem,
+	SqlDataSourceManagementState
+} from '../common/sqlDataSourceManagementModel.js';
 import { buildSqlDriverStatusBadge, buildSqlDriverStatusPlaceholder, SqlDriverStatusBadge } from './driverCardBadge.js';
-import { MysqlPreviewValidationController } from './mysqlValidationView.js';
-import { applySqlConnectionFormAccessibility } from './sqlConnectionFormAccessibility.js';
 
 interface SqlConnectionTreeSnapshotState {
 	connections: SqlConnection[];
@@ -105,69 +101,27 @@ interface SqlConnectionTreeSnapshotState {
 	errorsByTableId: Record<string, string>;
 }
 
-const SQL_CONNECTOR_FORM_STATUS_ID = 'sql-connector-form-status';
-
 export class SqlConnectionsView extends ViewPane {
 	static readonly ID = SQL_CONNECTIONS_VIEW_ID;
 	static readonly NAME = localize('sqlDataSourcesViewName', 'Data Sources');
 
-	private readonly formDisposables = this._register(new DisposableStore());
+	private readonly connectorRenderDisposables = this._register(new DisposableStore());
 	private readonly treeRenderDisposables = this._register(new DisposableStore());
-	private readonly savedRenderDisposables = this._register(new DisposableStore());
+	private readonly dataSourceRenderDisposables = this._register(new DisposableStore());
 
 	private body!: HTMLElement;
-	private formSection!: HTMLElement;
-	private form!: HTMLFormElement;
-	private connectorHeaderIcon!: HTMLElement;
-	private connectorHeaderTitle!: HTMLElement;
-	private connectorHeaderDescription!: HTMLElement;
-	private nameInput!: HTMLInputElement;
-	private sqliteFileFieldsElement!: HTMLElement;
-	private databasePathInput!: HTMLInputElement;
-	private browseDatabaseButton!: HTMLButtonElement;
-	private sqliteFileModeButton!: HTMLButtonElement;
-	private sqliteMemoryModeButton!: HTMLButtonElement;
-	private readOnlyOptionElement!: HTMLElement;
-	private createIfMissingOptionElement!: HTMLElement;
-	private saveConnectionOptionElement!: HTMLElement;
-	private autoConnectOptionElement!: HTMLElement;
-	private readOnlyInput!: HTMLInputElement;
-	private createIfMissingInput!: HTMLInputElement;
-	private saveConnectionInput!: HTMLInputElement;
-	private autoConnectInput!: HTMLInputElement;
 	private messageElement!: HTMLElement;
 	private treeElement!: HTMLElement;
-	private savedConnectionsElement!: HTMLElement;
-
-	private readonly connectorButtons = new Map<SqlConnectionKind, HTMLButtonElement>();
-	private readonly connectorBadges = new Map<SqlConnectionKind, HTMLElement>();
-	private readonly connectorDescriptions = new Map<SqlConnectionKind, HTMLElement>();
-	private readonly connectorAvailability = new Map<SqlConnectionKind, SqlDriverStatusBadge>();
+	private dataSourceSearchInput!: HTMLInputElement;
+	private dataSourceListElement!: HTMLElement;
+	private dataSourceCountElement!: HTMLElement;
+	private connectorSearchInput!: HTMLInputElement;
+	private connectorListElement!: HTMLElement;
+	private connectorCountElement!: HTMLElement;
 	private connectorCatalogLoad: Promise<void> | undefined;
 	private connectorCatalogUnavailable = false;
-	private readonly touchedFormInputs = new Set<HTMLInputElement>();
-	private sqliteFieldsElement!: HTMLElement;
-	private networkFieldsElement!: HTMLElement;
-	private hostInput!: HTMLInputElement;
-	private portInput!: HTMLInputElement;
-	private databaseInput!: HTMLInputElement;
-	private usernameInput!: HTMLInputElement;
-	private passwordInput!: HTMLInputElement;
-	private sslModeSelect!: SelectBox;
-	private sslModeKind!: SqlSslMode[];
-	private currentSslIndex = 0;
-	private testButton!: HTMLButtonElement;
-	private validateButton!: HTMLButtonElement;
-	private connectButton!: HTMLButtonElement;
-	private driverPreviewElement!: HTMLElement;
-	private resetButton!: HTMLButtonElement;
-	private refreshButton!: HTMLButtonElement;
-
-	private currentFormKind: SqlConnectionKind = SqlConnectionKind.Sqlite;
-	private currentFormConnectionId: string | undefined;
-	private currentSqliteMode = SqliteConnectionMode.File;
-	private isFormBusy = false;
-	private readonly mysqlValidationController: MysqlPreviewValidationController;
+	private readonly treeRowsByNodeId = new Map<string, HTMLElement>();
+	private readonly busyDataSourceIds = new Set<string>();
 
 	private readonly collapsedNodes = new Set<string>();
 
@@ -188,7 +142,6 @@ export class SqlConnectionsView extends ViewPane {
 		options: IViewPaneOptions,
 		@IKeybindingService keybindingService: IKeybindingService,
 		@IContextMenuService contextMenuService: IContextMenuService,
-		@IContextViewService contextViewService: IContextViewService,
 		@IConfigurationService configurationService: IConfigurationService,
 		@IContextKeyService contextKeyService: IContextKeyService,
 		@IViewDescriptorService viewDescriptorService: IViewDescriptorService,
@@ -201,7 +154,8 @@ export class SqlConnectionsView extends ViewPane {
 		@ISqlDriverCatalogService private readonly sqlDriverCatalogService: ISqlDriverCatalogService,
 		@ICommandService private readonly commandService: ICommandService,
 		@INotificationService private readonly notificationService: INotificationService,
-		@IFileDialogService private readonly fileDialogService: IFileDialogService
+		@IDialogService private readonly dialogService: IDialogService,
+		@ISqlConnectionDialogService private readonly sqlConnectionDialogService: ISqlConnectionDialogService
 	) {
 		super(
 			options,
@@ -216,14 +170,8 @@ export class SqlConnectionsView extends ViewPane {
 			hoverService
 		);
 
-		this.contextViewService = contextViewService;
 		this.isConnectorView = options.id === SQL_CONNECTORS_VIEW_ID;
-		this.mysqlValidationController = this._register(
-			instantiationService.createInstance(MysqlPreviewValidationController)
-		);
 	}
-
-	private readonly contextViewService: IContextViewService;
 
 	protected override renderBody(container: HTMLElement): void {
 		this.body = append(container, $('.sql-connections-view'));
@@ -238,29 +186,64 @@ export class SqlConnectionsView extends ViewPane {
 	}
 
 	private renderConnectorBody(): void {
-		this.renderConnectionForm(this.body);
+		const toolbar = append(this.body, $('.sql-connector-manager-toolbar'));
+		const searchWrap = append(toolbar, $('.sql-connector-manager-search-wrap'));
+		append(searchWrap, $('.codicon.codicon-search', { 'aria-hidden': 'true' }));
+		this.connectorSearchInput = append(
+			searchWrap,
+			$('input.sql-connector-manager-search', {
+				type: 'search',
+				placeholder: 'Filter connectors',
+				'aria-label': 'Filter connectors'
+			})
+		) as HTMLInputElement;
+		const refreshButton = this.appendIconButton(toolbar, 'refresh', 'Refresh connector status');
+		this.connectorCountElement = append(this.body, $('.sql-connector-manager-summary'));
+		this.connectorListElement = append(this.body, $('.sql-connector-manager-list'));
+		this.messageElement = append(
+			this.body,
+			$('.sql-connections-message', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' })
+		);
 
-		const defaults = createDefaultSqlConnectionFormState(SqlConnectionKind.Sqlite);
-		this.applyFormState(defaults);
-		this.formDisposables.add(
+		this._register(
+			addDisposableListener(this.connectorSearchInput, EventType.INPUT, () => this.renderConnectorManagement())
+		);
+		this._register(
+			addDisposableListener(refreshButton, EventType.CLICK, () => {
+				this.refreshConnectorCatalog().catch(error => this.showError(error));
+			})
+		);
+		this._register(
 			this.sqlDriverCatalogService.onChange(() => {
 				this.connectorCatalogUnavailable = false;
-				this.refreshConnectorOptions();
-				this.refreshDriverPreview();
+				this.renderConnectorManagement();
 			})
 		);
 
-		// Phase 00: warm the catalog so the selector reflects backend maturity.
-		this.ensureConnectorCatalogLoaded().catch(() => undefined);
-		this.refreshConnectorOptions();
-		this.refreshDriverPreview();
+		this.renderConnectorManagement();
+		this.ensureConnectorCatalogLoaded().catch(() => {
+			this.showInfo('Connector status is unavailable. Refresh to retry.');
+		});
 	}
 
 	private renderDataSourcesBody(): void {
 		const actions = append(this.body, $('.sql-data-sources-actions'));
+		const searchWrap = append(actions, $('.sql-data-source-search-wrap'));
+		append(searchWrap, $('.codicon.codicon-search', { 'aria-hidden': 'true' }));
+		this.dataSourceSearchInput = append(
+			searchWrap,
+			$('input.sql-data-source-search', {
+				type: 'search',
+				placeholder: 'Filter data sources',
+				'aria-label': 'Filter data sources'
+			})
+		) as HTMLInputElement;
 		const addDataSourceButton = this.appendIconButton(actions, 'add', 'New data source');
 		const refreshDataSourcesButton = this.appendIconButton(actions, 'refresh', 'Refresh data sources');
 
+		this._register(
+			addDisposableListener(this.dataSourceSearchInput, EventType.INPUT, () => this.renderDataSourceManagement())
+		);
 		this._register(
 			addDisposableListener(addDataSourceButton, EventType.CLICK, () => {
 				this.commandService.executeCommand(SQL_CONNECTIONS_ADD_COMMAND_ID).catch(error => this.showError(error));
@@ -272,12 +255,16 @@ export class SqlConnectionsView extends ViewPane {
 			})
 		);
 
-		this.savedConnectionsElement = append(this.body, $('.sql-saved-connections'));
+		this.dataSourceCountElement = append(this.body, $('.sql-data-source-summary'));
+		this.dataSourceListElement = append(this.body, $('.sql-data-source-list', { role: 'list' }));
+		append(this.body, $('.sql-data-source-section-title', undefined, 'Database Navigator'));
 		this.messageElement = append(
 			this.body,
 			$('.sql-connections-message', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' })
 		);
 		this.treeElement = append(this.body, $('.sql-connections-tree', { role: 'tree', tabIndex: 0 }));
+		this.renderDataSourceManagement();
+		this.renderTree();
 
 		// Phase 01: only hit the Rust backend when it actually exists. In a
 		// plain browser dev session `isTauri()` is false and every SQL command
@@ -290,39 +277,26 @@ export class SqlConnectionsView extends ViewPane {
 		}
 	}
 
+	private appendIconButton(parent: HTMLElement, icon: string, label: string): HTMLButtonElement {
+		const button = append(
+			parent,
+			$('button.sql-connections-icon-button', {
+				type: 'button',
+				title: label,
+				'aria-label': label
+			})
+		) as HTMLButtonElement;
+		append(button, $(`span.codicon.codicon-${icon}`, { 'aria-hidden': 'true' }));
+		return button;
+	}
+
 	override focus(): void {
 		if (this.isConnectorView) {
-			this.connectorButtons.get(this.currentFormKind)?.focus();
+			this.connectorSearchInput?.focus();
 		} else {
-			this.treeElement?.focus();
+			this.dataSourceSearchInput?.focus();
 		}
 		super.focus();
-	}
-
-	openConnectionForm(): void {
-		if (!this.isConnectorView) {
-			return;
-		}
-
-		this.resetConnectionForm();
-		this.revealConnectionForm();
-	}
-
-	openSavedConnectionForm(saved: SqlSavedConnection): void {
-		if (!this.isConnectorView) {
-			return;
-		}
-
-		this.touchedFormInputs.clear();
-		this.applyFormState(createSqlConnectionFormStateFromSavedConnection(saved));
-		this.refreshDriverPreview();
-		this.revealConnectionForm();
-		this.passwordInput.focus();
-		this.showInfo(`Enter the password for ${saved.name} to connect.`);
-	}
-
-	private revealConnectionForm(): void {
-		this.connectorButtons.get(this.currentFormKind)?.focus();
 	}
 
 	async refresh(options: SqlConnectionRefreshOptions = {}): Promise<void> {
@@ -359,7 +333,7 @@ export class SqlConnectionsView extends ViewPane {
 
 			this.showInfo(connections.length === 0 ? 'No connections yet.' : '');
 			this.renderTree();
-			this.renderSavedConnections();
+			this.renderDataSourceManagement();
 		} catch (error) {
 			this.state.connections = [];
 			this.state.databasesByConnectionId = Object.create(null);
@@ -369,7 +343,7 @@ export class SqlConnectionsView extends ViewPane {
 			this.state.errorsByTableId = Object.create(null);
 			this.savedConnections = [];
 			this.renderTree();
-			this.renderSavedConnections();
+			this.renderDataSourceManagement();
 			this.showError(error);
 			if (options.throwOnError) {
 				throw error;
@@ -389,734 +363,81 @@ export class SqlConnectionsView extends ViewPane {
 		this.treeElement.focus();
 	}
 
-	async addConnectionFromForm(): Promise<void> {
-		await this.runFormOperation(async formState => {
-			const preview = createSqlConnectionFormPreview(formState);
-			if (!preview.canConnect || preview.kind === SqlConnectionKind.PostgreSql) {
-				this.showInfo(preview.message);
-				return;
-			}
-
-			this.showInfo(
-				preview.kind === SqlConnectionKind.MySql ? 'Opening MySQL connection...' : 'Opening SQLite connection...'
-			);
-
-			const rawInput: SqlConnectionInput = createSqlConnectionInputFromFormState(formState);
-			const safeInput: SqlConnectionInput = createSafeSqlConnectionInputFromFormState(formState);
-			const input = preview.kind === SqlConnectionKind.MySql ? rawInput : safeInput;
-
-			let connectionId: string;
-			let connectionName: string;
-
-			const shouldSave = preview.canSave;
-
-			if (shouldSave && preview.kind === SqlConnectionKind.MySql) {
-				const connection = await openAndSaveMysqlConnection(this.sqlConnectionService, rawInput, safeInput);
-
-				connectionId = connection.id;
-				connectionName = connection.name;
-			} else if (shouldSave) {
-				const saved = await this.sqlConnectionService.saveConnection({
-					input,
-					autoConnect: formState.autoConnect,
-					openNow: true
-				});
-
-				connectionId = saved.id;
-				connectionName = saved.name;
-			} else {
-				const connection = await this.sqlConnectionService.openConnection(input);
-
-				connectionId = connection.id;
-				connectionName = connection.name;
-			}
-
-			this.showInfo(`Connected to ${connectionName}.`);
-			this.resetConnectionForm();
-			await refreshDataSourcesAfterConnection(
-				(commandId, ...args) => this.commandService.executeCommand(commandId, ...args),
-				connectionId
-			);
-		});
-	}
-
-	private async testConnectionFromForm(): Promise<void> {
-		await this.runFormOperation(async formState => {
-			const preview = createSqlConnectionFormPreview(formState);
-			if (!preview.canConnect || preview.kind === SqlConnectionKind.PostgreSql) {
-				this.showInfo(preview.message);
-				return;
-			}
-
-			this.showInfo('Testing connection...');
-			const input =
-				preview.kind === SqlConnectionKind.MySql
-					? createSqlConnectionInputFromFormState(formState)
-					: createSafeSqlConnectionInputFromFormState(formState);
-			const result = await this.sqlConnectionService.testConnection(input);
-
-			if (!result.ok) {
-				throw new Error(result.error || 'Connection test failed.');
-			}
-
-			this.showInfo('Connection test passed.');
-		});
-	}
-
-	private async validateMysqlFromForm(): Promise<void> {
-		await this.runFormOperation(async formState => {
-			const preview = createSqlConnectionFormPreview(formState);
-			if (preview.kind !== SqlConnectionKind.MySql || !preview.canConnect) {
-				this.showInfo(preview.message);
-				return;
-			}
-
-			this.showInfo('Running MySQL Preview validation...');
-			const outcome = await this.mysqlValidationController.validate(
-				formState.host ?? '',
-				formState.port ?? 0,
-				formState.database ?? '',
-				formState.username ?? '',
-				formState.password ?? '',
-				formState.sslMode ?? SqlSslMode.Prefer
-			);
-
-			if (!outcome.ok) {
-				const detail = outcome.message || 'MySQL Preview validation failed.';
-				throw new Error(outcome.code ? `${outcome.code}: ${detail}` : detail);
-			}
-
-			const warning = outcome.warnings.length > 0 ? ` ${outcome.warnings.join(' ')}` : '';
-			this.showInfo(`MySQL Preview validation passed.${warning}`);
-		});
-	}
-
-	private async runFormOperation(operation: (state: SqlConnectionFormState) => Promise<void>): Promise<void> {
-		if (this.isFormBusy) {
+	private renderConnectorManagement(): void {
+		if (!this.connectorListElement) {
 			return;
 		}
 
-		this.isFormBusy = true;
-		this.refreshDriverPreview();
-		const formState = this.getFormState();
+		this.connectorRenderDisposables.clear();
+		clearNode(this.connectorListElement);
+		const presentations = filterSqlConnectorPresentations({ text: this.connectorSearchInput.value });
+		const runnableCount = presentations.filter(
+			presentation => this.createConnectorBadge(presentation.kind).runnable
+		).length;
+		this.connectorCountElement.textContent = `${presentations.length} connectors · ${runnableCount} available`;
 
-		try {
-			await runSqlConnectionFormOperation({
-				state: formState,
-				catalog: this.sqlDriverCatalogService,
-				loadCatalog: () => this.ensureConnectorCatalogLoaded(),
-				operation: async state => {
-					this.refreshConnectorOptions();
-					await operation(state);
-				},
-				onError: error => this.showError(error),
-				clearSecret: () => {
-					this.passwordInput.value = '';
-				}
-			});
-		} finally {
-			this.isFormBusy = false;
-			this.refreshDriverPreview();
-		}
-	}
-
-	private renderConnectionForm(container: HTMLElement): void {
-		this.formSection = append(container, $('.sql-connectors-settings'));
-		const connectorCatalog = append(
-			this.formSection,
-			$('.sql-connectors-catalog', { role: 'group', 'aria-label': 'Database connectors' })
-		);
-		append(connectorCatalog, $('.sql-connectors-catalog-title', undefined, 'Connector'));
-
-		for (const presentation of SQL_CONNECTOR_PRESENTATIONS) {
-			const button = append(
-				connectorCatalog,
-				$(`button.sql-connector-option.sql-connector-option--${presentation.kind}`, {
-					type: 'button',
-					'aria-pressed': 'false',
-					'aria-disabled': 'false',
-					title: presentation.description
-				})
-			) as HTMLButtonElement;
+		if (presentations.length === 0) {
 			append(
-				button,
-				$(`span.codicon.codicon-${presentation.icon}.sql-connector-option-icon`, { 'aria-hidden': 'true' })
+				this.connectorListElement,
+				$('.sql-connector-manager-empty', undefined, 'No connectors match this filter.')
 			);
-			const copy = append(button, $('.sql-connector-option-copy'));
-			const title = append(copy, $('.sql-connector-option-title'));
-			append(title, $('span.sql-connector-option-name', undefined, presentation.label));
-			const badge = append(title, $('.sql-driver-status-badge'));
-			this.connectorBadges.set(presentation.kind, badge);
-			const description = append(copy, $('.sql-connector-option-description', undefined, presentation.description));
-			this.connectorButtons.set(presentation.kind, button);
-			this.connectorDescriptions.set(presentation.kind, description);
-			this.formDisposables.add(
-				addDisposableListener(button, EventType.CLICK, () => {
-					if (button.classList.contains('disabled') || this.isFormBusy) {
-						this.showInfo(this.connectorAvailability.get(presentation.kind)?.title ?? presentation.description);
-						return;
-					}
-					this.selectConnector(presentation.kind);
-				})
-			);
-		}
-
-		const settingsPane = append(this.formSection, $('.sql-connector-settings-pane'));
-		const header = append(settingsPane, $('.sql-connector-settings-header'));
-		this.connectorHeaderIcon = append(header, $('.sql-connector-settings-icon.codicon', { 'aria-hidden': 'true' }));
-		const headerCopy = append(header, $('.sql-connector-settings-copy'));
-		this.connectorHeaderTitle = append(headerCopy, $('h2.sql-connector-settings-title'));
-		this.connectorHeaderDescription = append(headerCopy, $('.sql-connector-settings-description'));
-		const headerActions = append(header, $('.sql-connections-form-header-actions'));
-		this.resetButton = this.appendIconButton(headerActions, 'discard', 'Reset data source form');
-		this.refreshButton = this.appendIconButton(headerActions, 'refresh', 'Refresh connector availability');
-
-		this.form = append(
-			settingsPane,
-			$('form.sql-connections-form', {
-				id: 'sql-connections-new-connection-form',
-				'aria-label': 'Connection settings',
-				'aria-busy': 'false'
-			})
-		) as HTMLFormElement;
-
-		const generalSection = this.appendSettingsSection(this.form, 'General');
-		const nameLabel = append(generalSection, $('label.sql-connections-field'));
-		append(nameLabel, $('span.sql-connections-field-label', undefined, 'Name'));
-		this.nameInput = append(
-			nameLabel,
-			$('input.sql-connections-input', {
-				type: 'text',
-				placeholder: 'Local SQLite'
-			})
-		) as HTMLInputElement;
-
-		this.sqliteFieldsElement = this.appendSettingsSection(
-			this.form,
-			'Database',
-			'sql-connections-driver-fields sqlite'
-		);
-		const sqliteModeField = append(this.sqliteFieldsElement, $('.sql-connections-field'));
-		append(sqliteModeField, $('span.sql-connections-field-label', undefined, 'Mode'));
-		const sqliteModeControl = append(
-			sqliteModeField,
-			$('.sql-connections-segmented', { role: 'group', 'aria-label': 'SQLite database mode' })
-		);
-		this.sqliteFileModeButton = append(
-			sqliteModeControl,
-			$('button.sql-connections-segment', { type: 'button', 'aria-pressed': 'true' }, 'File')
-		) as HTMLButtonElement;
-		this.sqliteMemoryModeButton = append(
-			sqliteModeControl,
-			$('button.sql-connections-segment', { type: 'button', 'aria-pressed': 'false' }, 'In-memory')
-		) as HTMLButtonElement;
-
-		this.sqliteFileFieldsElement = append(this.sqliteFieldsElement, $('.sql-connections-file-fields'));
-		const pathLabel = append(this.sqliteFileFieldsElement, $('label.sql-connections-field'));
-		append(pathLabel, $('span.sql-connections-field-label', undefined, 'File'));
-		const pathRow = append(pathLabel, $('.sql-connections-path-row'));
-		this.databasePathInput = append(
-			pathRow,
-			$('input.sql-connections-input', {
-				type: 'text',
-				placeholder: '/absolute/path/to/database.db'
-			})
-		) as HTMLInputElement;
-		this.browseDatabaseButton = this.appendIconButton(pathRow, 'folder-opened', 'Browse for SQLite database');
-
-		this.networkFieldsElement = append(this.form, $('.sql-connections-driver-fields.network'));
-		const serverSection = this.appendSettingsSection(this.networkFieldsElement, 'Server');
-
-		const networkAddressRow = append(serverSection, $('.sql-connections-network-address'));
-		const hostLabel = append(networkAddressRow, $('label.sql-connections-field.sql-connections-host-field'));
-		append(hostLabel, $('span.sql-connections-field-label', undefined, 'Host'));
-		this.hostInput = append(
-			hostLabel,
-			$('input.sql-connections-input', {
-				type: 'text',
-				placeholder: 'localhost'
-			})
-		) as HTMLInputElement;
-
-		const portLabel = append(networkAddressRow, $('label.sql-connections-field.sql-connections-port-field'));
-		append(portLabel, $('span.sql-connections-field-label', undefined, 'Port'));
-		this.portInput = append(
-			portLabel,
-			$('input.sql-connections-input', {
-				type: 'number',
-				min: '1',
-				max: '65535',
-				placeholder: '3306'
-			})
-		) as HTMLInputElement;
-
-		const databaseLabel = append(serverSection, $('label.sql-connections-field'));
-		append(databaseLabel, $('span.sql-connections-field-label', undefined, 'Database'));
-		this.databaseInput = append(
-			databaseLabel,
-			$('input.sql-connections-input', {
-				type: 'text',
-				placeholder: 'mysql'
-			})
-		) as HTMLInputElement;
-
-		const authenticationSection = this.appendSettingsSection(this.networkFieldsElement, 'Authentication');
-		const usernameLabel = append(authenticationSection, $('label.sql-connections-field'));
-		append(usernameLabel, $('span.sql-connections-field-label', undefined, 'Username'));
-		this.usernameInput = append(
-			usernameLabel,
-			$('input.sql-connections-input', {
-				type: 'text',
-				placeholder: 'root',
-				autocomplete: 'username'
-			})
-		) as HTMLInputElement;
-
-		const passwordLabel = append(authenticationSection, $('label.sql-connections-field'));
-		append(passwordLabel, $('span.sql-connections-field-label', undefined, 'Password (optional)'));
-		this.passwordInput = append(
-			passwordLabel,
-			$('input.sql-connections-input', {
-				type: 'password',
-				placeholder: 'Not saved',
-				autocomplete: 'current-password'
-			})
-		) as HTMLInputElement;
-
-		const securitySection = this.appendSettingsSection(this.networkFieldsElement, 'Security');
-		const sslLabel = append(securitySection, $('label.sql-connections-field'));
-		append(sslLabel, $('span.sql-connections-field-label', undefined, 'SSL mode'));
-		const sslHost = append(sslLabel, $('.sql-connections-selectbox.sql-connections-input'));
-		this.sslModeKind = [SqlSslMode.Disable, SqlSslMode.Prefer, SqlSslMode.Require];
-		this.currentSslIndex = this.sslModeKind.indexOf(SqlSslMode.Prefer);
-		this.sslModeSelect = new SelectBox(
-			this.sslModeKind.map(mode => ({ text: mode })),
-			this.currentSslIndex,
-			this.contextViewService,
-			defaultSelectBoxStyles,
-			{
-				ariaLabel: localize('sqlConnectionsSslLabel', 'SSL mode'),
-				useCustomDrawn: true
-			}
-		);
-		this.sslModeSelect.render(sslHost);
-		this.formDisposables.add(this.sslModeSelect);
-		this.sslModeSelect.setAriaLabel(localize('sqlConnectionsSslLabel', 'SSL mode'));
-
-		const optionsSection = this.appendSettingsSection(this.form, 'Options');
-		const options = append(optionsSection, $('.sql-connections-options'));
-
-		const readOnlyLabel = (this.readOnlyOptionElement = append(options, $('label.sql-connections-checkbox')));
-		this.readOnlyInput = append(readOnlyLabel, $('input', { type: 'checkbox' })) as HTMLInputElement;
-		append(readOnlyLabel, $('span', undefined, 'Read-only'));
-
-		const createLabel = (this.createIfMissingOptionElement = append(options, $('label.sql-connections-checkbox')));
-		this.createIfMissingInput = append(createLabel, $('input', { type: 'checkbox' })) as HTMLInputElement;
-		append(createLabel, $('span', undefined, 'Create if missing'));
-
-		const saveLabel = (this.saveConnectionOptionElement = append(options, $('label.sql-connections-checkbox')));
-		this.saveConnectionInput = append(saveLabel, $('input', { type: 'checkbox' })) as HTMLInputElement;
-		append(saveLabel, $('span', undefined, 'Save'));
-
-		const autoConnectLabel = (this.autoConnectOptionElement = append(options, $('label.sql-connections-checkbox')));
-		this.autoConnectInput = append(autoConnectLabel, $('input', { type: 'checkbox' })) as HTMLInputElement;
-		append(autoConnectLabel, $('span', undefined, 'Auto connect'));
-
-		const footer = append(this.form, $('.sql-connectors-footer'));
-		this.driverPreviewElement = append(
-			footer,
-			$('.sql-connection-driver-preview', {
-				id: SQL_CONNECTOR_FORM_STATUS_ID,
-				role: 'status',
-				'aria-live': 'polite',
-				'aria-atomic': 'true'
-			})
-		);
-		this.messageElement = append(
-			footer,
-			$('.sql-connections-message', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' })
-		);
-
-		const actions = append(footer, $('.sql-connections-actions'));
-		this.testButton = append(
-			actions,
-			$('button.sql-connections-button', { type: 'button' }, 'Test')
-		) as HTMLButtonElement;
-		this.validateButton = append(
-			actions,
-			$(
-				'button.sql-connections-button',
-				{
-					type: 'button',
-					title: 'Run MySQL Preview validation'
-				},
-				'Validate'
-			)
-		) as HTMLButtonElement;
-		this.connectButton = append(
-			actions,
-			$('button.sql-connections-button.primary', { type: 'submit' }, 'Connect')
-		) as HTMLButtonElement;
-
-		this.formDisposables.add(
-			addDisposableListener(this.form, EventType.SUBMIT, event => {
-				event.preventDefault();
-				this.addConnectionFromForm().catch(error => this.showError(error));
-			})
-		);
-
-		this.formDisposables.add(
-			addDisposableListener(this.resetButton, EventType.CLICK, () => {
-				this.resetConnectionForm();
-			})
-		);
-
-		this.formDisposables.add(
-			addDisposableListener(this.refreshButton, EventType.CLICK, () => {
-				this.refreshConnectorCatalog().catch(error => this.showError(error));
-			})
-		);
-
-		this.formDisposables.add(
-			addDisposableListener(this.testButton, EventType.CLICK, () => {
-				this.testConnectionFromForm().catch(error => this.showError(error));
-			})
-		);
-
-		this.formDisposables.add(
-			addDisposableListener(this.validateButton, EventType.CLICK, () => {
-				this.validateMysqlFromForm().catch(error => this.showError(error));
-			})
-		);
-
-		this.formDisposables.add(
-			addDisposableListener(this.browseDatabaseButton, EventType.CLICK, () => {
-				this.pickSqliteDatabaseFile().catch(error => this.showError(error));
-			})
-		);
-
-		this.formDisposables.add(
-			addDisposableListener(this.sqliteFileModeButton, EventType.CLICK, () => {
-				this.applyFormState(setSqliteConnectionMode(this.getFormState(), SqliteConnectionMode.File));
-				this.refreshDriverPreview();
-			})
-		);
-
-		this.formDisposables.add(
-			addDisposableListener(this.sqliteMemoryModeButton, EventType.CLICK, () => {
-				this.applyFormState(setSqliteConnectionMode(this.getFormState(), SqliteConnectionMode.Memory));
-				this.refreshDriverPreview();
-			})
-		);
-
-		for (const input of [
-			this.nameInput,
-			this.databasePathInput,
-			this.hostInput,
-			this.portInput,
-			this.databaseInput,
-			this.usernameInput,
-			this.passwordInput
-		]) {
-			this.formDisposables.add(addDisposableListener(input, EventType.INPUT, () => this.refreshDriverPreview()));
-			this.formDisposables.add(
-				addDisposableListener(input, EventType.BLUR, () => {
-					this.touchedFormInputs.add(input);
-					this.refreshDriverPreview();
-				})
-			);
-		}
-
-		for (const input of [this.readOnlyInput, this.createIfMissingInput, this.autoConnectInput]) {
-			this.formDisposables.add(addDisposableListener(input, EventType.CHANGE, () => this.refreshDriverPreview()));
-		}
-
-		this.formDisposables.add(
-			this.sslModeSelect.onDidSelect(({ index }) => {
-				this.currentSslIndex = index;
-				this.refreshDriverPreview();
-			})
-		);
-
-		this.formDisposables.add(
-			addDisposableListener(this.saveConnectionInput, EventType.CHANGE, () => {
-				if (!this.saveConnectionInput.checked) {
-					this.autoConnectInput.checked = false;
-				}
-
-				this.refreshDriverPreview();
-			})
-		);
-	}
-
-	private appendSettingsSection(parent: HTMLElement, title: string, classNames = ''): HTMLElement {
-		const section = append(parent, $('section.sql-connector-section'));
-		for (const className of classNames.split(' ').filter(Boolean)) {
-			section.classList.add(className);
-		}
-		append(section, $('h3.sql-connector-section-title', undefined, title));
-		return section;
-	}
-
-	private appendIconButton(parent: HTMLElement, icon: string, label: string): HTMLButtonElement {
-		const button = append(
-			parent,
-			$('button.sql-connections-icon-button', {
-				type: 'button',
-				title: label,
-				'aria-label': label
-			})
-		) as HTMLButtonElement;
-		append(button, $(`span.codicon.codicon-${icon}`, { 'aria-hidden': 'true' }));
-		return button;
-	}
-
-	private getFormState(): SqlConnectionFormState {
-		const sslMode = this.sslModeKind?.[this.currentSslIndex] ?? SqlSslMode.Prefer;
-		return {
-			id: this.currentFormConnectionId,
-			kind: this.currentFormKind,
-			name: this.nameInput.value,
-			sqliteMode: this.currentSqliteMode,
-			databasePath: this.databasePathInput.value,
-			host: this.hostInput.value,
-			port: this.portInput.value ? Number(this.portInput.value) : undefined,
-			database: this.databaseInput.value,
-			username: this.usernameInput.value,
-			password: this.passwordInput.value,
-			sslMode,
-			readOnly: this.readOnlyInput.checked,
-			createIfMissing: this.createIfMissingInput.checked,
-			saveConnection: this.saveConnectionInput.checked,
-			autoConnect: this.autoConnectInput.checked
-		};
-	}
-
-	private applyFormState(state: SqlConnectionFormState): void {
-		this.currentFormConnectionId = state.id;
-		this.currentFormKind = state.kind;
-		this.currentSqliteMode = getSqliteConnectionMode(state);
-		this.refreshConnectorSelection();
-
-		this.nameInput.value = state.name ?? '';
-		this.databasePathInput.value = state.databasePath ?? '';
-
-		this.hostInput.value = state.host ?? '';
-		this.portInput.value = state.port === undefined ? '' : String(state.port);
-		this.databaseInput.value = state.database ?? '';
-		this.usernameInput.value = state.username ?? '';
-		this.passwordInput.value = state.password ?? '';
-		const sslIndex = this.sslModeKind.indexOf(state.sslMode ?? SqlSslMode.Prefer);
-		if (sslIndex >= 0) {
-			this.currentSslIndex = sslIndex;
-			this.sslModeSelect.select(sslIndex);
-		}
-
-		this.readOnlyInput.checked = state.readOnly;
-		this.createIfMissingInput.checked = state.createIfMissing;
-		this.saveConnectionInput.checked = state.saveConnection;
-		this.autoConnectInput.checked = state.autoConnect;
-	}
-
-	private resetConnectionForm(): void {
-		this.touchedFormInputs.clear();
-		this.applyFormState(createDefaultSqlConnectionFormState(this.currentFormKind));
-		this.refreshDriverPreview();
-	}
-
-	private selectConnector(kind: SqlConnectionKind): void {
-		if (kind === this.currentFormKind) {
 			return;
 		}
 
-		this.touchedFormInputs.clear();
-		this.applyFormState(createDefaultSqlConnectionFormState(kind));
-		this.refreshDriverPreview();
-		this.nameInput.focus();
-	}
+		for (const presentation of presentations) {
+			const badge = this.createConnectorBadge(presentation.kind);
+			const card = append(this.connectorListElement, $('article.sql-connector-manager-card'));
+			const icon = append(
+				card,
+				$(`span.sql-connector-brand.sql-connector-brand--${presentation.brandIcon}`, { 'aria-hidden': 'true' })
+			);
+			icon.title = presentation.label;
+			const copy = append(card, $('.sql-connector-manager-copy'));
+			const title = append(copy, $('.sql-connector-manager-title'));
+			append(title, $('span.sql-connector-manager-name', undefined, presentation.label));
+			const status = append(title, $('span'));
+			status.className = badge.className;
+			status.textContent = badge.text;
+			status.setAttribute('role', 'status');
+			status.setAttribute('aria-label', badge.ariaLabel);
+			status.title = badge.title;
+			append(title, $('span.sql-connector-delivery-badge', undefined, deliveryLabel(presentation.delivery)));
+			append(copy, $('.sql-connector-manager-description', undefined, presentation.description));
+			append(copy, $('.sql-connector-manager-runtime', undefined, badge.title));
 
-	private refreshConnectorSelection(): void {
-		const selected = getSqlConnectorPresentation(this.currentFormKind);
-		for (const [kind, button] of this.connectorButtons) {
-			const isSelected = kind === selected.kind;
-			button.classList.toggle('selected', isSelected);
-			button.setAttribute('aria-pressed', String(isSelected));
+			if (badge.runnable) {
+				const addButton = append(
+					card,
+					$('button.sql-connector-manager-action', {
+						type: 'button',
+						title: `New ${presentation.label} data source`,
+						'aria-label': `New ${presentation.label} data source`
+					})
+				) as HTMLButtonElement;
+				append(addButton, $('.codicon.codicon-add', { 'aria-hidden': 'true' }));
+				this.connectorRenderDisposables.add(
+					addDisposableListener(addButton, EventType.CLICK, () => {
+						this.commandService
+							.executeCommand(SQL_CONNECTIONS_ADD_COMMAND_ID, presentation.kind)
+							.catch(error => this.showError(error));
+					})
+				);
+			}
 		}
-
-		this.connectorHeaderIcon.className = `sql-connector-settings-icon codicon codicon-${selected.icon}`;
-		this.connectorHeaderTitle.textContent = selected.label;
-		this.connectorHeaderDescription.textContent = selected.description;
 	}
 
 	private createConnectorBadge(kind: SqlConnectionKind): SqlDriverStatusBadge {
-		const presentation = getSqlConnectorPresentation(kind);
+		const presentation = SQL_CONNECTOR_PRESENTATIONS.find(candidate => candidate.kind === kind);
 		try {
 			return buildSqlDriverStatusBadge(this.sqlDriverCatalogService, getSqlConnectorRuntimeDriverId(kind));
 		} catch {
-			return buildSqlDriverStatusPlaceholder(presentation.label, this.connectorCatalogUnavailable);
+			return buildSqlDriverStatusPlaceholder(presentation?.label ?? kind, this.connectorCatalogUnavailable);
 		}
-	}
-
-	private refreshConnectorOptions(): void {
-		for (const presentation of SQL_CONNECTOR_PRESENTATIONS) {
-			const badge = this.createConnectorBadge(presentation.kind);
-			this.connectorAvailability.set(presentation.kind, badge);
-			const badgeElement = this.connectorBadges.get(presentation.kind);
-			const button = this.connectorButtons.get(presentation.kind);
-			const descriptionElement = this.connectorDescriptions.get(presentation.kind);
-			if (!badgeElement || !button || !descriptionElement) {
-				continue;
-			}
-
-			badgeElement.className = badge.className;
-			badgeElement.textContent = badge.text;
-			badgeElement.setAttribute('aria-label', badge.ariaLabel);
-			badgeElement.title = badge.title;
-			const description = badge.runnable ? presentation.description : badge.title;
-			descriptionElement.textContent = description;
-			button.title = description;
-			const disabled = !badge.runnable;
-			button.classList.toggle('disabled', disabled);
-			button.setAttribute('aria-disabled', String(disabled));
-		}
-		this.refreshConnectorSelection();
-	}
-
-	private refreshDriverPreview(): void {
-		const formState = this.getFormState();
-		const preview = createSqlConnectionFormPreview(formState);
-		const availability = this.connectorAvailability.get(preview.kind) ?? this.createConnectorBadge(preview.kind);
-		const isSqlite = preview.kind === SqlConnectionKind.Sqlite;
-		const isPostgres = preview.kind === SqlConnectionKind.PostgreSql;
-		const isMysql = preview.kind === SqlConnectionKind.MySql;
-		const isMemory = isSqlite && getSqliteConnectionMode(formState) === SqliteConnectionMode.Memory;
-
-		this.sqliteFieldsElement.classList.toggle('hidden', !isSqlite);
-		this.networkFieldsElement.classList.toggle('hidden', isSqlite);
-		this.sqliteFileFieldsElement.classList.toggle('hidden', isMemory);
-		this.sqliteFileModeButton.classList.toggle('selected', isSqlite && !isMemory);
-		this.sqliteMemoryModeButton.classList.toggle('selected', isMemory);
-		this.sqliteFileModeButton.setAttribute('aria-pressed', String(isSqlite && !isMemory));
-		this.sqliteMemoryModeButton.setAttribute('aria-pressed', String(isMemory));
-		this.nameInput.placeholder = isMysql ? 'Local MySQL' : 'Local SQLite';
-		this.readOnlyOptionElement.classList.toggle('hidden', !isSqlite);
-		this.createIfMissingOptionElement.classList.toggle('hidden', !isSqlite || isMemory);
-		this.saveConnectionOptionElement.classList.toggle('hidden', isPostgres || isMemory);
-		this.autoConnectOptionElement.classList.toggle('hidden', !isSqlite || isMemory);
-
-		if (!isSqlite || isMemory) {
-			if (!isSqlite) {
-				this.readOnlyInput.checked = false;
-			}
-			this.createIfMissingInput.checked = false;
-			this.autoConnectInput.checked = false;
-		}
-
-		if (isMemory || isPostgres) {
-			this.saveConnectionInput.checked = false;
-		}
-
-		if (isPostgres) {
-			this.readOnlyInput.checked = false;
-		}
-
-		this.form.setAttribute('aria-busy', String(this.isFormBusy));
-		setSqlConnectionFormTextControlsBusy(
-			[
-				this.nameInput,
-				this.databasePathInput,
-				this.hostInput,
-				this.portInput,
-				this.databaseInput,
-				this.usernameInput,
-				this.passwordInput
-			],
-			this.isFormBusy
-		);
-		for (const button of this.connectorButtons.values()) {
-			button.disabled = this.isFormBusy;
-		}
-		this.sslModeSelect.setEnabled(!this.isFormBusy && !isSqlite);
-		this.sqliteFileModeButton.disabled = this.isFormBusy || !isSqlite;
-		this.sqliteMemoryModeButton.disabled = this.isFormBusy || !isSqlite;
-		this.readOnlyInput.disabled = this.isFormBusy || !isSqlite;
-		this.createIfMissingInput.disabled = this.isFormBusy || !isSqlite || isMemory;
-		this.browseDatabaseButton.disabled = this.isFormBusy || !isSqlite || isMemory;
-		this.saveConnectionInput.disabled = this.isFormBusy || isPostgres || isMemory;
-		this.autoConnectInput.disabled = this.isFormBusy || !isSqlite || isMemory || !this.saveConnectionInput.checked;
-		this.resetButton.disabled = this.isFormBusy;
-		this.refreshButton.disabled = this.isFormBusy;
-
-		this.testButton.disabled = this.isFormBusy || !availability.runnable || !preview.canConnect || isPostgres;
-		this.validateButton.classList.toggle('hidden', !isMysql);
-		this.validateButton.disabled = this.isFormBusy || !availability.runnable || !preview.canConnect || !isMysql;
-		this.connectButton.disabled = this.isFormBusy || !availability.runnable || !preview.canConnect || isPostgres;
-
-		const hasVisibleError = applySqlConnectionFormAccessibility({
-			controls: {
-				databasePath: this.databasePathInput,
-				host: this.hostInput,
-				port: this.portInput,
-				database: this.databaseInput,
-				username: this.usernameInput
-			},
-			requirements: getSqlConnectionFormFieldRequirements(formState),
-			missingFields: preview.missingFields,
-			touchedControls: this.touchedFormInputs,
-			describedBy: SQL_CONNECTOR_FORM_STATUS_ID
-		});
-
-		clearNode(this.driverPreviewElement);
-		const title = append(this.driverPreviewElement, $('.sql-connection-driver-preview-title'));
-		const message = append(this.driverPreviewElement, $('.sql-connection-driver-preview-message'));
-		if (!availability.runnable) {
-			title.textContent = availability.text;
-			message.textContent = availability.title;
-		} else {
-			title.textContent = preview.canConnect ? preview.summary : 'Required settings';
-			message.textContent = preview.message;
-		}
-		title.title = title.textContent;
-		message.title = message.textContent;
-		this.driverPreviewElement.classList.toggle('error', hasVisibleError);
-		this.driverPreviewElement.classList.toggle('mysql-warning', isMysql);
-		this.driverPreviewElement.classList.toggle('planned', isPostgres);
-	}
-
-	private async pickSqliteDatabaseFile(): Promise<void> {
-		const selected = await this.fileDialogService.showOpenDialog({
-			canSelectFiles: true,
-			canSelectFolders: false,
-			canSelectMany: false,
-			title: 'Select SQLite database',
-			openLabel: 'Select',
-			availableFileSystems: [Schemas.file],
-			filters: [
-				{
-					name: 'SQLite databases',
-					extensions: ['db', 'sqlite', 'sqlite3']
-				},
-				{
-					name: 'All files',
-					extensions: ['*']
-				}
-			]
-		});
-
-		if (!selected?.[0]) {
-			return;
-		}
-
-		this.currentSqliteMode = SqliteConnectionMode.File;
-		this.databasePathInput.value = selected[0].fsPath;
-		this.refreshDriverPreview();
-		this.databasePathInput.focus();
 	}
 
 	private async refreshConnectorCatalog(): Promise<void> {
 		await this.ensureConnectorCatalogLoaded(true);
-		this.refreshConnectorOptions();
-		this.refreshDriverPreview();
+		this.renderConnectorManagement();
 		this.showInfo('Connector availability refreshed.');
 	}
 
@@ -1140,8 +461,7 @@ export class SqlConnectionsView extends ViewPane {
 				if (this.connectorCatalogLoad === load) {
 					this.connectorCatalogLoad = undefined;
 				}
-				this.refreshConnectorOptions();
-				this.refreshDriverPreview();
+				this.renderConnectorManagement();
 			});
 		this.connectorCatalogLoad = load;
 		return load;
@@ -1193,6 +513,7 @@ export class SqlConnectionsView extends ViewPane {
 
 	private renderTree(): void {
 		this.treeRenderDisposables.clear();
+		this.treeRowsByNodeId.clear();
 		clearNode(this.treeElement);
 
 		const nodes = buildSqlConnectionTree(this.state);
@@ -1205,6 +526,7 @@ export class SqlConnectionsView extends ViewPane {
 	private renderNode(node: SqlConnectionTreeNode, depth: number): HTMLElement {
 		const wrapper = $('.sql-connection-node-wrapper');
 		const row = append(wrapper, $('.sql-connection-node', { role: 'treeitem' }));
+		this.treeRowsByNodeId.set(node.id, row);
 
 		row.style.paddingLeft = `${8 + depth * 14}px`;
 		row.classList.add(`type-${node.type}`);
@@ -1369,47 +691,142 @@ export class SqlConnectionsView extends ViewPane {
 		return button;
 	}
 
-	private renderSavedConnections(): void {
-		this.savedRenderDisposables.clear();
-		clearNode(this.savedConnectionsElement);
-
-		if (this.savedConnections.length === 0) {
+	private renderDataSourceManagement(): void {
+		if (!this.dataSourceListElement) {
 			return;
 		}
 
-		const title = append(this.savedConnectionsElement, $('.sql-saved-connections-title'));
-		title.textContent = 'Saved Data Sources';
+		this.dataSourceRenderDisposables.clear();
+		clearNode(this.dataSourceListElement);
+		const items = buildSqlDataSourceManagementItems(this.savedConnections, this.state.connections).filter(item =>
+			matchesSqlDataSourceManagementItem(item, this.dataSourceSearchInput.value)
+		);
+		const connectedCount = items.filter(item => item.state === SqlDataSourceManagementState.Connected).length;
+		this.dataSourceCountElement.textContent = `${items.length} data sources · ${connectedCount} connected`;
 
-		for (const saved of this.savedConnections) {
-			const row = append(this.savedConnectionsElement, $('.sql-saved-connection-row'));
-
-			append(row, $('span.sql-saved-connection-name', undefined, saved.name));
-
-			const openButton = append(
-				row,
-				$('button.sql-saved-connection-action', { type: 'button' }, 'Open')
-			) as HTMLButtonElement;
-
-			const removeButton = append(
-				row,
-				$('button.sql-saved-connection-action.danger', { type: 'button' }, 'Remove')
-			) as HTMLButtonElement;
-
-			this.savedRenderDisposables.add(
-				addDisposableListener(openButton, EventType.CLICK, event => {
-					event.preventDefault();
-					event.stopPropagation();
-					this.openSavedConnection(saved).catch(error => this.showError(error));
-				})
+		if (items.length === 0) {
+			append(
+				this.dataSourceListElement,
+				$(
+					'.sql-data-source-empty',
+					undefined,
+					this.dataSourceSearchInput.value.trim()
+						? 'No data sources match this filter.'
+						: 'No saved or open data sources.'
+				)
 			);
+			return;
+		}
 
-			this.savedRenderDisposables.add(
-				addDisposableListener(removeButton, EventType.CLICK, event => {
-					event.preventDefault();
-					event.stopPropagation();
-					this.removeSavedConnection(saved.id).catch(error => this.showError(error));
-				})
-			);
+		for (const item of items) {
+			this.renderDataSourceManagementItem(item);
+		}
+	}
+
+	private renderDataSourceManagementItem(item: SqlDataSourceManagementItem): void {
+		const presentation = getSqlConnectorPresentation(item.kind);
+		const card = append(
+			this.dataSourceListElement,
+			$('article.sql-data-source-card', {
+				role: 'listitem',
+				'aria-label': `${item.name}, ${item.driverLabel}, ${item.state}`
+			})
+		);
+		card.classList.toggle('busy', this.busyDataSourceIds.has(item.id));
+
+		const summary = append(card, $('.sql-data-source-card-summary'));
+		const icon = append(
+			summary,
+			$(`span.sql-connector-brand.sql-connector-brand--${presentation.brandIcon}`, { 'aria-hidden': 'true' })
+		);
+		icon.title = item.driverLabel;
+		const copy = append(summary, $('.sql-data-source-card-copy'));
+		const title = append(copy, $('.sql-data-source-card-title'));
+		append(title, $('span.sql-data-source-card-name', undefined, item.name));
+		const state = append(title, $('span.sql-data-source-state', undefined, dataSourceStateLabel(item.state)));
+		state.classList.add(item.state);
+		const target = append(copy, $('.sql-data-source-card-target'));
+		target.textContent = `${item.driverLabel} · ${item.target || 'Local data source'}`;
+		target.title = target.textContent;
+
+		const actions = append(card, $('.sql-data-source-card-actions'));
+		for (const action of getSqlDataSourceManagementActions(item)) {
+			this.appendDataSourceActionButton(actions, item, action);
+		}
+	}
+
+	private appendDataSourceActionButton(
+		parent: HTMLElement,
+		item: SqlDataSourceManagementItem,
+		action: SqlDataSourceManagementAction
+	): void {
+		const presentation = getDataSourceActionPresentation(action);
+		const button = append(
+			parent,
+			$('button.sql-data-source-action', {
+				type: 'button',
+				title: presentation.title,
+				'aria-label': `${presentation.title}: ${item.name}`
+			})
+		) as HTMLButtonElement;
+		button.disabled = this.busyDataSourceIds.has(item.id);
+		button.classList.toggle('danger', presentation.danger === true);
+		append(button, $(`span.codicon.codicon-${presentation.icon}`, { 'aria-hidden': 'true' }));
+		this.dataSourceRenderDisposables.add(
+			addDisposableListener(button, EventType.CLICK, event => {
+				event.preventDefault();
+				event.stopPropagation();
+				this.runDataSourceAction(item, action).catch(error => this.showError(error));
+			})
+		);
+	}
+
+	private async runDataSourceAction(
+		item: SqlDataSourceManagementItem,
+		action: SqlDataSourceManagementAction
+	): Promise<void> {
+		if (this.busyDataSourceIds.has(item.id)) {
+			return;
+		}
+
+		this.busyDataSourceIds.add(item.id);
+		this.renderDataSourceManagement();
+		try {
+			switch (action) {
+				case SqlDataSourceManagementAction.Connect:
+					if (item.saved) {
+						await this.openSavedConnection(item.saved);
+					}
+					break;
+				case SqlDataSourceManagementAction.Reveal:
+					this.revealConnectionInTree(item.id, item.name);
+					break;
+				case SqlDataSourceManagementAction.OpenQuery:
+					await this.openDraft(createConnectionQueryDraft(item.id, item.name));
+					break;
+				case SqlDataSourceManagementAction.Refresh:
+					await this.refreshConnection(item.id);
+					break;
+				case SqlDataSourceManagementAction.Edit:
+					if (item.saved) {
+						await this.sqlConnectionDialogService.openSaved(item.saved);
+					}
+					break;
+				case SqlDataSourceManagementAction.Test:
+					if (item.saved) {
+						await this.testSavedDataSource(item.saved);
+					}
+					break;
+				case SqlDataSourceManagementAction.Disconnect:
+					await this.closeConnection(item.id);
+					break;
+				case SqlDataSourceManagementAction.Delete:
+					await this.removeDataSource(item);
+					break;
+			}
+		} finally {
+			this.busyDataSourceIds.delete(item.id);
+			this.renderDataSourceManagement();
 		}
 	}
 
@@ -1574,13 +991,54 @@ export class SqlConnectionsView extends ViewPane {
 		this.showInfo(`Connected to ${saved.name}.`);
 	}
 
-	private async removeSavedConnection(connectionId: string): Promise<void> {
-		await this.sqlConnectionService.removeSavedConnection({
-			connectionId,
-			closeIfOpen: false
-		});
+	private revealConnectionInTree(connectionId: string, connectionName: string): void {
+		this.collapsedNodes.delete(getConnectionNodeId(connectionId));
+		this.renderTree();
+		this.treeRowsByNodeId.get(getConnectionNodeId(connectionId))?.scrollIntoView({ block: 'nearest' });
+		this.treeElement.focus();
+		this.showInfo(`Revealed ${connectionName} in Database Navigator.`);
+	}
 
-		this.showInfo('Saved connection removed.');
+	private async testSavedDataSource(saved: SqlSavedConnection): Promise<void> {
+		if (saved.kind !== SqlConnectionKind.Sqlite) {
+			this.showInfo('Enter any required credentials, then use Test in the data source editor.');
+			await this.sqlConnectionDialogService.openSaved(saved);
+			return;
+		}
+
+		this.showInfo(`Testing ${saved.name}...`);
+		const input = createSafeSqlConnectionInputFromFormState(createSqlConnectionFormStateFromSavedConnection(saved));
+		const result = await this.sqlConnectionService.testConnection(input);
+		if (!result.ok) {
+			throw new Error(result.error || 'Connection test failed.');
+		}
+		this.showInfo(`Connection test passed for ${saved.name}.`);
+	}
+
+	private async removeDataSource(item: SqlDataSourceManagementItem): Promise<void> {
+		const request = createSqlDataSourceRemovalRequest(item);
+		if (!request) {
+			return;
+		}
+
+		const { confirmed } = await this.dialogService.confirm({
+			type: 'warning',
+			message: `Delete data source '${item.name}'?`,
+			detail:
+				item.state === SqlDataSourceManagementState.Connected
+					? 'The saved profile will be removed and its active connection will be closed.'
+					: 'The saved profile will be removed from Nyala Studio.',
+			primaryButton: 'Delete',
+			cancelButton: 'Cancel'
+		});
+		if (!confirmed) {
+			return;
+		}
+
+		await this.sqlConnectionService.removeSavedConnection(request);
+
+		this.collapsedNodes.delete(getConnectionNodeId(item.id));
+		this.showInfo(`Deleted data source ${item.name}.`);
 		await this.refresh();
 	}
 
@@ -1668,6 +1126,39 @@ function getNodeIcon(node: SqlConnectionTreeNode): string {
 		default:
 			return '\u00b7';
 	}
+}
+
+function dataSourceStateLabel(state: SqlDataSourceManagementState): string {
+	return state === SqlDataSourceManagementState.Connected ? 'Connected' : 'Saved';
+}
+
+function getDataSourceActionPresentation(action: SqlDataSourceManagementAction): {
+	readonly icon: string;
+	readonly title: string;
+	readonly danger?: boolean;
+} {
+	switch (action) {
+		case SqlDataSourceManagementAction.Connect:
+			return { icon: 'plug', title: 'Connect' };
+		case SqlDataSourceManagementAction.Reveal:
+			return { icon: 'target', title: 'Show in Database Navigator' };
+		case SqlDataSourceManagementAction.OpenQuery:
+			return { icon: 'file-code', title: 'New SQL query' };
+		case SqlDataSourceManagementAction.Refresh:
+			return { icon: 'refresh', title: 'Refresh metadata' };
+		case SqlDataSourceManagementAction.Edit:
+			return { icon: 'edit', title: 'Edit data source' };
+		case SqlDataSourceManagementAction.Test:
+			return { icon: 'beaker', title: 'Test connection' };
+		case SqlDataSourceManagementAction.Disconnect:
+			return { icon: 'debug-disconnect', title: 'Disconnect' };
+		case SqlDataSourceManagementAction.Delete:
+			return { icon: 'trash', title: 'Delete data source', danger: true };
+	}
+}
+
+function deliveryLabel(delivery: SqlConnectorDelivery): string {
+	return delivery === SqlConnectorDelivery.Bundled ? 'Bundled' : 'Planned';
 }
 
 async function writeClipboardText(text: string): Promise<void> {
