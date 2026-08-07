@@ -1,0 +1,298 @@
+.sql-connection-editor {
+	container-type: inline-size;
+	box-sizing: border-box;
+	width: 100%;
+	height: 100%;
+	min-width: 0;
+	min-height: 0;
+	color: var(--vscode-foreground);
+	background: var(--vscode-editor-background);
+}
+
+.sql-connection-editor .sql-connectors-settings {
+	display: grid;
+	grid-template-columns: 112px 248px minmax(340px, 1fr);
+	height: 100%;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.sql-connection-editor-categories {
+	box-sizing: border-box;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 10px 8px;
+	border-right: 1px solid var(--vscode-editorGroup-border);
+	background: var(--vscode-sideBar-background);
+}
+
+.sql-connection-editor-category-title,
+.sql-connection-editor-catalog-title {
+	padding: 0 7px 7px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	font-weight: 600;
+}
+
+.sql-connection-editor-category {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 30px;
+	display: flex;
+	align-items: center;
+	padding: 0 8px;
+	border: 0;
+	border-left: 2px solid transparent;
+	color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+	background: transparent;
+	text-align: left;
+	cursor: pointer;
+}
+
+.sql-connection-editor-category:hover,
+.sql-connection-editor-category:focus-visible {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.sql-connection-editor-category.selected {
+	border-left-color: var(--vscode-focusBorder);
+	color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+	background: var(--vscode-list-activeSelectionBackground);
+}
+
+.sql-connection-editor-category:focus-visible,
+.sql-connection-editor-search:focus,
+.sql-connection-editor .sql-connector-option:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.sql-connection-editor-catalog {
+	box-sizing: border-box;
+	min-width: 0;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	padding: 10px 8px 8px;
+	border-right: 1px solid var(--vscode-editorGroup-border);
+	background: var(--vscode-sideBar-background);
+}
+
+.sql-connection-editor-search-wrap {
+	position: relative;
+	min-width: 0;
+	margin-bottom: 8px;
+}
+
+.sql-connection-editor-search-icon {
+	position: absolute;
+	left: 7px;
+	top: 7px;
+	color: var(--vscode-descriptionForeground);
+	pointer-events: none;
+}
+
+.sql-connection-editor-search {
+	box-sizing: border-box;
+	width: 100%;
+	height: 28px;
+	padding: 3px 26px;
+	border: 1px solid var(--vscode-input-border);
+	color: var(--vscode-input-foreground);
+	background: var(--vscode-input-background);
+	outline: none;
+}
+
+.sql-connection-editor-search-clear {
+	position: absolute;
+	right: 2px;
+	top: 2px;
+	width: 24px;
+	height: 24px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: 0;
+	color: var(--vscode-foreground);
+	background: transparent;
+	cursor: pointer;
+}
+
+.sql-connection-editor-search-clear:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.sql-connection-editor-search-clear.hidden {
+	display: none;
+}
+
+.sql-connection-editor-count {
+	padding: 0 7px 7px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 10px;
+}
+
+.sql-connection-editor-list {
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	overflow: auto;
+}
+
+.sql-connection-editor .sql-connector-option {
+	grid-template-columns: 30px minmax(0, 1fr);
+	min-height: 60px;
+	padding: 7px;
+}
+
+.sql-connection-editor .sql-connector-option-title {
+	align-items: center;
+	flex-wrap: wrap;
+}
+
+.sql-connection-editor .sql-connector-option-description {
+	display: block;
+	max-height: 2.6em;
+	white-space: normal;
+}
+
+.sql-connection-editor-empty {
+	padding: 18px 8px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	text-align: center;
+}
+
+.sql-connector-delivery-badge {
+	height: 16px;
+	display: inline-flex;
+	align-items: center;
+	padding: 0 4px;
+	border: 1px solid var(--vscode-editorGroup-border);
+	color: var(--vscode-descriptionForeground);
+	font-size: 9px;
+}
+
+.sql-connector-brand {
+	width: 26px;
+	height: 26px;
+	display: block;
+	background-color: var(--sql-connector-brand-color);
+	mask-position: center;
+	mask-repeat: no-repeat;
+	mask-size: contain;
+}
+
+.sql-connector-brand--sqlite {
+	--sql-connector-brand-color: #0f80cc;
+	mask-image: url('./connectors/sqlite.svg');
+}
+
+.sql-connector-brand--mysql {
+	--sql-connector-brand-color: #e48e00;
+	mask-image: url('./connectors/mysql.svg');
+}
+
+.sql-connector-brand--postgresql {
+	--sql-connector-brand-color: #4b83d5;
+	mask-image: url('./connectors/postgresql.svg');
+}
+
+.sql-connection-editor .sql-connector-settings-pane {
+	height: 100%;
+	min-height: 0;
+	overflow: auto;
+	background: var(--vscode-editor-background);
+}
+
+.sql-connection-editor .sql-connector-settings-header {
+	position: sticky;
+	top: 0;
+	z-index: 3;
+	grid-template-columns: 36px minmax(0, 1fr) auto;
+	min-height: 68px;
+	padding: 10px 14px;
+	background: var(--vscode-editor-background);
+}
+
+.sql-connection-editor .sql-connector-settings-icon {
+	width: 32px;
+	height: 32px;
+}
+
+.sql-connection-editor .sql-connector-settings-title {
+	font-size: 14px;
+}
+
+.sql-connection-editor .sql-connections-form {
+	min-height: calc(100% - 68px);
+}
+
+.sql-connection-editor .sql-connector-section {
+	padding: 12px 16px;
+}
+
+.sql-connection-editor .sql-connections-field {
+	grid-template-columns: 112px minmax(0, 1fr);
+	gap: 12px;
+}
+
+.sql-connection-editor .sql-connectors-footer {
+	padding: 10px 16px 12px;
+	background: var(--vscode-editor-background);
+}
+
+.sql-connection-editor-advanced {
+	border-bottom: 1px solid var(--vscode-editorGroup-border);
+}
+
+.sql-connection-editor-advanced > summary {
+	min-height: 34px;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 16px;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	user-select: none;
+}
+
+.sql-connection-editor-advanced-body {
+	padding: 0 16px 12px;
+}
+
+.sql-connection-editor-validation-note {
+	margin: 0 0 9px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	line-height: 1.4;
+}
+
+.sql-connection-editor .sql-connections-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.sql-connection-editor .sql-connections-button.primary {
+	margin-left: auto;
+}
+
+.sql-connection-editor.compact .sql-connectors-settings {
+	grid-template-columns: 96px 210px minmax(310px, 1fr);
+}
+
+@container (max-width: 720px) {
+	.sql-connection-editor .sql-connectors-settings {
+		grid-template-columns: 104px minmax(190px, 34%) minmax(300px, 1fr);
+	}
+
+	.sql-connection-editor .sql-connections-field {
+		grid-template-columns: 88px minmax(0, 1fr);
+	}
+}

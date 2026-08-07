@@ -10,45 +10,36 @@ import {
 	openNewSqlDataSourceForm,
 	openSavedSqlDataSourceForm,
 	requestSavedMysqlDataSourceForm,
-	SqlConnectionFormView
+	SqlConnectionDialogNavigation
 } from '../common/sqlConnectionNavigation.js';
-import {
-	SQL_CONNECTIONS_REFRESH_COMMAND_ID,
-	SQL_CONNECTORS_OPEN_SAVED_COMMAND_ID,
-	SQL_CONNECTORS_VIEW_ID
-} from '../common/sqlConnections.js';
+import { SQL_CONNECTIONS_REFRESH_COMMAND_ID, SQL_CONNECTORS_OPEN_SAVED_COMMAND_ID } from '../common/sqlConnections.js';
 import { SqlConnectionKind, SqlSavedConnection } from '../../../services/sql/common/sqlTypes.js';
+import { SqlConnectionDialogGate } from '../../../services/sql/common/sqlConnectionDialog.js';
 
-class RecordingConnectionFormView implements SqlConnectionFormView {
-	newFormCalls = 0;
+class RecordingConnectionDialog implements SqlConnectionDialogNavigation {
+	newFormKinds: SqlConnectionKind[] = [];
 	savedForms: SqlSavedConnection[] = [];
 
-	openConnectionForm(): void {
-		this.newFormCalls++;
+	async openNew(kind: SqlConnectionKind = SqlConnectionKind.Sqlite): Promise<void> {
+		this.newFormKinds.push(kind);
 	}
 
-	openSavedConnectionForm(saved: SqlSavedConnection): void {
+	async openSaved(saved: SqlSavedConnection): Promise<void> {
 		this.savedForms.push(saved);
 	}
 }
 
-test('new data source opens the connectors form with focus', async () => {
-	const view = new RecordingConnectionFormView();
-	const calls: Array<{ viewId: string; focus: boolean }> = [];
+test('new data source opens the selected connector in the modal editor', async () => {
+	const dialog = new RecordingConnectionDialog();
 
-	await openNewSqlDataSourceForm(async (viewId, focus) => {
-		calls.push({ viewId, focus });
-		return view;
-	});
+	await openNewSqlDataSourceForm(dialog, SqlConnectionKind.MySql);
 
-	assert.deepEqual(calls, [{ viewId: SQL_CONNECTORS_VIEW_ID, focus: true }]);
-	assert.equal(view.newFormCalls, 1);
-	assert.deepEqual(view.savedForms, []);
+	assert.deepEqual(dialog.newFormKinds, [SqlConnectionKind.MySql]);
+	assert.deepEqual(dialog.savedForms, []);
 });
 
-test('saved MySQL data source opens its connectors form with focus', async () => {
-	const view = new RecordingConnectionFormView();
-	const calls: Array<{ viewId: string; focus: boolean }> = [];
+test('saved MySQL data source opens in the modal editor', async () => {
+	const dialog = new RecordingConnectionDialog();
 	const saved: SqlSavedConnection = {
 		id: 'mysql-prod',
 		name: 'Production MySQL',
@@ -63,25 +54,18 @@ test('saved MySQL data source opens its connectors form with focus', async () =>
 		autoConnect: false
 	};
 
-	await openSavedSqlDataSourceForm(async (viewId, focus) => {
-		calls.push({ viewId, focus });
-		return view;
-	}, saved);
+	await openSavedSqlDataSourceForm(dialog, saved);
 
-	assert.deepEqual(calls, [{ viewId: SQL_CONNECTORS_VIEW_ID, focus: true }]);
-	assert.equal(view.newFormCalls, 0);
-	assert.deepEqual(view.savedForms, [saved]);
+	assert.deepEqual(dialog.newFormKinds, []);
+	assert.deepEqual(dialog.savedForms, [saved]);
 });
 
-test('missing saved data source does not open the connectors form', async () => {
-	let openCalls = 0;
+test('missing saved data source does not open the modal editor', async () => {
+	const dialog = new RecordingConnectionDialog();
 
-	await openSavedSqlDataSourceForm(async () => {
-		openCalls++;
-		return null;
-	}, undefined);
+	await openSavedSqlDataSourceForm(dialog, undefined);
 
-	assert.equal(openCalls, 0);
+	assert.deepEqual(dialog.savedForms, []);
 });
 
 test('connection success refreshes and reveals the data source', async () => {
@@ -120,4 +104,36 @@ test('saved MySQL data source routes through the connectors command', async () =
 	}, saved);
 
 	assert.deepEqual(calls, [{ commandId: SQL_CONNECTORS_OPEN_SAVED_COMMAND_ID, args: [saved] }]);
+});
+
+test('connection dialog gate reuses one pending dialog', async () => {
+	const gate = new SqlConnectionDialogGate<SqlConnectionKind | undefined>();
+	let resolveDialog!: (value: SqlConnectionKind | undefined) => void;
+	let factoryCalls = 0;
+	const factory = () => {
+		factoryCalls++;
+		return new Promise<SqlConnectionKind | undefined>(resolve => {
+			resolveDialog = resolve;
+		});
+	};
+
+	const first = gate.run(factory);
+	const concurrent = gate.run(factory);
+
+	assert.equal(first, concurrent);
+	assert.equal(factoryCalls, 1);
+
+	resolveDialog(SqlConnectionKind.MySql);
+	assert.equal(await first, SqlConnectionKind.MySql);
+
+	const next = gate.run(async () => SqlConnectionKind.Sqlite);
+	assert.notEqual(next, first);
+	assert.equal(await next, SqlConnectionKind.Sqlite);
+});
+
+test('connection dialog gate allows retry after rejection', async () => {
+	const gate = new SqlConnectionDialogGate<SqlConnectionKind | undefined>();
+
+	await assert.rejects(() => gate.run(async () => Promise.reject(new Error('dialog failed'))), /dialog failed/);
+	assert.equal(await gate.run(async () => SqlConnectionKind.Sqlite), SqlConnectionKind.Sqlite);
 });
