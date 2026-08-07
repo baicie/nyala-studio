@@ -53,6 +53,32 @@ test('result table keeps sparse numeric columns near their headers', () => {
 	assert.doesNotMatch(tableRule, /min-width:\s*100%/);
 });
 
+test('result grid owns both scroll axes so sticky headers remain anchored', () => {
+	const contentRule = resultGridStyles.match(/\.sql-result-content\s*\{(?<declarations>[^}]*)\}/s)?.groups
+		?.declarations;
+	const wrapperRule = resultGridStyles.match(/\.sql-result-table-wrapper\s*\{(?<declarations>[^}]*)\}/s)?.groups
+		?.declarations;
+
+	assert.ok(contentRule);
+	assert.match(contentRule, /display:\s*flex/);
+	assert.match(contentRule, /overflow:\s*hidden/);
+	assert.ok(wrapperRule);
+	assert.match(wrapperRule, /flex:\s*1 1 auto/);
+	assert.match(wrapperRule, /overflow:\s*auto/);
+});
+
+test('result history reserves one grid track for each rendered control', () => {
+	const historyItemRule = resultGridStyles.match(/\.sql-result-history-item\s*\{(?<declarations>[^}]*)\}/s)?.groups
+		?.declarations;
+
+	assert.ok(historyItemRule);
+	assert.match(
+		historyItemRule,
+		/grid-template-columns:\s*minmax\(64px, 76px\) minmax\(96px, 140px\) minmax\(0, 1fr\) 24px/
+	);
+	assert.match(resultGridStyles, /\.sql-result-history-heading\s*\{/);
+});
+
 test('buildSqlResultGrid keeps column and cell metadata', () => {
 	const grid = buildSqlResultGrid(sampleResult);
 
@@ -86,6 +112,16 @@ test('buildSqlResultGrid marks panel truncation', () => {
 	assert.equal(grid.totalRowCount, 2);
 	assert.equal(grid.truncatedByPanel, true);
 	assert.equal(grid.truncatedByBackend, false);
+});
+
+test('buildSqlResultGrid identifies an empty rowset', () => {
+	const grid = buildSqlResultGrid({
+		...sampleResult,
+		rows: [],
+		rowCount: 0
+	});
+
+	assert.equal(grid.isEmpty, true);
 });
 
 test('buildSqlResultGrid rejects invalid maxRows', () => {

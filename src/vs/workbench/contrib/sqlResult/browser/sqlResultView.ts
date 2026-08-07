@@ -5,7 +5,9 @@
 import './media/sqlResult.css';
 
 import { $, addDisposableListener, append, clearNode, EventType } from '../../../../base/browser/dom.js';
+import { Codicon } from '../../../../base/common/codicons.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
 import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
@@ -205,12 +207,12 @@ export class SqlResultView extends ViewPane {
 
 			case SqlResultStateKind.Error:
 				this.renderError(state);
-				this.setStatus('Query failed.');
+				this.setStatus(getTerminalStatus('Query failed', state.query, state.errorCode));
 				break;
 
 			case SqlResultStateKind.Cancelled:
 				this.renderCancelled(state);
-				this.setStatus('Query cancelled.');
+				this.setStatus(getTerminalStatus('Query cancelled', state.query));
 				break;
 
 			case SqlResultStateKind.Success:
@@ -235,13 +237,25 @@ export class SqlResultView extends ViewPane {
 			return;
 		}
 
-		append(this.historyElement, $('div.sql-result-history-title', undefined, 'History'));
+		append(this.historyElement, $('div.sql-result-history-heading', undefined, 'History'));
 
-		const list = append(this.historyElement, $('ul.sql-result-history-list'));
+		const list = append(
+			this.historyElement,
+			$('ul.sql-result-history-list', { role: 'listbox', 'aria-label': 'Query result history' })
+		);
 
 		for (const snapshot of state.snapshots) {
-			const item = append(list, $('li.sql-result-history-item', { 'data-snapshot-id': snapshot.id }));
-			if (snapshot.id === activeSnapshotId) {
+			const isActive = snapshot.id === activeSnapshotId;
+			const item = append(
+				list,
+				$('li.sql-result-history-item', {
+					'data-snapshot-id': snapshot.id,
+					role: 'option',
+					tabIndex: 0,
+					'aria-selected': String(isActive)
+				})
+			);
+			if (isActive) {
 				item.classList.add('active');
 			}
 			item.classList.add(`kind-${snapshot.kind}`);
@@ -252,8 +266,13 @@ export class SqlResultView extends ViewPane {
 
 			const removeButton = append(
 				item,
-				$('button.sql-result-history-remove', { type: 'button', title: 'Remove from history' }, '×')
+				$('button.sql-result-history-remove', {
+					type: 'button',
+					title: 'Remove from history',
+					'aria-label': `Remove ${snapshot.title} from history`
+				})
 			) as HTMLButtonElement;
+			removeButton.classList.add(...ThemeIcon.asClassName(Codicon.close).split(' '));
 
 			this.historyRenderDisposables.add(
 				addDisposableListener(removeButton, EventType.CLICK, event => {
@@ -267,6 +286,15 @@ export class SqlResultView extends ViewPane {
 					this.sqlResultService.activateSnapshot(snapshot.id);
 				})
 			);
+
+			this.historyRenderDisposables.add(
+				addDisposableListener(item, EventType.KEY_DOWN, event => {
+					if (event.target === item && (event.key === 'Enter' || event.key === ' ')) {
+						this.sqlResultService.activateSnapshot(snapshot.id);
+						event.preventDefault();
+					}
+				})
+			);
 		}
 	}
 
@@ -278,7 +306,13 @@ export class SqlResultView extends ViewPane {
 
 	private renderError(state: Extract<SqlResultState, { kind: SqlResultStateKind.Error }>): void {
 		const wrapper = append(this.contentElement, $('.sql-result-message.error'));
+		if (state.errorCode) {
+			append(wrapper, $('div.sql-result-error-code', undefined, state.errorCode));
+		}
 		append(wrapper, $('div.sql-result-error-title', undefined, state.errorMessage));
+		if (state.errorDetail !== state.errorMessage) {
+			append(wrapper, $('pre.sql-result-error-detail', undefined, state.errorDetail));
+		}
 		append(wrapper, $('pre.sql-result-sql', undefined, state.query.sql));
 	}
 
@@ -319,6 +353,12 @@ export class SqlResultView extends ViewPane {
 		}
 
 		const tbody = append(table, $('tbody'));
+
+		if (grid.isEmpty) {
+			const emptyRow = append(tbody, $('tr.sql-result-empty-row'));
+			const emptyCell = append(emptyRow, $('td', undefined, 'No rows returned.')) as HTMLTableCellElement;
+			emptyCell.colSpan = grid.columns.length + 1;
+		}
 
 		for (const row of grid.rows) {
 			const tr = append(tbody, $('tr.sql-result-row'));
@@ -482,4 +522,16 @@ function snapshotKindLabel(kind: SqlResultSnapshotKind): string {
 		case SqlResultSnapshotKind.Cancelled:
 			return 'Cancelled';
 	}
+}
+
+function getTerminalStatus(
+	label: string,
+	query: { readonly startedAt: number; readonly completedAt?: number },
+	code?: string
+): string {
+	const parts = [code ? `${label} [${code}]` : label];
+	if (query.completedAt !== undefined) {
+		parts.push(`${Math.max(0, query.completedAt - query.startedAt)}ms`);
+	}
+	return parts.join(' · ');
 }

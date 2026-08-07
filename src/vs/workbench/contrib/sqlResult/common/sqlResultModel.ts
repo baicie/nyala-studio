@@ -46,7 +46,9 @@ export interface SqlResultSuccessState {
 export interface SqlResultErrorState {
 	kind: SqlResultStateKind.Error;
 	query: SqlResultQueryInfo;
+	errorCode?: string;
 	errorMessage: string;
+	errorDetail: string;
 }
 
 export interface SqlResultCancelledState {
@@ -100,6 +102,7 @@ export function createSuccessSqlResultState(event: SqlEditorQueryCompletedEvent)
 }
 
 export function createErrorSqlResultState(event: SqlEditorQueryFailedEvent): SqlResultErrorState {
+	const error = normalizeSqlResultError(event.error);
 	return {
 		kind: SqlResultStateKind.Error,
 		query: {
@@ -109,7 +112,9 @@ export function createErrorSqlResultState(event: SqlEditorQueryFailedEvent): Sql
 			startedAt: event.startedAt,
 			completedAt: event.completedAt
 		},
-		errorMessage: event.error.message
+		errorCode: error.code,
+		errorMessage: error.message,
+		errorDetail: error.detail
 	};
 }
 
@@ -136,7 +141,7 @@ export function getSqlResultSummary(state: SqlResultState): string {
 			return `Running query on ${state.query.connectionId}...`;
 
 		case SqlResultStateKind.Error:
-			return `Query failed: ${state.errorMessage}`;
+			return `Query failed${state.errorCode ? ` [${state.errorCode}]` : ''}: ${state.errorMessage}`;
 
 		case SqlResultStateKind.Cancelled:
 			return `Query cancelled: ${state.message}`;
@@ -244,6 +249,7 @@ export interface SqlResultSnapshotBase {
 	readonly connectionId: string;
 	readonly sql: string;
 	readonly sqlPreview: string;
+	readonly startedAt: number;
 	readonly createdAt: number;
 	readonly title: string;
 }
@@ -257,6 +263,7 @@ export interface SqlResultSuccessSnapshot extends SqlResultSnapshotBase {
 
 export interface SqlResultErrorSnapshot extends SqlResultSnapshotBase {
 	readonly kind: SqlResultSnapshotKind.Error;
+	readonly errorCode?: string;
 	readonly errorMessage: string;
 	readonly detail: string;
 }
@@ -283,6 +290,7 @@ export function createSuccessResultSnapshot(options: {
 	readonly connectionId: string;
 	readonly sql: string;
 	readonly result: SqlQueryResult;
+	readonly startedAt?: number;
 	readonly createdAt: number;
 }): SqlResultSuccessSnapshot {
 	const grid = buildSqlResultGrid(options.result);
@@ -293,6 +301,7 @@ export function createSuccessResultSnapshot(options: {
 		connectionId: options.connectionId,
 		sql: normalizeSnapshotSql(options.sql),
 		sqlPreview: createSqlResultPreview(options.sql),
+		startedAt: options.startedAt ?? options.createdAt,
 		createdAt: options.createdAt,
 		title: options.result.columns.length > 0 ? 'Query Result' : 'Statement Result',
 		result: options.result,
@@ -307,9 +316,10 @@ export function createErrorResultSnapshot(options: {
 	readonly connectionId: string;
 	readonly sql: string;
 	readonly error: unknown;
+	readonly startedAt?: number;
 	readonly createdAt: number;
 }): SqlResultErrorSnapshot {
-	const detail = normalizeSnapshotMessage(options.error);
+	const error = normalizeSqlResultError(options.error);
 	return {
 		id: options.id,
 		kind: SqlResultSnapshotKind.Error,
@@ -317,10 +327,12 @@ export function createErrorResultSnapshot(options: {
 		connectionId: options.connectionId,
 		sql: normalizeSnapshotSql(options.sql),
 		sqlPreview: createSqlResultPreview(options.sql),
+		startedAt: options.startedAt ?? options.createdAt,
 		createdAt: options.createdAt,
 		title: 'Query Error',
-		errorMessage: summarizeSnapshotMessage(detail),
-		detail
+		errorCode: error.code,
+		errorMessage: error.message,
+		detail: error.detail
 	};
 }
 
@@ -330,6 +342,7 @@ export function createCancelledResultSnapshot(options: {
 	readonly connectionId: string;
 	readonly sql: string;
 	readonly message: string;
+	readonly startedAt?: number;
 	readonly createdAt: number;
 }): SqlResultCancelledSnapshot {
 	return {
@@ -339,6 +352,7 @@ export function createCancelledResultSnapshot(options: {
 		connectionId: options.connectionId,
 		sql: normalizeSnapshotSql(options.sql),
 		sqlPreview: createSqlResultPreview(options.sql),
+		startedAt: options.startedAt ?? options.createdAt,
 		createdAt: options.createdAt,
 		title: 'Query Cancelled',
 		message: options.message.trim() || 'Query was cancelled.'
@@ -352,6 +366,7 @@ export function createSuccessResultSnapshotFromEvent(event: SqlEditorQueryComple
 		connectionId: event.connectionId,
 		sql: event.sql,
 		result: event.result,
+		startedAt: event.startedAt,
 		createdAt: event.completedAt
 	});
 }
@@ -363,6 +378,7 @@ export function createErrorResultSnapshotFromEvent(event: SqlEditorQueryFailedEv
 		connectionId: event.connectionId,
 		sql: event.sql,
 		error: event.error,
+		startedAt: event.startedAt,
 		createdAt: event.completedAt
 	});
 }
@@ -376,6 +392,7 @@ export function createCancelledResultSnapshotFromEvent(
 		connectionId: event.connectionId,
 		sql: event.sql,
 		message: event.message,
+		startedAt: event.startedAt,
 		createdAt: event.completedAt
 	});
 }
@@ -431,7 +448,7 @@ export function getSqlResultPanelContentState(state: SqlResultState, panelState:
 		editorId: snapshot.editorId,
 		connectionId: snapshot.connectionId,
 		sql: snapshot.sql,
-		startedAt: snapshot.createdAt,
+		startedAt: snapshot.startedAt,
 		completedAt: snapshot.createdAt
 	};
 
@@ -439,7 +456,13 @@ export function getSqlResultPanelContentState(state: SqlResultState, panelState:
 		case SqlResultSnapshotKind.Success:
 			return { kind: SqlResultStateKind.Success, query, result: snapshot.result };
 		case SqlResultSnapshotKind.Error:
-			return { kind: SqlResultStateKind.Error, query, errorMessage: snapshot.errorMessage };
+			return {
+				kind: SqlResultStateKind.Error,
+				query,
+				errorCode: snapshot.errorCode,
+				errorMessage: snapshot.errorMessage,
+				errorDetail: snapshot.detail
+			};
 		case SqlResultSnapshotKind.Cancelled:
 			return { kind: SqlResultStateKind.Cancelled, query, message: snapshot.message };
 	}
@@ -458,10 +481,6 @@ function normalizeSnapshotSql(sql: string): string {
 	return typeof sql === 'string' ? sql.trim() : '';
 }
 
-function normalizeSnapshotMessage(error: unknown): string {
-	return error instanceof Error ? error.message || String(error) : String(error);
-}
-
 function summarizeSnapshotMessage(message: string): string {
 	return (
 		message
@@ -469,6 +488,41 @@ function summarizeSnapshotMessage(message: string): string {
 			.find(line => line.trim())
 			?.trim() || 'Query failed.'
 	);
+}
+
+function normalizeSqlResultError(error: unknown): {
+	readonly code?: string;
+	readonly message: string;
+	readonly detail: string;
+} {
+	const candidate = toErrorRecord(error);
+	const cause = toErrorRecord(candidate?.cause);
+	const rawMessage = error instanceof Error ? error.message : (readNonEmptyString(candidate?.message) ?? String(error));
+	const normalizedMessage = rawMessage.trim();
+	const backendDetail = readNonEmptyString(candidate?.detail) ?? readNonEmptyString(cause?.detail);
+	const detailParts = [normalizedMessage, backendDetail].filter(
+		(value, index, values): value is string => Boolean(value) && values.indexOf(value) === index
+	);
+	const detail = detailParts.join('\n') || 'Query failed.';
+	const code = readNonEmptyString(candidate?.code) ?? readNonEmptyString(cause?.code);
+
+	return {
+		code,
+		message: summarizeSnapshotMessage(normalizedMessage || detail),
+		detail
+	};
+}
+
+function toErrorRecord(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined;
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+	if (typeof value !== 'string') {
+		return undefined;
+	}
+	const normalized = value.trim();
+	return normalized || undefined;
 }
 
 function hashEditorId(value: string): string {

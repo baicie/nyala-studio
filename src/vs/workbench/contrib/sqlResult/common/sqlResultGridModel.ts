@@ -2,12 +2,7 @@
  * SQL Studio Next - SQL Result Grid Model.
  *--------------------------------------------------------------------------------------------*/
 
-import {
-	SqlCellKind,
-	SqlCellValue,
-	SqlQueryResult,
-	SqlResultColumn
-} from '../../../services/sql/common/sqlTypes.js';
+import { SqlCellKind, SqlCellValue, SqlQueryResult, SqlResultColumn } from '../../../services/sql/common/sqlTypes.js';
 import { SQL_RESULT_MAX_RENDER_ROWS } from './sqlResult.js';
 
 export const SQL_RESULT_DEFAULT_COLUMN_WIDTH = 160;
@@ -40,6 +35,7 @@ export interface SqlResultGridRow {
 export interface SqlResultGrid {
 	readonly columns: SqlResultGridColumn[];
 	readonly rows: SqlResultGridRow[];
+	readonly isEmpty: boolean;
 	readonly renderedRowCount: number;
 	readonly sourceRowCount: number;
 	readonly totalRowCount: number;
@@ -70,10 +66,7 @@ export interface SqlResultCopyOptions {
 	readonly includeHeader?: boolean;
 }
 
-export function buildSqlResultGrid(
-	result: SqlQueryResult,
-	maxRows = SQL_RESULT_MAX_RENDER_ROWS
-): SqlResultGrid {
+export function buildSqlResultGrid(result: SqlQueryResult, maxRows = SQL_RESULT_MAX_RENDER_ROWS): SqlResultGrid {
 	const normalizedMaxRows = normalizeMaxRows(maxRows);
 	const renderedRows = result.rows.slice(0, normalizedMaxRows);
 
@@ -83,6 +76,7 @@ export function buildSqlResultGrid(
 			index: rowIndex,
 			cells: row.map((cell, columnIndex) => createGridCell(cell, rowIndex, columnIndex))
 		})),
+		isEmpty: renderedRows.length === 0,
 		renderedRowCount: renderedRows.length,
 		sourceRowCount: result.rows.length,
 		totalRowCount: result.rowCount,
@@ -102,11 +96,7 @@ export function createGridColumn(column: SqlResultColumn): SqlResultGridColumn {
 	};
 }
 
-export function createGridCell(
-	cell: SqlCellValue,
-	rowIndex: number,
-	columnIndex: number
-): SqlResultGridCell {
+export function createGridCell(cell: SqlCellValue, rowIndex: number, columnIndex: number): SqlResultGridCell {
 	const text = formatSqlResultCell(cell);
 	const isNull = cell.kind === SqlCellKind.Null || cell.value === null || cell.value === undefined;
 	const isBlob = cell.kind === SqlCellKind.Blob;
@@ -179,10 +169,7 @@ export function copySqlResultGrid(grid: SqlResultGrid, options: SqlResultCopyOpt
 	}
 }
 
-export function copySelectedCell(
-	grid: SqlResultGrid,
-	selection: SqlResultCellAddress | undefined
-): string {
+export function copySelectedCell(grid: SqlResultGrid, selection: SqlResultCellAddress | undefined): string {
 	if (!selection) {
 		return '';
 	}
@@ -207,11 +194,7 @@ export function copySelectedRow(
 	return serializeRows(grid, [selection.rowIndex], format, includeHeader);
 }
 
-export function copyAllRows(
-	grid: SqlResultGrid,
-	format: SqlResultCopyFormat,
-	includeHeader = true
-): string {
+export function copyAllRows(grid: SqlResultGrid, format: SqlResultCopyFormat, includeHeader = true): string {
 	return serializeRows(
 		grid,
 		grid.rows.map(row => row.index),
@@ -220,10 +203,7 @@ export function copyAllRows(
 	);
 }
 
-export function getGridCell(
-	grid: SqlResultGrid,
-	address: SqlResultCellAddress
-): SqlResultGridCell | undefined {
+export function getGridCell(grid: SqlResultGrid, address: SqlResultCellAddress): SqlResultGridCell | undefined {
 	if (!isValidCellAddress(address)) {
 		return undefined;
 	}
@@ -242,11 +222,7 @@ export function getSqlResultGridStatus(result: SqlQueryResult, grid: SqlResultGr
 		return `${result.affectedRows ?? 0} row(s) affected · ${result.elapsedMs}ms`;
 	}
 
-	const parts = [
-		`${grid.totalRowCount} row(s)`,
-		`${grid.columns.length} column(s)`,
-		`${result.elapsedMs}ms`
-	];
+	const parts = [`${grid.totalRowCount} row(s)`, `${grid.columns.length} column(s)`, `${result.elapsedMs}ms`];
 
 	if (grid.truncatedByPanel) {
 		parts.push(`showing first ${grid.renderedRowCount}`);
@@ -284,10 +260,7 @@ export function serializeRows(
 	return serializeTable(rows, format);
 }
 
-export function serializeTable(
-	rows: readonly (readonly string[])[],
-	format: SqlResultCopyFormat
-): string {
+export function serializeTable(rows: readonly (readonly string[])[], format: SqlResultCopyFormat): string {
 	switch (format) {
 		case SqlResultCopyFormat.Csv:
 			return rows.map(row => row.map(escapeCsvCell).join(',')).join('\n');
@@ -309,11 +282,7 @@ export function escapeCsvCell(value: string): string {
 }
 
 export function escapeTsvCell(value: string): string {
-	return value
-		.replaceAll('\t', ' ')
-		.replaceAll('\r\n', '\n')
-		.replaceAll('\r', '\n')
-		.replaceAll('\n', ' ');
+	return value.replaceAll('\t', ' ').replaceAll('\r\n', '\n').replaceAll('\r', '\n').replaceAll('\n', ' ');
 }
 
 export function clampColumnWidth(width: number): number {
@@ -329,10 +298,12 @@ export function estimateColumnWidth(columnName: string): number {
 }
 
 function isValidCellAddress(address: SqlResultCellAddress): boolean {
-	return Number.isInteger(address.rowIndex)
-		&& Number.isInteger(address.columnIndex)
-		&& address.rowIndex >= 0
-		&& address.columnIndex >= 0;
+	return (
+		Number.isInteger(address.rowIndex) &&
+		Number.isInteger(address.columnIndex) &&
+		address.rowIndex >= 0 &&
+		address.columnIndex >= 0
+	);
 }
 
 function normalizeMaxRows(maxRows: number): number {
@@ -343,7 +314,9 @@ function normalizeMaxRows(maxRows: number): number {
 	return maxRows;
 }
 
-function isBlobJsonValue(value: SqlCellValue['value']): value is { encoding: 'base64'; data: string; byteLength: number } {
+function isBlobJsonValue(
+	value: SqlCellValue['value']
+): value is { encoding: 'base64'; data: string; byteLength: number } {
 	return typeof value === 'object' && value !== null && !Array.isArray(value) && 'byteLength' in value;
 }
 

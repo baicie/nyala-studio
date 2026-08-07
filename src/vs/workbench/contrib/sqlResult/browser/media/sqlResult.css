@@ -56,7 +56,9 @@
 .sql-result-content {
 	flex: 1 1 auto;
 	min-height: 0;
-	overflow: auto;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
 	outline: none;
 }
 
@@ -65,6 +67,7 @@
 	padding: 12px;
 	font-size: 12px;
 	opacity: 0.9;
+	overflow: auto;
 }
 
 .sql-result-message.error {
@@ -89,6 +92,23 @@
 	margin-bottom: 8px;
 }
 
+.sql-result-error-code {
+	margin-bottom: 6px;
+	color: var(--vscode-descriptionForeground);
+	font-family: var(--vscode-editor-font-family);
+	font-size: 11px;
+}
+
+.sql-result-error-detail {
+	box-sizing: border-box;
+	margin: 8px 0 0;
+	padding: 8px;
+	white-space: pre-wrap;
+	color: var(--vscode-errorForeground);
+	background: var(--vscode-textCodeBlock-background);
+	overflow: auto;
+}
+
 .sql-result-sql {
 	box-sizing: border-box;
 	margin: 8px 0 0;
@@ -101,9 +121,16 @@
 }
 
 .sql-result-table-wrapper {
+	flex: 1 1 auto;
+	width: 100%;
 	min-height: 0;
 	overflow: auto;
 	outline: none;
+}
+
+.sql-result-table-wrapper:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
 }
 
 .sql-result-table {
@@ -144,10 +171,24 @@
 .sql-result-row-number {
 	width: 52px;
 	max-width: 52px;
+	position: sticky;
+	left: 0;
+	z-index: 1;
 	text-align: right;
 	color: var(--vscode-descriptionForeground);
 	background: var(--vscode-sideBar-background);
 	user-select: none;
+}
+
+.sql-result-table th.sql-result-row-number {
+	z-index: 2;
+}
+
+.sql-result-empty-row td {
+	height: 64px;
+	text-align: center;
+	color: var(--vscode-descriptionForeground);
+	font-style: italic;
 }
 
 .sql-result-cell {
@@ -213,12 +254,12 @@
 	background: var(--vscode-sideBar-background);
 }
 
-.sql-result-history-title {
+.sql-result-history-heading {
 	padding: 6px 8px 4px;
 	font-size: 11px;
 	font-weight: 600;
 	text-transform: uppercase;
-	letter-spacing: 0.04em;
+	letter-spacing: 0;
 	color: var(--vscode-descriptionForeground);
 }
 
@@ -230,13 +271,18 @@
 
 .sql-result-history-item {
 	display: grid;
-	grid-template-columns: 80px 1fr auto;
+	grid-template-columns: minmax(64px, 76px) minmax(96px, 140px) minmax(0, 1fr) 24px;
 	gap: 8px;
 	align-items: center;
 	padding: 4px 8px;
 	cursor: pointer;
 	font-size: 12px;
 	border-top: 1px solid var(--vscode-editorGroup-border);
+}
+
+.sql-result-history-item:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
 }
 
 .sql-result-history-item.active {
@@ -276,8 +322,8 @@
 }
 
 .sql-result-history-remove {
-	width: 18px;
-	height: 18px;
+	width: 24px;
+	height: 24px;
 	padding: 0;
 	border: none;
 	background: transparent;

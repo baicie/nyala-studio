@@ -124,6 +124,24 @@ test('createErrorSqlResultState stores error message', () => {
 	assert.equal(getSqlResultSummary(state), 'Query failed: syntax error');
 });
 
+test('createErrorSqlResultState preserves structured error code and multiline detail', () => {
+	const error = Object.assign(new Error('syntax error\nnear "FROM"'), { code: 'sqlite_prepare' });
+	const state = createErrorSqlResultState({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT FROM',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 10,
+		completedAt: 20,
+		error
+	});
+
+	assert.equal(state.errorCode, 'sqlite_prepare');
+	assert.equal(state.errorMessage, 'syntax error');
+	assert.equal(state.errorDetail, 'syntax error\nnear "FROM"');
+	assert.equal(getSqlResultSummary(state), 'Query failed [sqlite_prepare]: syntax error');
+});
+
 test('createCancelledSqlResultState stores cancelled message', () => {
 	const state = createCancelledSqlResultState({
 		editorId: 'query-1',
@@ -182,6 +200,7 @@ test('createErrorResultSnapshotFromEvent creates error snapshot', () => {
 
 	assert.equal(snapshot.kind, SqlResultSnapshotKind.Error);
 	assert.equal(snapshot.errorMessage, 'syntax error');
+	assert.equal(snapshot.startedAt, 3);
 	assert.equal(snapshot.createdAt, 4);
 });
 
@@ -306,6 +325,52 @@ test('SqlResultService emits state changes for query lifecycle', () => {
 	service.clear();
 
 	assert.deepEqual(states, [SqlResultStateKind.Running, SqlResultStateKind.Success, SqlResultStateKind.Idle]);
+});
+
+test('SqlResultService keeps another editor query running when an older query completes', () => {
+	const service = new SqlResultService();
+
+	service.setRunning({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT slow_one()',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 1
+	});
+	service.setRunning({
+		editorId: 'query-2',
+		connectionId: 'local',
+		sql: 'SELECT slow_two()',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 2
+	});
+
+	service.setSuccess({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT slow_one()',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 1,
+		completedAt: 3,
+		result: snapshotResult
+	});
+
+	assert.equal(service.state.kind, SqlResultStateKind.Running);
+	assert.equal(service.state.kind === SqlResultStateKind.Running && service.state.query.editorId, 'query-2');
+	assert.equal(service.panelState.snapshots.length, 1);
+
+	service.setError({
+		editorId: 'query-2',
+		connectionId: 'local',
+		sql: 'SELECT slow_two()',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 2,
+		completedAt: 4,
+		error: new Error('second query failed')
+	});
+
+	assert.equal(service.state.kind, SqlResultStateKind.Error);
+	assert.equal(service.panelState.snapshots.length, 2);
 });
 
 test('SqlResultService records success error and cancelled snapshots', () => {
@@ -682,6 +747,30 @@ test('getSqlResultPanelContentState preserves an in-flight query', () => {
 	const contentState = getSqlResultPanelContentState(runningState, panelState);
 
 	assert.equal(contentState, runningState);
+});
+
+test('getSqlResultPanelContentState preserves error code detail and timing from history', () => {
+	const error = Object.assign(new Error('syntax error\nnear "FROM"'), { code: 'sqlite_prepare' });
+	const snapshot = createErrorResultSnapshot({
+		id: 'error',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select from',
+		error,
+		startedAt: 10,
+		createdAt: 25
+	});
+	const panelState = addSqlResultSnapshot(createEmptySqlResultPanelState(), snapshot);
+	const contentState = getSqlResultPanelContentState(createIdleSqlResultState(), panelState);
+
+	assert.equal(contentState.kind, SqlResultStateKind.Error);
+	if (contentState.kind === SqlResultStateKind.Error) {
+		assert.equal(contentState.errorCode, 'sqlite_prepare');
+		assert.equal(contentState.errorMessage, 'syntax error');
+		assert.equal(contentState.errorDetail, 'syntax error\nnear "FROM"');
+		assert.equal(contentState.query.startedAt, 10);
+		assert.equal(contentState.query.completedAt, 25);
+	}
 });
 
 test('removeSqlResultSnapshot moves active snapshot', () => {
