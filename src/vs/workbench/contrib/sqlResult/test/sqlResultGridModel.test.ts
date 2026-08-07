@@ -21,6 +21,7 @@ import {
 } from '../common/sqlResultGridModel.js';
 
 const resultGridStyles = readFileSync(new URL('../browser/media/sqlResult.css', import.meta.url), 'utf8');
+const resultViewSource = readFileSync(new URL('../browser/sqlResultView.ts', import.meta.url), 'utf8');
 
 const sampleResult: SqlQueryResult = {
 	columns: [
@@ -67,6 +68,19 @@ test('result grid owns both scroll axes so sticky headers remain anchored', () =
 	assert.match(wrapperRule, /overflow:\s*auto/);
 });
 
+test('result toolbar keeps every action reachable in a narrow pane without horizontal scrolling', () => {
+	const toolbarRule = resultGridStyles.match(/\.sql-result-toolbar\s*\{(?<declarations>[^}]*)\}/s)?.groups
+		?.declarations;
+
+	assert.ok(toolbarRule);
+	assert.match(
+		toolbarRule,
+		/flex-wrap:\s*wrap/,
+		'result actions must wrap instead of overflowing behind the pane clipping boundary'
+	);
+	assert.doesNotMatch(toolbarRule, /overflow-x:\s*(?:auto|scroll)/);
+});
+
 test('result history reserves one grid track for each rendered control', () => {
 	const historyItemRule = resultGridStyles.match(/\.sql-result-history-item\s*\{(?<declarations>[^}]*)\}/s)?.groups
 		?.declarations;
@@ -77,6 +91,32 @@ test('result history reserves one grid track for each rendered control', () => {
 		/grid-template-columns:\s*minmax\(64px, 76px\) minmax\(96px, 140px\) minmax\(0, 1fr\) 24px/
 	);
 	assert.match(resultGridStyles, /\.sql-result-history-heading\s*\{/);
+});
+
+test('result history uses roving focus and supports listbox navigation keys', () => {
+	const renderPanelStateSource = resultViewSource.match(
+		/private renderPanelState\([\s\S]*?(?=\n\tprivate renderRunning)/
+	)?.[0];
+
+	assert.ok(renderPanelStateSource);
+
+	const missingBehaviors: string[] = [];
+	if (!/tabIndex:\s*isActive\s*\?\s*0\s*:\s*-1/.test(renderPanelStateSource)) {
+		missingBehaviors.push('only the active option participates in the tab order');
+	}
+	if (!/'aria-selected':\s*String\(isActive\)/.test(renderPanelStateSource)) {
+		missingBehaviors.push('exactly the active option is exposed as selected');
+	}
+	for (const key of ['ArrowUp', 'ArrowDown', 'Home', 'End']) {
+		if (!renderPanelStateSource.includes(`'${key}'`) && !renderPanelStateSource.includes(`"${key}"`)) {
+			missingBehaviors.push(`handles ${key}`);
+		}
+	}
+	if (!/\.focus\(\)/.test(renderPanelStateSource)) {
+		missingBehaviors.push('moves DOM focus to the navigated option');
+	}
+
+	assert.deepEqual(missingBehaviors, []);
 });
 
 test('buildSqlResultGrid keeps column and cell metadata', () => {

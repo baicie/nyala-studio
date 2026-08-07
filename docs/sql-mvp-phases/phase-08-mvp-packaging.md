@@ -156,8 +156,8 @@ Windows/Tauri 原生走查（2026-07-26）exit 0：
 - [x] `cargo test --lib demo_seed` 6/6 通过；
 - [x] `cargo test --lib mysql_validation` 9 passed / 2 ignored；
 - [x] `pnpm run test:sql-product` 65/65 通过；
-- [x] `pnpm run test:sql-connections` 132/132 通过；
-- [x] `pnpm run test:sql-result` 58/58 通过；
+- [x] `pnpm run test:sql-connections` 145/145 通过；
+- [x] `pnpm run test:sql-result` 74/74 通过；
 - [x] Rust bootstrap 测试验证 Demo 同时进入 V1/V2，且 V1 查询 `users` 返回 5；
 - [x] CI/release workflow 强制执行 pnpm + Rust gate，并提供 live MySQL opt-in；
 - [x] 启动 Nyala Studio，自动出现 `Demo (SQLite)` 连接与 `users / orders`；

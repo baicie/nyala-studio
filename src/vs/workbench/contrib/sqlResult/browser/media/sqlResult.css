@@ -17,6 +17,8 @@
 	box-sizing: border-box;
 	min-height: 32px;
 	display: flex;
+	flex: 0 0 auto;
+	flex-wrap: wrap;
 	align-items: center;
 	gap: 8px;
 	padding: 4px 8px;
@@ -35,6 +37,7 @@
 }
 
 .sql-result-button {
+	flex: 0 0 auto;
 	height: 24px;
 	padding: 0 10px;
 	border: 1px solid var(--vscode-button-border);

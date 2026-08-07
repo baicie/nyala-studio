@@ -65,6 +65,7 @@ export class SqlResultView extends ViewPane {
 	private currentGrid: SqlResultGrid | undefined;
 	private selectedCell: SqlResultCellAddress | undefined;
 	private selectedCellElement: HTMLElement | undefined;
+	private readonly historyItemElements = new Map<string, HTMLElement>();
 
 	constructor(
 		options: IViewPaneOptions,
@@ -92,6 +93,11 @@ export class SqlResultView extends ViewPane {
 			themeService,
 			hoverService
 		);
+	}
+
+	override dispose(): void {
+		this.historyItemElements.clear();
+		super.dispose();
 	}
 
 	protected override renderBody(container: HTMLElement): void {
@@ -229,6 +235,7 @@ export class SqlResultView extends ViewPane {
 
 	private renderPanelState(state: SqlResultPanelState): void {
 		this.historyRenderDisposables.clear();
+		this.historyItemElements.clear();
 		clearNode(this.historyElement);
 
 		const activeSnapshotId = getActiveSqlResultSnapshot(state)?.id;
@@ -251,10 +258,11 @@ export class SqlResultView extends ViewPane {
 				$('li.sql-result-history-item', {
 					'data-snapshot-id': snapshot.id,
 					role: 'option',
-					tabIndex: 0,
+					tabIndex: isActive ? 0 : -1,
 					'aria-selected': String(isActive)
 				})
 			);
+			this.historyItemElements.set(snapshot.id, item);
 			if (isActive) {
 				item.classList.add('active');
 			}
@@ -289,10 +297,40 @@ export class SqlResultView extends ViewPane {
 
 			this.historyRenderDisposables.add(
 				addDisposableListener(item, EventType.KEY_DOWN, event => {
-					if (event.target === item && (event.key === 'Enter' || event.key === ' ')) {
-						this.sqlResultService.activateSnapshot(snapshot.id);
-						event.preventDefault();
+					if (event.target !== item) {
+						return;
 					}
+
+					let targetIndex: number | undefined;
+					switch (event.key) {
+						case 'ArrowUp':
+							targetIndex = Math.max(0, state.snapshots.indexOf(snapshot) - 1);
+							break;
+						case 'ArrowDown':
+							targetIndex = Math.min(state.snapshots.length - 1, state.snapshots.indexOf(snapshot) + 1);
+							break;
+						case 'Home':
+							targetIndex = 0;
+							break;
+						case 'End':
+							targetIndex = state.snapshots.length - 1;
+							break;
+						case 'Enter':
+						case ' ':
+							this.sqlResultService.activateSnapshot(snapshot.id);
+							this.historyItemElements.get(snapshot.id)?.focus();
+							event.preventDefault();
+							return;
+						default:
+							return;
+					}
+
+					const targetSnapshot = state.snapshots[targetIndex];
+					if (targetSnapshot) {
+						this.sqlResultService.activateSnapshot(targetSnapshot.id);
+						this.historyItemElements.get(targetSnapshot.id)?.focus();
+					}
+					event.preventDefault();
 				})
 			);
 		}
