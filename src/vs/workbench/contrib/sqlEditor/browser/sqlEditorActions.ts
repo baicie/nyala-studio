@@ -2,7 +2,6 @@
  * SQL Studio Next - SQL Editor commands.
  *--------------------------------------------------------------------------------------------*/
 
-import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 import { localize2 } from '../../../../nls.js';
 import { isTauri } from '../../../../sidex-bridge.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
@@ -11,13 +10,18 @@ import { ServicesAccessor } from '../../../../platform/instantiation/common/inst
 import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { ActiveEditorContext } from '../../../common/contextkeys.js';
 import { ISqlConnectionService } from '../../../services/sql/common/sqlConnection.js';
 import {
+	SQL_CANCEL_QUERY_COMMAND_ID,
 	SQL_EXECUTE_CURRENT_STATEMENT_COMMAND_ID,
+	SQL_EXECUTE_CURRENT_STATEMENT_KEYBINDING,
 	SQL_EXECUTE_QUERY_COMMAND_ID,
 	SQL_EXECUTE_SELECTION_COMMAND_ID,
+	SQL_EXECUTE_SELECTION_KEYBINDING,
 	SQL_FORMAT_QUERY_COMMAND_ID,
-	SQL_NEW_QUERY_COMMAND_ID
+	SQL_NEW_QUERY_COMMAND_ID,
+	SQL_EDITOR_PANE_ID
 } from '../common/sqlEditor.js';
 import { shouldResolveDefaultSqlConnection, SqlEditorExecutionSource } from '../common/sqlEditorModel.js';
 import { SqlEditorInput } from '../common/sqlEditorInput.js';
@@ -80,13 +84,10 @@ export class ExecuteSqlQueryAction extends Action2 {
 	constructor() {
 		super({
 			id: SQL_EXECUTE_QUERY_COMMAND_ID,
-			title: localize2('sqlExecuteQuery', 'Execute SQL Query'),
+			title: localize2('sqlExecuteQuery', 'Execute All SQL'),
 			category: Categories.View,
 			f1: true,
-			keybinding: {
-				primary: KeyMod.CtrlCmd | KeyCode.Enter,
-				weight: KeybindingWeight.EditorContrib
-			},
+			precondition: ActiveEditorContext.isEqualTo(SQL_EDITOR_PANE_ID),
 			menu: {
 				id: MenuId.CommandPalette
 			}
@@ -109,8 +110,9 @@ export class ExecuteSqlSelectionAction extends Action2 {
 			title: localize2('sqlExecuteSelection', 'Execute SQL Selection'),
 			category: Categories.View,
 			f1: true,
+			precondition: ActiveEditorContext.isEqualTo(SQL_EDITOR_PANE_ID),
 			keybinding: {
-				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.Enter,
+				primary: SQL_EXECUTE_SELECTION_KEYBINDING,
 				weight: KeybindingWeight.EditorContrib
 			},
 			menu: {
@@ -135,8 +137,9 @@ export class ExecuteSqlCurrentStatementAction extends Action2 {
 			title: localize2('sqlExecuteCurrentStatement', 'Execute Current SQL Statement'),
 			category: Categories.View,
 			f1: true,
+			precondition: ActiveEditorContext.isEqualTo(SQL_EDITOR_PANE_ID),
 			keybinding: {
-				primary: KeyMod.Alt | KeyCode.Enter,
+				primary: SQL_EXECUTE_CURRENT_STATEMENT_KEYBINDING,
 				weight: KeybindingWeight.EditorContrib
 			},
 			menu: {
@@ -154,6 +157,25 @@ export class ExecuteSqlCurrentStatementAction extends Action2 {
 	}
 }
 
+export class CancelSqlQueryAction extends Action2 {
+	constructor() {
+		super({
+			id: SQL_CANCEL_QUERY_COMMAND_ID,
+			title: localize2('sqlCancelQuery', 'Cancel SQL Query'),
+			category: Categories.View,
+			f1: true,
+			precondition: ActiveEditorContext.isEqualTo(SQL_EDITOR_PANE_ID),
+			menu: {
+				id: MenuId.CommandPalette
+			}
+		});
+	}
+
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		await runSqlEditorCommand(accessor, pane => pane.cancelQuery(), 'Open a SQL Query editor before cancelling SQL.');
+	}
+}
+
 export class FormatSqlQueryAction extends Action2 {
 	constructor() {
 		super({
@@ -161,6 +183,7 @@ export class FormatSqlQueryAction extends Action2 {
 			title: localize2('sqlFormatQuery', 'Format SQL Query'),
 			category: Categories.View,
 			f1: true,
+			precondition: ActiveEditorContext.isEqualTo(SQL_EDITOR_PANE_ID),
 			menu: {
 				id: MenuId.CommandPalette
 			}
@@ -199,4 +222,5 @@ registerAction2(NewSqlQueryAction);
 registerAction2(ExecuteSqlQueryAction);
 registerAction2(ExecuteSqlSelectionAction);
 registerAction2(ExecuteSqlCurrentStatementAction);
+registerAction2(CancelSqlQueryAction);
 registerAction2(FormatSqlQueryAction);

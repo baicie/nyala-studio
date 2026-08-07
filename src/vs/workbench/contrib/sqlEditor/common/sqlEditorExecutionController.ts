@@ -31,6 +31,7 @@ import { SqlCancelQueryResult, SqlQueryResult } from '../../../services/sql/comm
 import {
 	createExecutePayload,
 	findSqlStatementAtOffset,
+	splitSqlStatements,
 	SqlEditorExecutionSource
 } from './sqlEditorModel.js';
 import {
@@ -140,15 +141,27 @@ export class SqlEditorExecutionController {
 		};
 
 		try {
-			const result: SqlQueryResult = await this.queryService.executeQuery({
-				connectionId: payload.connectionId,
-				sql: payload.sql,
-				limit: input.limit
-			});
+			const statements =
+				input.source === SqlEditorExecutionSource.Statement
+					? [payload.sql]
+					: splitSqlStatements(payload.sql).map(statement => statement.sql);
+			let result: SqlQueryResult | undefined;
 
-			const cancelled = this.takeCancelledRun(run.id);
-			if (cancelled) {
-				return { started, cancelled };
+			for (const statement of statements) {
+				result = await this.queryService.executeQuery({
+					connectionId: payload.connectionId,
+					sql: statement,
+					limit: input.limit
+				});
+
+				const cancelled = this.takeCancelledRun(run.id);
+				if (cancelled) {
+					return { started, cancelled };
+				}
+			}
+
+			if (!result) {
+				throw new Error('No SQL statement to execute.');
 			}
 
 			const completed: SqlEditorQueryCompletedEvent = {

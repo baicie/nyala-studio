@@ -7,43 +7,49 @@ import {
 	SqlEditorRunningState
 } from '../common/sqlEditorExecutionController.js';
 import { SqlEditorExecutionSource } from '../common/sqlEditorModel.js';
-import {
-	SqlCellKind,
-	SqlQueryResult
-} from '../../../services/sql/common/sqlTypes.js';
+import { SqlCellKind, SqlExecuteQueryRequest, SqlQueryResult } from '../../../services/sql/common/sqlTypes.js';
 
 class FakeQueryService {
 	cancelled = false;
 	executeCalls = 0;
 	cancelCalls = 0;
-	private readonly executeImpl: () => Promise<unknown>;
+	readonly executeRequests: SqlExecuteQueryRequest[] = [];
+	private readonly executeImpl: (request: SqlExecuteQueryRequest) => Promise<unknown>;
 	private readonly cancelImpl: (request: { connectionId: string; queryId?: string }) => Promise<unknown>;
 
-	constructor(options: {
-		execute?: () => Promise<unknown>;
-		cancel?: (request: { connectionId: string; queryId?: string }) => Promise<unknown>;
-	} = {}) {
-		this.executeImpl = options.execute ?? (() => Promise.resolve({
-			columns: [{ name: 'value', ordinal: 0 }],
-			rows: [[{ kind: SqlCellKind.Integer, value: 1 }]],
-			rowCount: 1,
-			elapsedMs: 2,
-			truncated: false
-		}));
-		this.cancelImpl = options.cancel ?? ((request: { connectionId: string; queryId?: string }) => {
-			this.cancelled = true;
-			return Promise.resolve({
-				cancelled: true,
-				connectionId: request.connectionId,
-				queryId: request.queryId,
-				message: 'cancelled'
+	constructor(
+		options: {
+			execute?: (request: SqlExecuteQueryRequest) => Promise<unknown>;
+			cancel?: (request: { connectionId: string; queryId?: string }) => Promise<unknown>;
+		} = {}
+	) {
+		this.executeImpl =
+			options.execute ??
+			(() =>
+				Promise.resolve({
+					columns: [{ name: 'value', ordinal: 0 }],
+					rows: [[{ kind: SqlCellKind.Integer, value: 1 }]],
+					rowCount: 1,
+					elapsedMs: 2,
+					truncated: false
+				}));
+		this.cancelImpl =
+			options.cancel ??
+			((request: { connectionId: string; queryId?: string }) => {
+				this.cancelled = true;
+				return Promise.resolve({
+					cancelled: true,
+					connectionId: request.connectionId,
+					queryId: request.queryId,
+					message: 'cancelled'
+				});
 			});
-		});
 	}
 
-	async executeQuery(): Promise<unknown> {
+	async executeQuery(request: SqlExecuteQueryRequest): Promise<unknown> {
 		this.executeCalls++;
-		return this.executeImpl();
+		this.executeRequests.push(request);
+		return this.executeImpl(request);
 	}
 
 	async cancelQuery(request: { connectionId: string; queryId?: string }): Promise<unknown> {
@@ -142,18 +148,58 @@ test('execute emits completed event and resets state', async () => {
 	assert.equal(controller.state.state, SqlEditorRunningState.Idle);
 });
 
+test('execute all runs multiple statements sequentially', async () => {
+	const service = new FakeQueryService();
+	const controller = new SqlEditorExecutionController(cast(service), () => 0);
+
+	const result = await controller.execute({
+		editorId: 'editor-1',
+		connectionId: 'conn-1',
+		fullSql: "select ';' as value; -- keep ; here\nselect 2;",
+		source: SqlEditorExecutionSource.All
+	});
+
+	assert.deepEqual(
+		service.executeRequests.map(request => request.sql),
+		["select ';' as value", '-- keep ; here\nselect 2']
+	);
+	assert.ok(result.completed);
+});
+
+test('execute all stops after the first failed statement', async () => {
+	const service = new FakeQueryService({
+		execute: request =>
+			request.sql === 'select 2' ? Promise.reject(new Error('second statement failed')) : Promise.resolve(emptyResult())
+	});
+	const controller = new SqlEditorExecutionController(cast(service), () => 0);
+
+	const result = await controller.execute({
+		editorId: 'editor-1',
+		connectionId: 'conn-1',
+		fullSql: 'select 1; select 2; select 3;',
+		source: SqlEditorExecutionSource.All
+	});
+
+	assert.deepEqual(
+		service.executeRequests.map(request => request.sql),
+		['select 1', 'select 2']
+	);
+	assert.equal(result.failed?.error.message, 'second statement failed');
+});
+
 test('execute forwards limit when provided', async () => {
 	let observed: { limit?: number } = {};
 	const service = new FakeQueryService({
-		execute: () => Promise.resolve({
-			columns: [],
-			rows: [],
-			rowCount: 0,
-			elapsedMs: 0,
-			truncated: false
-		})
+		execute: () =>
+			Promise.resolve({
+				columns: [],
+				rows: [],
+				rowCount: 0,
+				elapsedMs: 0,
+				truncated: false
+			})
 	});
-	service.executeQuery = async (request) => {
+	service.executeQuery = async request => {
 		service.executeCalls++;
 		observed = request;
 		return {
@@ -217,11 +263,12 @@ test('execute rejects when no connection is provided', async () => {
 	const controller = new SqlEditorExecutionController(cast(service), () => 0);
 
 	await assert.rejects(
-		() => controller.execute({
-			editorId: 'editor-1',
-			fullSql: 'select 1',
-			source: SqlEditorExecutionSource.All
-		}),
+		() =>
+			controller.execute({
+				editorId: 'editor-1',
+				fullSql: 'select 1',
+				source: SqlEditorExecutionSource.All
+			}),
 		/No SQL connection selected/
 	);
 	assert.equal(service.executeCalls, 0);
@@ -232,12 +279,13 @@ test('execute rejects when sql is empty', async () => {
 	const controller = new SqlEditorExecutionController(cast(service), () => 0);
 
 	await assert.rejects(
-		() => controller.execute({
-			editorId: 'editor-1',
-			connectionId: 'conn-1',
-			fullSql: '   \n\t',
-			source: SqlEditorExecutionSource.All
-		}),
+		() =>
+			controller.execute({
+				editorId: 'editor-1',
+				connectionId: 'conn-1',
+				fullSql: '   \n\t',
+				source: SqlEditorExecutionSource.All
+			}),
 		/SQL is empty/
 	);
 	assert.equal(service.executeCalls, 0);
@@ -246,9 +294,10 @@ test('execute rejects when sql is empty', async () => {
 test('execute refuses to run a second query while one is in flight', async () => {
 	let resolveExecute: (value: unknown) => void = () => undefined;
 	const service = new FakeQueryService({
-		execute: () => new Promise((resolve) => {
-			resolveExecute = resolve;
-		})
+		execute: () =>
+			new Promise(resolve => {
+				resolveExecute = resolve;
+			})
 	});
 	const controller = new SqlEditorExecutionController(cast(service), () => 0);
 
@@ -260,12 +309,13 @@ test('execute refuses to run a second query while one is in flight', async () =>
 	});
 
 	await assert.rejects(
-		() => controller.execute({
-			editorId: 'editor-1',
-			connectionId: 'conn-1',
-			fullSql: 'select 2',
-			source: SqlEditorExecutionSource.All
-		}),
+		() =>
+			controller.execute({
+				editorId: 'editor-1',
+				connectionId: 'conn-1',
+				fullSql: 'select 2',
+				source: SqlEditorExecutionSource.All
+			}),
 		/already running/
 	);
 
@@ -288,15 +338,17 @@ test('cancel returns cancelled event while a query is running and canCancel is a
 	let resolveExecute: (value: unknown) => void = () => undefined;
 	let time = 100;
 	const service = new FakeQueryService({
-		execute: () => new Promise((resolve) => {
-			resolveExecute = resolve;
-		}),
-		cancel: (request) => Promise.resolve({
-			cancelled: true,
-			connectionId: request.connectionId,
-			queryId: request.queryId,
-			message: 'stopped'
-		})
+		execute: () =>
+			new Promise(resolve => {
+				resolveExecute = resolve;
+			}),
+		cancel: request =>
+			Promise.resolve({
+				cancelled: true,
+				connectionId: request.connectionId,
+				queryId: request.queryId,
+				message: 'stopped'
+			})
 	});
 	const controller = new SqlEditorExecutionController(cast(service), () => time++);
 
@@ -335,15 +387,17 @@ test('execute resolves as cancelled instead of completed after a successful canc
 	let time = 100;
 
 	const service = new FakeQueryService({
-		execute: () => new Promise((resolve) => {
-			resolveExecute = resolve;
-		}),
-		cancel: (request) => Promise.resolve({
-			cancelled: true,
-			connectionId: request.connectionId,
-			queryId: request.queryId,
-			message: 'stopped'
-		})
+		execute: () =>
+			new Promise(resolve => {
+				resolveExecute = resolve;
+			}),
+		cancel: request =>
+			Promise.resolve({
+				cancelled: true,
+				connectionId: request.connectionId,
+				queryId: request.queryId,
+				message: 'stopped'
+			})
 	});
 
 	const controller = new SqlEditorExecutionController(cast(service), () => time++);
@@ -374,16 +428,18 @@ test('execute resolves as cancelled instead of failed when cancellation races a 
 	};
 
 	const service = new FakeQueryService({
-		execute: () => new Promise<unknown>((resolve, reject) => {
-			executeSignals.resolve = resolve;
-			executeSignals.reject = reject;
-		}),
-		cancel: (request) => Promise.resolve({
-			cancelled: true,
-			connectionId: request.connectionId,
-			queryId: request.queryId,
-			message: 'stopped'
-		})
+		execute: () =>
+			new Promise<unknown>((resolve, reject) => {
+				executeSignals.resolve = resolve;
+				executeSignals.reject = reject;
+			}),
+		cancel: request =>
+			Promise.resolve({
+				cancelled: true,
+				connectionId: request.connectionId,
+				queryId: request.queryId,
+				message: 'stopped'
+			})
 	});
 
 	const controller = new SqlEditorExecutionController(cast(service), () => 1);
@@ -411,20 +467,22 @@ test('stale execute completion after cancel does not reset a newer running query
 	let call = 0;
 
 	const service = new FakeQueryService({
-		execute: () => new Promise((resolve) => {
-			call++;
-			if (call === 1) {
-				resolveFirst = resolve;
-			} else {
-				resolveSecond = resolve;
-			}
-		}),
-		cancel: (request) => Promise.resolve({
-			cancelled: true,
-			connectionId: request.connectionId,
-			queryId: request.queryId,
-			message: 'stopped'
-		})
+		execute: () =>
+			new Promise(resolve => {
+				call++;
+				if (call === 1) {
+					resolveFirst = resolve;
+				} else {
+					resolveSecond = resolve;
+				}
+			}),
+		cancel: request =>
+			Promise.resolve({
+				cancelled: true,
+				connectionId: request.connectionId,
+				queryId: request.queryId,
+				message: 'stopped'
+			})
 	});
 
 	const controller = new SqlEditorExecutionController(cast(service), () => 1);
@@ -464,15 +522,17 @@ test('stale execute completion after cancel does not reset a newer running query
 test('cancel returns undefined when the underlying service says cancel had no effect', async () => {
 	let resolveExecute: (value: unknown) => void = () => undefined;
 	const service = new FakeQueryService({
-		execute: () => new Promise((resolve) => {
-			resolveExecute = resolve;
-		}),
-		cancel: (request) => Promise.resolve({
-			cancelled: false,
-			connectionId: request.connectionId,
-			queryId: request.queryId,
-			message: 'query already finished'
-		})
+		execute: () =>
+			new Promise(resolve => {
+				resolveExecute = resolve;
+			}),
+		cancel: request =>
+			Promise.resolve({
+				cancelled: false,
+				connectionId: request.connectionId,
+				queryId: request.queryId,
+				message: 'query already finished'
+			})
 	});
 	const controller = new SqlEditorExecutionController(cast(service), () => 0);
 
@@ -499,9 +559,10 @@ test('cancel returns undefined when the underlying service says cancel had no ef
 test('cancel refuses to call the service when canCancel is disabled', async () => {
 	let resolveExecute: (value: unknown) => void = () => undefined;
 	const service = new FakeQueryService({
-		execute: () => new Promise((resolve) => {
-			resolveExecute = resolve;
-		})
+		execute: () =>
+			new Promise(resolve => {
+				resolveExecute = resolve;
+			})
 	});
 	const controller = new SqlEditorExecutionController(cast(service), () => 0);
 

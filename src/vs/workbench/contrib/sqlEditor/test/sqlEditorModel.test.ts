@@ -5,18 +5,16 @@ import {
 	createExecutePayload,
 	createFormatterPlaceholderResult,
 	findSqlStatementAtOffset,
+	getSqlEditorToolbarState,
 	getSqlEditorStatusLabel,
 	normalizeExecutableSql,
 	normalizeSqlEditorOptions,
+	splitSqlStatements,
 	SqlEditorExecutionSource
 } from '../common/sqlEditorModel.js';
 
 test('normalizeSqlEditorOptions creates defaults', () => {
-	const normalized = normalizeSqlEditorOptions(
-		{},
-		'SELECT 1;',
-		() => 'query-1'
-	);
+	const normalized = normalizeSqlEditorOptions({}, 'SELECT 1;', () => 'query-1');
 
 	assert.deepEqual(normalized, {
 		id: 'query-1',
@@ -49,14 +47,11 @@ test('normalizeExecutableSql trims SQL', () => {
 });
 
 test('createExecutePayload creates executable payload', () => {
-	assert.deepEqual(
-		createExecutePayload(' local ', ' SELECT 1; ', SqlEditorExecutionSource.Statement),
-		{
-			connectionId: 'local',
-			sql: 'SELECT 1;',
-			source: SqlEditorExecutionSource.Statement
-		}
-	);
+	assert.deepEqual(createExecutePayload(' local ', ' SELECT 1; ', SqlEditorExecutionSource.Statement), {
+		connectionId: 'local',
+		sql: 'SELECT 1;',
+		source: SqlEditorExecutionSource.Statement
+	});
 });
 
 test('createExecutePayload rejects missing connection', () => {
@@ -67,10 +62,7 @@ test('createExecutePayload rejects missing connection', () => {
 });
 
 test('createExecutePayload rejects empty SQL', () => {
-	assert.throws(
-		() => createExecutePayload('local', '   ', SqlEditorExecutionSource.All),
-		/SQL is empty/
-	);
+	assert.throws(() => createExecutePayload('local', '   ', SqlEditorExecutionSource.All), /SQL is empty/);
 });
 
 test('findSqlStatementAtOffset returns first statement', () => {
@@ -87,6 +79,17 @@ test('findSqlStatementAtOffset returns first statement', () => {
 test('findSqlStatementAtOffset returns second statement', () => {
 	const sql = 'SELECT 1;\nSELECT 2;';
 	const statement = findSqlStatementAtOffset(sql, sql.indexOf('2'));
+
+	assert.deepEqual(statement, {
+		start: 10,
+		end: 18,
+		sql: 'SELECT 2'
+	});
+});
+
+test('findSqlStatementAtOffset falls back to the last statement after a trailing delimiter', () => {
+	const sql = 'SELECT 1;\nSELECT 2;\n\n';
+	const statement = findSqlStatementAtOffset(sql, sql.length);
 
 	assert.deepEqual(statement, {
 		start: 10,
@@ -123,6 +126,15 @@ test('findSqlStatementAtOffset ignores semicolon inside block comment', () => {
 	assert.equal(statement.sql, 'SELECT 1 /* ; comment */');
 });
 
+test('splitSqlStatements keeps quoted and commented semicolons inside statements', () => {
+	const sql = "SELECT ';' AS value; -- keep ; here\nSELECT 2;";
+
+	assert.deepEqual(
+		splitSqlStatements(sql).map(statement => statement.sql),
+		["SELECT ';' AS value", '-- keep ; here\nSELECT 2']
+	);
+});
+
 test('getSqlEditorStatusLabel renders connection status', () => {
 	assert.equal(
 		getSqlEditorStatusLabel({
@@ -149,6 +161,46 @@ test('getSqlEditorStatusLabel renders connection status', () => {
 			running: true
 		}),
 		'Running · local'
+	);
+});
+
+test('getSqlEditorToolbarState requires a selection for selection execution', () => {
+	assert.deepEqual(
+		getSqlEditorToolbarState({
+			hasConnection: true,
+			hasConnections: true,
+			hasSelection: false,
+			running: false,
+			canCancel: false
+		}),
+		{
+			canExecuteStatement: true,
+			canExecuteSelection: false,
+			canExecuteAll: true,
+			canFormat: true,
+			canChangeConnection: true,
+			canCancel: false
+		}
+	);
+});
+
+test('getSqlEditorToolbarState exposes only cancellation while a cancellable query runs', () => {
+	assert.deepEqual(
+		getSqlEditorToolbarState({
+			hasConnection: true,
+			hasConnections: true,
+			hasSelection: true,
+			running: true,
+			canCancel: true
+		}),
+		{
+			canExecuteStatement: false,
+			canExecuteSelection: false,
+			canExecuteAll: false,
+			canFormat: false,
+			canChangeConnection: false,
+			canCancel: true
+		}
 	);
 });
 

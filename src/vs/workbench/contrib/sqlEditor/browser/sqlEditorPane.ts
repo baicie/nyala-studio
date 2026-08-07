@@ -6,7 +6,9 @@ import './media/sqlEditor.css';
 
 import { $, addDisposableListener, append, clearNode, Dimension, EventType } from '../../../../base/browser/dom.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { Codicon } from '../../../../base/common/codicons.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
 import { isTauri } from '../../../../sidex-bridge.js';
 import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
 import { CodeEditorWidget } from '../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
@@ -26,13 +28,13 @@ import { SqlConnection, SqlConnectionKind } from '../../../services/sql/common/s
 import { SqlEditorInput } from '../common/sqlEditorInput.js';
 import { SQL_EDITOR_PANE_ID } from '../common/sqlEditor.js';
 import {
-	createExecutePayload,
 	canLoadSqlEditorConnections,
 	findSqlStatementAtOffset,
 	getSqlEditorStatusLabel,
-	SqlEditorExecutionSource,
-	SqlEditorExecutePayload
+	getSqlEditorToolbarState,
+	SqlEditorExecutionSource
 } from '../common/sqlEditorModel.js';
+import { SqlEditorExecutionController, SqlEditorRunningState } from '../common/sqlEditorExecutionController.js';
 import { ISqlEditorEventService } from '../common/sqlEditorEvents.js';
 import { ISqlEditorDraftService } from '../common/sqlEditorDraftService.js';
 import { ISqlProductPreferencesService } from '../../sqlProduct/common/sqlProductPreferencesService.js';
@@ -56,9 +58,10 @@ export class SqlEditorPane extends EditorPane {
 	private container!: HTMLElement;
 	private toolbar!: HTMLElement;
 	private connectionSelect!: HTMLSelectElement;
-	private runButton!: HTMLButtonElement;
-	private runSelectionButton!: HTMLButtonElement;
 	private runStatementButton!: HTMLButtonElement;
+	private runSelectionButton!: HTMLButtonElement;
+	private runAllButton!: HTMLButtonElement;
+	private cancelButton!: HTMLButtonElement;
 	private formatButton!: HTMLButtonElement;
 	private statusElement!: HTMLElement;
 	private editorContainer!: HTMLElement;
@@ -68,6 +71,7 @@ export class SqlEditorPane extends EditorPane {
 	private currentConnections: SqlConnection[] = [];
 	private running = false;
 	private dirty = false;
+	private readonly executionController: SqlEditorExecutionController;
 
 	constructor(
 		group: IEditorGroup,
@@ -85,11 +89,18 @@ export class SqlEditorPane extends EditorPane {
 		@ISqlProductPreferencesService private readonly preferencesService: ISqlProductPreferencesService
 	) {
 		super(SqlEditorPane.ID, group, telemetryService, themeService, storageService);
+		this.executionController = new SqlEditorExecutionController(sqlQueryService);
 	}
 
 	protected override createEditor(parent: HTMLElement): void {
 		this.container = append(parent, $('.sql-editor-pane'));
-		this.toolbar = append(this.container, $('.sql-editor-toolbar'));
+		this.toolbar = append(
+			this.container,
+			$('.sql-editor-toolbar', {
+				role: 'toolbar',
+				'aria-label': 'SQL execution'
+			})
+		);
 
 		this.connectionSelect = append(
 			this.toolbar,
@@ -98,27 +109,22 @@ export class SqlEditorPane extends EditorPane {
 			})
 		) as HTMLSelectElement;
 
-		this.runButton = append(
-			this.toolbar,
-			$('button.sql-editor-button.primary', { type: 'button', title: 'Execute all SQL' }, 'Run All')
-		) as HTMLButtonElement;
+		this.runStatementButton = this.appendToolbarButton(
+			Codicon.run,
+			'Run',
+			'Execute current statement (Ctrl/Cmd+Enter)',
+			true
+		);
+		this.runSelectionButton = this.appendToolbarButton(
+			Codicon.selection,
+			'Selection',
+			'Execute selection (Shift+Enter)'
+		);
+		this.runAllButton = this.appendToolbarButton(Codicon.runAll, 'All', 'Execute all SQL');
+		this.cancelButton = this.appendToolbarButton(Codicon.stopCircle, 'Stop', 'Cancel running query');
+		this.formatButton = this.appendToolbarButton(Codicon.wand, 'Format', 'Format SQL');
 
-		this.runSelectionButton = append(
-			this.toolbar,
-			$('button.sql-editor-button', { type: 'button', title: 'Execute selected SQL' }, 'Run Selection')
-		) as HTMLButtonElement;
-
-		this.runStatementButton = append(
-			this.toolbar,
-			$('button.sql-editor-button', { type: 'button', title: 'Execute current statement' }, 'Run Statement')
-		) as HTMLButtonElement;
-
-		this.formatButton = append(
-			this.toolbar,
-			$('button.sql-editor-button', { type: 'button', title: 'Format SQL' }, 'Format')
-		) as HTMLButtonElement;
-
-		this.statusElement = append(this.toolbar, $('span.sql-editor-status'));
+		this.statusElement = append(this.toolbar, $('span.sql-editor-status', { role: 'status', 'aria-live': 'polite' }));
 		this.editorContainer = append(this.container, $('.sql-editor-container'));
 
 		this.editor = this._register(
@@ -136,8 +142,8 @@ export class SqlEditorPane extends EditorPane {
 		);
 
 		this._register(
-			addDisposableListener(this.runButton, EventType.CLICK, () => {
-				this.executeQuery(SqlEditorExecutionSource.All).catch(error => this.showError(error));
+			addDisposableListener(this.runStatementButton, EventType.CLICK, () => {
+				this.executeQuery(SqlEditorExecutionSource.Statement).catch(error => this.showError(error));
 			})
 		);
 
@@ -148,8 +154,14 @@ export class SqlEditorPane extends EditorPane {
 		);
 
 		this._register(
-			addDisposableListener(this.runStatementButton, EventType.CLICK, () => {
-				this.executeQuery(SqlEditorExecutionSource.Statement).catch(error => this.showError(error));
+			addDisposableListener(this.runAllButton, EventType.CLICK, () => {
+				this.executeQuery(SqlEditorExecutionSource.All).catch(error => this.showError(error));
+			})
+		);
+
+		this._register(
+			addDisposableListener(this.cancelButton, EventType.CLICK, () => {
+				this.cancelQuery().catch(error => this.showError(error));
 			})
 		);
 
@@ -164,8 +176,12 @@ export class SqlEditorPane extends EditorPane {
 				this.dirty = true;
 				this.saveCurrentDraft();
 				this.updateReadyStatus();
+				this.updateToolbarState();
 			})
 		);
+
+		this._register(this.editor.onDidChangeCursorSelection(() => this.updateToolbarState()));
+		this.updateToolbarState();
 
 		this._onDidChangeControl.fire();
 	}
@@ -198,6 +214,7 @@ export class SqlEditorPane extends EditorPane {
 				this.dirty = true;
 				this.saveCurrentDraft();
 				this.updateReadyStatus();
+				this.updateToolbarState();
 			})
 		);
 
@@ -205,6 +222,7 @@ export class SqlEditorPane extends EditorPane {
 		this.editor?.focus();
 
 		this.updateReadyStatus();
+		this.updateToolbarState();
 	}
 
 	override clearInput(): void {
@@ -212,6 +230,7 @@ export class SqlEditorPane extends EditorPane {
 		this.editor?.setModel(null);
 		this.currentInput = undefined;
 		this.dirty = false;
+		this.updateToolbarState();
 		super.clearInput();
 	}
 
@@ -260,71 +279,98 @@ export class SqlEditorPane extends EditorPane {
 				: sourceOrSelectionOnly;
 
 		const input = this.currentInput;
-		const startedAt = Date.now();
-		let payload: SqlEditorExecutePayload | undefined;
 
 		try {
 			if (!input) {
 				throw new Error('No SQL editor input is active.');
 			}
 
-			const connectionId = this.getSelectedConnectionId();
-			const sql = this.getSqlForExecution(source);
-
-			payload = createExecutePayload(connectionId, sql, source);
-
-			this.status('Running query...');
-			this.setRunning(true);
-
-			this.sqlEditorEventService.fireQueryStarted({
-				editorId: input.id,
-				connectionId: payload.connectionId,
-				sql: payload.sql,
-				source,
-				startedAt
-			});
-
-			const result = await this.sqlQueryService.executeQuery({
-				connectionId: payload.connectionId,
-				sql: payload.sql
-			});
-
-			const completedAt = Date.now();
-
-			this.sqlEditorEventService.fireQueryCompleted({
-				editorId: input.id,
-				connectionId: payload.connectionId,
-				sql: payload.sql,
-				source,
-				startedAt,
-				completedAt,
-				result
-			});
-
-			const message = `Query completed: ${result.rowCount} row(s) in ${result.elapsedMs}ms.`;
-			this.dirty = false;
-			this.saveCurrentDraft();
-			this.status(message);
-			this.notificationService.info(message);
-		} catch (error) {
-			const completedAt = Date.now();
-			const normalizedError = error instanceof Error ? error : new Error(String(error));
-
-			if (input && payload) {
-				this.sqlEditorEventService.fireQueryFailed({
-					editorId: input.id,
-					connectionId: payload.connectionId,
-					sql: payload.sql,
-					source,
-					startedAt,
-					completedAt,
-					error: normalizedError
-				});
+			if (this.running) {
+				throw new Error('A SQL query is already running in this editor.');
 			}
 
+			const connection = this.getSelectedConnection();
+			const executionPromise = this.executionController.execute({
+				editorId: input.id,
+				connectionId: connection?.id,
+				fullSql: this.getAllSql(),
+				selectedSql: this.getSelectedSql(),
+				cursorOffset: this.getCursorOffset(),
+				source,
+				canCancel: connection?.kind === SqlConnectionKind.Sqlite
+			});
+
+			const runningState = this.executionController.state;
+			if (
+				runningState.state !== SqlEditorRunningState.Running ||
+				!runningState.connectionId ||
+				!runningState.sql ||
+				runningState.source === undefined ||
+				runningState.startedAt === undefined
+			) {
+				await executionPromise;
+				throw new Error('SQL execution did not enter the running state.');
+			}
+
+			this.running = true;
+			this.status(this.getRunningStatusLabel(source));
+			this.updateToolbarState();
+			this.sqlEditorEventService.fireQueryStarted({
+				editorId: runningState.editorId,
+				connectionId: runningState.connectionId,
+				sql: runningState.sql,
+				source: runningState.source,
+				startedAt: runningState.startedAt
+			});
+
+			const execution = await executionPromise;
+
+			if (execution.completed) {
+				this.sqlEditorEventService.fireQueryCompleted(execution.completed);
+
+				const result = execution.completed.result;
+				const message = `Query completed: ${result.rowCount} row(s) in ${result.elapsedMs}ms.`;
+				this.dirty = false;
+				this.saveCurrentDraft();
+				this.status(message);
+				this.notificationService.info(message);
+			} else if (execution.failed) {
+				this.sqlEditorEventService.fireQueryFailed(execution.failed);
+				this.showError(execution.failed.error);
+			}
+		} catch (error) {
+			const normalizedError = error instanceof Error ? error : new Error(String(error));
 			this.showError(normalizedError);
 		} finally {
-			this.setRunning(false);
+			this.running = this.executionController.state.state === SqlEditorRunningState.Running;
+			this.updateToolbarState();
+		}
+	}
+
+	async cancelQuery(): Promise<void> {
+		if (!this.running) {
+			return;
+		}
+
+		this.cancelButton.disabled = true;
+		this.status('Cancelling query...');
+
+		try {
+			const cancelled = await this.executionController.cancel();
+
+			if (!cancelled) {
+				this.status('Query cancellation is not available for this connection.');
+				return;
+			}
+
+			this.sqlEditorEventService.fireQueryCancelled(cancelled);
+			this.running = this.executionController.state.state === SqlEditorRunningState.Running;
+			this.status('Query cancelled.');
+			this.notificationService.info('Query cancelled.');
+		} catch (error) {
+			this.showError(error);
+		} finally {
+			this.updateToolbarState();
 		}
 	}
 
@@ -490,10 +536,18 @@ export class SqlEditorPane extends EditorPane {
 		const selection = editor?.getSelection();
 
 		if (!model || !selection || selection.isEmpty()) {
-			return this.getCurrentStatementSql();
+			return '';
 		}
 
 		return model.getValueInRange(selection);
+	}
+
+	private getCursorOffset(): number {
+		const editor = this.editor;
+		const model = editor?.getModel();
+		const position = editor?.getPosition();
+
+		return model && position ? model.getOffsetAt(position) : 0;
 	}
 
 	private getCurrentStatementSql(): string {
@@ -508,20 +562,7 @@ export class SqlEditorPane extends EditorPane {
 		const offset = model.getOffsetAt(position);
 		const statement = findSqlStatementAtOffset(model.getValue(), offset);
 
-		return statement.sql || this.getAllSql();
-	}
-
-	private getSqlForExecution(source: SqlEditorExecutionSource): string {
-		switch (source) {
-			case SqlEditorExecutionSource.All:
-				return this.getAllSql();
-
-			case SqlEditorExecutionSource.Selection:
-				return this.getSelectedSql();
-
-			case SqlEditorExecutionSource.Statement:
-				return this.getCurrentStatementSql();
-		}
+		return statement.sql;
 	}
 
 	private saveCurrentDraft(): void {
@@ -558,22 +599,68 @@ export class SqlEditorPane extends EditorPane {
 
 	private setRunning(running: boolean): void {
 		this.running = running;
+		this.updateToolbarState();
+	}
 
+	private updateToolbarState(): void {
 		if (
-			!this.runButton ||
-			!this.runSelectionButton ||
 			!this.runStatementButton ||
+			!this.runSelectionButton ||
+			!this.runAllButton ||
+			!this.cancelButton ||
 			!this.formatButton ||
 			!this.connectionSelect
 		) {
 			return;
 		}
 
-		this.runButton.disabled = running;
-		this.runSelectionButton.disabled = running;
-		this.runStatementButton.disabled = running;
-		this.formatButton.disabled = running;
-		this.connectionSelect.disabled = running || this.currentConnections.length === 0;
+		const controllerState = this.executionController.state;
+		const state = getSqlEditorToolbarState({
+			hasConnection: Boolean(this.getSelectedConnectionId()),
+			hasConnections: this.currentConnections.length > 0,
+			hasSelection: Boolean(this.getSelectedSql().trim()),
+			running: this.running,
+			canCancel: controllerState.state === SqlEditorRunningState.Running && controllerState.canCancel
+		});
+
+		this.runStatementButton.disabled = !state.canExecuteStatement;
+		this.runSelectionButton.disabled = !state.canExecuteSelection;
+		this.runAllButton.disabled = !state.canExecuteAll;
+		this.cancelButton.disabled = !state.canCancel;
+		this.formatButton.disabled = !state.canFormat || !this.currentInput;
+		this.connectionSelect.disabled = !state.canChangeConnection;
+		this.cancelButton.title =
+			this.running && !state.canCancel
+				? 'Cancellation is not supported for this running query'
+				: 'Cancel running query';
+		this.container?.setAttribute('aria-busy', String(this.running));
+	}
+
+	private appendToolbarButton(icon: ThemeIcon, label: string, title: string, primary = false): HTMLButtonElement {
+		const button = append(
+			this.toolbar,
+			$(primary ? 'button.sql-editor-button.primary' : 'button.sql-editor-button', {
+				type: 'button',
+				title,
+				'aria-label': title
+			})
+		) as HTMLButtonElement;
+		const iconElement = append(button, $('span.sql-editor-button-icon'));
+		iconElement.classList.add(...ThemeIcon.asClassNameArray(icon));
+		append(button, $('span.sql-editor-button-label', undefined, label));
+
+		return button;
+	}
+
+	private getRunningStatusLabel(source: SqlEditorExecutionSource): string {
+		switch (source) {
+			case SqlEditorExecutionSource.All:
+				return 'Running all SQL...';
+			case SqlEditorExecutionSource.Selection:
+				return 'Running selection...';
+			case SqlEditorExecutionSource.Statement:
+				return 'Running current statement...';
+		}
 	}
 
 	private status(message: string): void {
