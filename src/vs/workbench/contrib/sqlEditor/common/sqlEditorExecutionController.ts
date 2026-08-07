@@ -26,8 +26,9 @@
  *   event so only the cancelled event reaches the caller.
  *--------------------------------------------------------------------------------------------*/
 
+import { generateUuid } from '../../../../base/common/uuid.js';
 import { ISqlQueryService } from '../../../services/sql/common/sqlQuery.js';
-import { SqlCancelQueryResult, SqlQueryResult } from '../../../services/sql/common/sqlTypes.js';
+import { SqlCancelQueryResult } from '../../../services/sql/common/sqlTypes.js';
 import {
 	createExecutePayload,
 	findSqlStatementAtOffset,
@@ -38,7 +39,8 @@ import {
 	SqlEditorQueryCancelledEvent,
 	SqlEditorQueryCompletedEvent,
 	SqlEditorQueryFailedEvent,
-	SqlEditorQueryStartedEvent
+	SqlEditorQueryStartedEvent,
+	SqlEditorStatementResult
 } from './sqlEditorEvents.js';
 
 export const enum SqlEditorRunningState {
@@ -49,6 +51,7 @@ export const enum SqlEditorRunningState {
 export interface SqlEditorExecutionControllerState {
 	readonly state: SqlEditorRunningState;
 	readonly editorId: string;
+	readonly executionId?: string;
 	readonly connectionId?: string;
 	readonly startedAt?: number;
 	readonly sql?: string;
@@ -80,8 +83,10 @@ export interface SqlEditorExecutionResult {
 
 interface ActiveSqlEditorRun {
 	readonly id: number;
+	readonly executionId: string;
 	readonly started: SqlEditorQueryStartedEvent;
 	readonly canCancel: boolean;
+	readonly statementResults: SqlEditorStatementResult[];
 }
 
 export class SqlEditorExecutionController {
@@ -114,25 +119,31 @@ export class SqlEditorExecutionController {
 		const sql = resolveSqlToExecute(input);
 		const payload = createExecutePayload(input.connectionId, sql, input.source);
 		const startedAt = this.now();
+		const runId = this.nextRunId++;
+		const executionId = createSqlEditorExecutionId();
 
 		const started: SqlEditorQueryStartedEvent = {
 			editorId: input.editorId,
 			connectionId: payload.connectionId,
 			sql: payload.sql,
 			source: payload.source,
-			startedAt
+			startedAt,
+			executionId
 		};
 
 		const run: ActiveSqlEditorRun = {
-			id: this.nextRunId++,
+			id: runId,
+			executionId,
 			started,
-			canCancel: input.canCancel !== false
+			canCancel: input.canCancel !== false,
+			statementResults: []
 		};
 
 		this.activeRun = run;
 		this.currentState = {
 			state: SqlEditorRunningState.Running,
 			editorId: input.editorId,
+			executionId,
 			connectionId: payload.connectionId,
 			startedAt,
 			sql: payload.sql,
@@ -145,29 +156,72 @@ export class SqlEditorExecutionController {
 				input.source === SqlEditorExecutionSource.Statement
 					? [payload.sql]
 					: splitSqlStatements(payload.sql).map(statement => statement.sql);
-			let result: SqlQueryResult | undefined;
+			const statementCount = statements.length;
 
-			for (const statement of statements) {
-				result = await this.queryService.executeQuery({
-					connectionId: payload.connectionId,
-					sql: statement,
-					limit: input.limit
-				});
+			for (const [statementIndex, statement] of statements.entries()) {
+				const statementStartedAt = statementIndex === 0 ? startedAt : this.now();
 
-				const cancelled = this.takeCancelledRun(run.id);
-				if (cancelled) {
-					return { started, cancelled };
+				try {
+					const result = await this.queryService.executeQuery({
+						connectionId: payload.connectionId,
+						sql: statement,
+						limit: input.limit
+					});
+
+					const cancelled = this.takeCancelledRun(run.id);
+					if (cancelled) {
+						return { started, cancelled };
+					}
+
+					run.statementResults.push({
+						resultId: createSqlEditorStatementResultId(executionId, statementIndex),
+						executionId,
+						statementIndex,
+						statementCount,
+						sql: statement,
+						startedAt: statementStartedAt,
+						completedAt: this.now(),
+						result
+					});
+				} catch (error) {
+					const cancelled = this.takeCancelledRun(run.id);
+					if (cancelled) {
+						return { started, cancelled };
+					}
+
+					const failedStatement = {
+						resultId: createSqlEditorStatementResultId(executionId, statementIndex),
+						executionId,
+						statementIndex,
+						statementCount,
+						sql: statement,
+						startedAt: statementStartedAt,
+						completedAt: this.now(),
+						error: normalizeError(error)
+					};
+					const failed: SqlEditorQueryFailedEvent = {
+						...started,
+						completedAt: failedStatement.completedAt,
+						error: failedStatement.error,
+						statementResults: [...run.statementResults],
+						failedStatement
+					};
+
+					this.finishRun(run.id);
+					return { started, failed };
 				}
 			}
 
-			if (!result) {
+			const finalStatement = run.statementResults[run.statementResults.length - 1];
+			if (!finalStatement) {
 				throw new Error('No SQL statement to execute.');
 			}
 
 			const completed: SqlEditorQueryCompletedEvent = {
 				...started,
-				completedAt: this.now(),
-				result
+				completedAt: finalStatement.completedAt,
+				result: finalStatement.result,
+				statementResults: [...run.statementResults]
 			};
 
 			this.finishRun(run.id);
@@ -181,7 +235,8 @@ export class SqlEditorExecutionController {
 			const failed: SqlEditorQueryFailedEvent = {
 				...started,
 				completedAt: this.now(),
-				error: normalizeError(error)
+				error: normalizeError(error),
+				statementResults: [...run.statementResults]
 			};
 
 			this.finishRun(run.id);
@@ -222,8 +277,10 @@ export class SqlEditorExecutionController {
 			sql: run.started.sql,
 			source: run.started.source,
 			startedAt: run.started.startedAt,
+			executionId: run.executionId,
 			completedAt: this.now(),
-			message: result.message
+			message: result.message,
+			statementResults: [...run.statementResults]
 		};
 
 		this.cancelledRuns.set(run.id, cancelled);
@@ -279,6 +336,14 @@ function normalizeError(error: unknown): Error {
 		return error;
 	}
 	return new Error(String(error));
+}
+
+function createSqlEditorExecutionId(): string {
+	return `sql-execution-${generateUuid()}`;
+}
+
+function createSqlEditorStatementResultId(executionId: string, statementIndex: number): string {
+	return `${executionId}-result-${statementIndex + 1}`;
 }
 
 function assertNever(value: never): never {

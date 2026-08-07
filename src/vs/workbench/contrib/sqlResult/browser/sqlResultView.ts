@@ -237,11 +237,11 @@ export class SqlResultView extends ViewPane {
 			return;
 		}
 
-		append(this.historyElement, $('div.sql-result-history-heading', undefined, 'History'));
+		append(this.historyElement, $('div.sql-result-history-heading', undefined, 'Results'));
 
 		const list = append(
 			this.historyElement,
-			$('ul.sql-result-history-list', { role: 'listbox', 'aria-label': 'Query result history' })
+			$('ul.sql-result-history-list', { role: 'listbox', 'aria-label': 'Query results' })
 		);
 
 		for (const snapshot of state.snapshots) {

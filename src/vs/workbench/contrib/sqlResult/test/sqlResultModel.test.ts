@@ -373,6 +373,173 @@ test('SqlResultService keeps another editor query running when an older query co
 	assert.equal(service.panelState.snapshots.length, 2);
 });
 
+test('SqlResultService records every statement result from one execution', () => {
+	const service = new SqlResultService();
+	let panelChanges = 0;
+	service.onDidChangePanelState(() => panelChanges++);
+	const firstResult = { ...snapshotResult, elapsedMs: 1 };
+	const secondResult = { ...snapshotResult, elapsedMs: 2 };
+
+	service.setSuccess({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1; SELECT 2;',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 10,
+		completedAt: 20,
+		result: secondResult,
+		executionId: 'execution-1',
+		statementResults: [
+			{
+				resultId: 'execution-1-result-1',
+				executionId: 'execution-1',
+				statementIndex: 0,
+				statementCount: 2,
+				sql: 'SELECT 1',
+				startedAt: 10,
+				completedAt: 15,
+				result: firstResult
+			},
+			{
+				resultId: 'execution-1-result-2',
+				executionId: 'execution-1',
+				statementIndex: 1,
+				statementCount: 2,
+				sql: 'SELECT 2',
+				startedAt: 15,
+				completedAt: 20,
+				result: secondResult
+			}
+		]
+	});
+
+	assert.deepEqual(
+		service.panelState.snapshots.map(snapshot => ({
+			id: snapshot.id,
+			sql: snapshot.sql,
+			title: snapshot.title
+		})),
+		[
+			{ id: 'execution-1-result-1', sql: 'SELECT 1', title: 'Query Result 1/2' },
+			{ id: 'execution-1-result-2', sql: 'SELECT 2', title: 'Query Result 2/2' }
+		]
+	);
+	assert.equal(getActiveSqlResultSnapshot(service.panelState)?.id, 'execution-1-result-2');
+	assert.equal(panelChanges, 1);
+});
+
+test('SqlResultService preserves successful statements before a failed statement', () => {
+	const service = new SqlResultService();
+
+	service.setError({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1; SELECT FROM;',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 10,
+		completedAt: 20,
+		error: new Error('syntax error'),
+		executionId: 'execution-2',
+		statementResults: [
+			{
+				resultId: 'execution-2-result-1',
+				executionId: 'execution-2',
+				statementIndex: 0,
+				statementCount: 2,
+				sql: 'SELECT 1',
+				startedAt: 10,
+				completedAt: 15,
+				result: snapshotResult
+			}
+		],
+		failedStatement: {
+			resultId: 'execution-2-result-2',
+			executionId: 'execution-2',
+			statementIndex: 1,
+			statementCount: 2,
+			sql: 'SELECT FROM',
+			startedAt: 15,
+			completedAt: 20,
+			error: new Error('syntax error')
+		}
+	});
+
+	assert.deepEqual(
+		service.panelState.snapshots.map(snapshot => [snapshot.kind, snapshot.sql, snapshot.title]),
+		[
+			[SqlResultSnapshotKind.Success, 'SELECT 1', 'Query Result 1/2'],
+			[SqlResultSnapshotKind.Error, 'SELECT FROM', 'Query Error 2/2']
+		]
+	);
+	assert.equal(getActiveSqlResultSnapshot(service.panelState)?.id, 'execution-2-result-2');
+});
+
+test('SqlResultService keeps completed statements visible when a batch is cancelled', () => {
+	const service = new SqlResultService();
+
+	service.setCancelled({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1; SELECT 2;',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 10,
+		completedAt: 20,
+		message: 'stopped',
+		executionId: 'execution-cancelled',
+		statementResults: [
+			{
+				resultId: 'execution-cancelled-result-1',
+				executionId: 'execution-cancelled',
+				statementIndex: 0,
+				statementCount: 2,
+				sql: 'SELECT 1',
+				startedAt: 10,
+				completedAt: 15,
+				result: snapshotResult
+			}
+		]
+	});
+
+	assert.deepEqual(
+		service.panelState.snapshots.map(snapshot => [snapshot.kind, snapshot.sql]),
+		[
+			[SqlResultSnapshotKind.Success, 'SELECT 1'],
+			[SqlResultSnapshotKind.Cancelled, 'SELECT 1; SELECT 2;']
+		]
+	);
+	assert.equal(getActiveSqlResultSnapshot(service.panelState)?.kind, SqlResultSnapshotKind.Cancelled);
+});
+
+test('SqlResultService does not truncate the current execution when it has more than the history limit', () => {
+	const service = new SqlResultService();
+	const statementCount = 21;
+
+	service.setSuccess({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: Array.from({ length: statementCount }, (_, index) => `SELECT ${index + 1}`).join('; '),
+		source: SqlEditorExecutionSource.All,
+		startedAt: 10,
+		completedAt: 20,
+		result: snapshotResult,
+		executionId: 'execution-large',
+		statementResults: Array.from({ length: statementCount }, (_, statementIndex) => ({
+			resultId: `execution-large-result-${statementIndex + 1}`,
+			executionId: 'execution-large',
+			statementIndex,
+			statementCount,
+			sql: `SELECT ${statementIndex + 1}`,
+			startedAt: 10,
+			completedAt: 20,
+			result: snapshotResult
+		}))
+	});
+
+	assert.equal(service.panelState.snapshots.length, statementCount);
+	assert.equal(new Set(service.panelState.snapshots.map(snapshot => snapshot.id)).size, statementCount);
+	assert.equal(getActiveSqlResultSnapshot(service.panelState)?.id, 'execution-large-result-21');
+});
+
 test('SqlResultService records success error and cancelled snapshots', () => {
 	const service = new SqlResultService();
 

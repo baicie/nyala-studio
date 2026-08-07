@@ -317,6 +317,7 @@ export class SqlEditorPane extends EditorPane {
 			this.updateToolbarState();
 			this.sqlEditorEventService.fireQueryStarted({
 				editorId: runningState.editorId,
+				executionId: runningState.executionId,
 				connectionId: runningState.connectionId,
 				sql: runningState.sql,
 				source: runningState.source,

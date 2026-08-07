@@ -25,15 +25,15 @@ import {
 } from '../../sqlEditor/common/sqlEditorEvents.js';
 import {
 	activateSqlResultSnapshot,
-	addSqlResultSnapshot,
-	createCancelledResultSnapshotFromEvent,
+	addSqlResultSnapshots,
 	createCancelledSqlResultState,
 	createEmptySqlResultPanelState,
-	createErrorResultSnapshotFromEvent,
 	createErrorSqlResultState,
 	createIdleSqlResultState,
 	createRunningSqlResultState,
-	createSuccessResultSnapshotFromEvent,
+	createSqlResultSnapshotsFromCancelledEvent,
+	createSqlResultSnapshotsFromCompletedEvent,
+	createSqlResultSnapshotsFromFailedEvent,
 	createSuccessSqlResultState,
 	removeSqlResultSnapshot,
 	SqlResultPanelState,
@@ -93,17 +93,17 @@ export class SqlResultService extends Disposable implements ISqlResultService {
 
 	setSuccess(event: SqlEditorQueryCompletedEvent): void {
 		this.setTerminalState(event, createSuccessSqlResultState(event));
-		this.addSnapshot(createSuccessResultSnapshotFromEvent(event));
+		this.addSnapshots(createSqlResultSnapshotsFromCompletedEvent(event));
 	}
 
 	setError(event: SqlEditorQueryFailedEvent): void {
 		this.setTerminalState(event, createErrorSqlResultState(event));
-		this.addSnapshot(createErrorResultSnapshotFromEvent(event));
+		this.addSnapshots(createSqlResultSnapshotsFromFailedEvent(event));
 	}
 
 	setCancelled(event: SqlEditorQueryCancelledEvent): void {
 		this.setTerminalState(event, createCancelledSqlResultState(event));
-		this.addSnapshot(createCancelledResultSnapshotFromEvent(event));
+		this.addSnapshots(createSqlResultSnapshotsFromCancelledEvent(event));
 	}
 
 	activateSnapshot(snapshotId: string): void {
@@ -123,8 +123,8 @@ export class SqlResultService extends Disposable implements ISqlResultService {
 		this.setPanelState(createEmptySqlResultPanelState());
 	}
 
-	private addSnapshot(snapshot: SqlResultSnapshot): void {
-		this.setPanelState(addSqlResultSnapshot(this._panelState, snapshot));
+	private addSnapshots(snapshots: readonly SqlResultSnapshot[]): void {
+		this.setPanelState(addSqlResultSnapshots(this._panelState, snapshots));
 	}
 
 	private setTerminalState(event: SqlEditorQueryStartedEvent, terminalState: SqlResultState): void {

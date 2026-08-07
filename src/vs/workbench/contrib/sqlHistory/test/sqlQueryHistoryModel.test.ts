@@ -53,6 +53,39 @@ test('createCompletedQueryHistoryEntry creates success entry', () => {
 	assert.ok(entry.id);
 });
 
+test('query history keeps a multi-statement execution as one batch entry', () => {
+	const entry = createCompletedQueryHistoryEntry({
+		...completedEvent,
+		sql: 'SELECT 1; SELECT 2;',
+		executionId: 'execution-1',
+		statementResults: [
+			{
+				resultId: 'execution-1-result-1',
+				executionId: 'execution-1',
+				statementIndex: 0,
+				statementCount: 2,
+				sql: 'SELECT 1',
+				startedAt: 1000,
+				completedAt: 1020,
+				result: completedEvent.result
+			},
+			{
+				resultId: 'execution-1-result-2',
+				executionId: 'execution-1',
+				statementIndex: 1,
+				statementCount: 2,
+				sql: 'SELECT 2',
+				startedAt: 1020,
+				completedAt: 1042,
+				result: completedEvent.result
+			}
+		]
+	});
+
+	assert.equal(entry.sql, 'SELECT 1; SELECT 2;');
+	assert.equal(entry.sqlPreview, 'SELECT 1; SELECT 2;');
+});
+
 test('createFailedQueryHistoryEntry creates error entry', () => {
 	const entry = createFailedQueryHistoryEntry(failedEvent);
 
@@ -76,7 +109,10 @@ test('addHistoryEntry prepends and caps entries', () => {
 
 	const entries = addHistoryEntry([first], second, 1);
 
-	assert.deepEqual(entries.map(entry => entry.id), [second.id]);
+	assert.deepEqual(
+		entries.map(entry => entry.id),
+		[second.id]
+	);
 });
 
 test('normalizeHistoryEntries removes duplicate and invalid entries', () => {
@@ -90,7 +126,10 @@ test('normalizeHistoryEntries removes duplicate and invalid entries', () => {
 
 	const entries = normalizeHistoryEntries([first, first, invalid]);
 
-	assert.deepEqual(entries.map(entry => entry.id), [first.id]);
+	assert.deepEqual(
+		entries.map(entry => entry.id),
+		[first.id]
+	);
 });
 
 test('removeHistoryEntry removes matching entry', () => {
@@ -99,7 +138,10 @@ test('removeHistoryEntry removes matching entry', () => {
 
 	const entries = removeHistoryEntry([first, second], first.id);
 
-	assert.deepEqual(entries.map(entry => entry.id), [second.id]);
+	assert.deepEqual(
+		entries.map(entry => entry.id),
+		[second.id]
+	);
 });
 
 test('serializeHistory and deserializeHistory round trip', () => {

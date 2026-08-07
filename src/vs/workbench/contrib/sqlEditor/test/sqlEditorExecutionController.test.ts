@@ -68,6 +68,16 @@ function emptyResult(): SqlQueryResult {
 	};
 }
 
+function resultWithValue(value: number): SqlQueryResult {
+	return {
+		columns: [{ name: 'value', ordinal: 0 }],
+		rows: [[{ kind: SqlCellKind.Integer, value }]],
+		rowCount: 1,
+		elapsedMs: value,
+		truncated: false
+	};
+}
+
 function cast<T>(value: unknown): T {
 	return value as T;
 }
@@ -149,7 +159,9 @@ test('execute emits completed event and resets state', async () => {
 });
 
 test('execute all runs multiple statements sequentially', async () => {
-	const service = new FakeQueryService();
+	const service = new FakeQueryService({
+		execute: request => Promise.resolve(resultWithValue(request.sql.includes('select 2') ? 2 : 1))
+	});
 	const controller = new SqlEditorExecutionController(cast(service), () => 0);
 
 	const result = await controller.execute({
@@ -164,6 +176,20 @@ test('execute all runs multiple statements sequentially', async () => {
 		["select ';' as value", '-- keep ; here\nselect 2']
 	);
 	assert.ok(result.completed);
+	assert.deepEqual(
+		result.completed?.statementResults.map(statement => ({
+			sql: statement.sql,
+			statementIndex: statement.statementIndex,
+			statementCount: statement.statementCount,
+			value: statement.result.rows[0][0].value
+		})),
+		[
+			{ sql: "select ';' as value", statementIndex: 0, statementCount: 2, value: 1 },
+			{ sql: '-- keep ; here\nselect 2', statementIndex: 1, statementCount: 2, value: 2 }
+		]
+	);
+	assert.equal(new Set(result.completed?.statementResults.map(statement => statement.resultId)).size, 2);
+	assert.equal(result.completed?.result.rows[0][0].value, 2);
 });
 
 test('execute all stops after the first failed statement', async () => {
@@ -185,6 +211,13 @@ test('execute all stops after the first failed statement', async () => {
 		['select 1', 'select 2']
 	);
 	assert.equal(result.failed?.error.message, 'second statement failed');
+	assert.deepEqual(
+		result.failed?.statementResults.map(statement => statement.sql),
+		['select 1']
+	);
+	assert.equal(result.failed?.failedStatement?.sql, 'select 2');
+	assert.equal(result.failed?.failedStatement?.statementIndex, 1);
+	assert.equal(result.failed?.failedStatement?.statementCount, 3);
 });
 
 test('execute forwards limit when provided', async () => {
@@ -360,6 +393,7 @@ test('cancel returns cancelled event while a query is running and canCancel is a
 	});
 
 	assert.equal(controller.state.state, SqlEditorRunningState.Running);
+	assert.match(controller.state.executionId ?? '', /^sql-execution-/);
 	assert.equal(controller.state.canCancel, true);
 
 	const cancelled = await controller.cancel('query-1');
@@ -419,6 +453,51 @@ test('execute resolves as cancelled instead of completed after a successful canc
 	assert.equal(executeResult.completed, undefined);
 	assert.equal(executeResult.failed, undefined);
 	assert.equal(executeResult.cancelled?.message, 'stopped');
+});
+
+test('cancel preserves statements that completed before the active statement', async () => {
+	let resolveSecond: (value: unknown) => void = () => undefined;
+	let executeCalls = 0;
+	const service = new FakeQueryService({
+		execute: () => {
+			executeCalls++;
+			if (executeCalls === 1) {
+				return Promise.resolve(resultWithValue(1));
+			}
+
+			return new Promise(resolve => {
+				resolveSecond = resolve;
+			});
+		},
+		cancel: request =>
+			Promise.resolve({
+				cancelled: true,
+				connectionId: request.connectionId,
+				queryId: request.queryId,
+				message: 'stopped'
+			})
+	});
+	const controller = new SqlEditorExecutionController(cast(service), () => 0);
+	const executePromise = controller.execute({
+		editorId: 'editor-1',
+		connectionId: 'conn-1',
+		fullSql: 'select 1; select 2;',
+		source: SqlEditorExecutionSource.All
+	});
+
+	while (executeCalls < 2) {
+		await new Promise<void>(resolve => setImmediate(resolve));
+	}
+
+	const cancelled = await controller.cancel();
+	assert.deepEqual(
+		cancelled?.statementResults?.map(statement => statement.sql),
+		['select 1']
+	);
+
+	resolveSecond(emptyResult());
+	const result = await executePromise;
+	assert.equal(result.cancelled?.statementResults?.length, 1);
 });
 
 test('execute resolves as cancelled instead of failed when cancellation races a thrown error', async () => {
