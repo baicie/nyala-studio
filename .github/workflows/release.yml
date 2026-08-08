@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g. 0.1.3)'
+        description: 'SemVer version to release (e.g. 0.0.1-dev.0)'
         required: true
-        default: '0.1.3'
+        default: '0.0.1-dev.0'
       run_mysql_integration:
         description: 'Run the opt-in MySQL 8 integration test'
         required: false
@@ -18,6 +18,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
 
 env:
   # Nyala Studio retarget. The previous workflow shipped artifacts
@@ -28,10 +32,10 @@ env:
   # stays a one-file change. Override per-run via
   # `vars.NYALA_*` repository variables if the defaults don't
   # match the maintainer's CDN contract.
-  NYALA_R2_BUCKET: nyala-assets
-  NYALA_R2_RELEASE_PATH: nyala
-  NYALA_CDN_BASE_URL: https://cdn.nyala.studio/releases/nyala/latest
-  NYALA_PRODUCT_NAME: Nyala Studio
+  NYALA_R2_BUCKET: ${{ vars.NYALA_R2_BUCKET || 'nyala-assets' }}
+  NYALA_R2_RELEASE_PATH: ${{ vars.NYALA_R2_RELEASE_PATH || 'nyala' }}
+  NYALA_CDN_BASE_URL: ${{ vars.NYALA_CDN_BASE_URL || 'https://cdn.nyala.studio/releases/nyala/latest' }}
+  NYALA_PRODUCT_NAME: ${{ vars.NYALA_PRODUCT_NAME || 'Nyala Studio' }}
 
 jobs:
   metadata:
@@ -40,7 +44,13 @@ jobs:
     outputs:
       version: ${{ steps.release.outputs.version }}
       tag: ${{ steps.release.outputs.tag }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - id: release
         env:
           RAW_VERSION: ${{ inputs.version || github.ref_name }}
@@ -50,8 +60,28 @@ jobs:
             echo 'Release version must not be empty.' >&2
             exit 1
           fi
+
+          node scripts/release-version.mjs check "$VERSION"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.ref_name }}" != "mvp" ]; then
+            echo 'Manual releases must run from the protected mvp branch.' >&2
+            exit 1
+          fi
+
+          if [ "${{ github.event_name }}" = "push" ] && ! git merge-base --is-ancestor "$GITHUB_SHA" origin/mvp; then
+            echo 'Release tags must point to a commit contained in origin/mvp.' >&2
+            exit 1
+          fi
+
+          PRERELEASE=false
+          VERSION_WITHOUT_BUILD="${VERSION%%+*}"
+          if [[ "$VERSION_WITHOUT_BUILD" == *-* ]]; then
+            PRERELEASE=true
+          fi
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
 
   gate:
     name: SQL MVP gate
@@ -60,7 +90,7 @@ jobs:
       run_mysql_integration: ${{ github.event_name == 'workflow_dispatch' && inputs.run_mysql_integration }}
 
   build:
-    needs: gate
+    needs: [gate, metadata]
     strategy:
       fail-fast: false
       matrix:
@@ -96,11 +126,41 @@ jobs:
             artifact_name: linux-x64
 
     runs-on: ${{ matrix.platform }}
-
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Detect optional signing configuration
+        id: signing
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+        run: |
+          APPLE=false
+          UPDATER=false
+          AZURE=false
+          if [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_CERTIFICATE_PASSWORD" ] && [ -n "$KEYCHAIN_PASSWORD" ]; then
+            APPLE=true
+          fi
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            UPDATER=true
+          fi
+          if [ -n "$AZURE_TENANT_ID" ] && [ -n "$AZURE_CLIENT_ID" ] && [ -n "$AZURE_CLIENT_SECRET" ] && [ -n "$AZURE_SIGNING_ENDPOINT" ] && [ -n "$AZURE_SIGNING_ACCOUNT" ] && [ -n "$AZURE_CERT_PROFILE" ]; then
+            AZURE=true
+          fi
+          echo "apple=$APPLE" >> "$GITHUB_OUTPUT"
+          echo "updater=$UPDATER" >> "$GITHUB_OUTPUT"
+          echo "azure=$AZURE" >> "$GITHUB_OUTPUT"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -130,13 +190,17 @@ jobs:
             librsvg2-dev \
             patchelf \
             libssl-dev \
-            libfuse2
+            libfuse2 \
+            rpm
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify release version
+        run: pnpm run release:check -- "${{ needs.metadata.outputs.version }}"
+
       - name: Import Apple signing certificate
-        if: runner.os == 'macOS' && !contains(matrix.platform, 'self-hosted')
+        if: runner.os == 'macOS' && steps.signing.outputs.apple == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -168,12 +232,13 @@ jobs:
         run: pnpm run build
 
       - name: Unlock keychain before signing
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.signing.outputs.apple == 'true'
         env:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
 
-      - name: Build Tauri app
+      - name: Build signed macOS updater artifacts
+        if: runner.os == 'macOS' && steps.signing.outputs.updater == 'true'
         timeout-minutes: 40
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -181,7 +246,35 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm exec tauri build --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
+        run: >-
+          pnpm exec tauri build --ci
+          --target ${{ matrix.target }}
+          --config src-tauri/tauri.release.conf.json
+
+      - name: Build signed updater artifacts
+        if: runner.os != 'macOS' && steps.signing.outputs.updater == 'true'
+        timeout-minutes: 40
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: >-
+          pnpm exec tauri build --ci
+          --target ${{ matrix.target }}
+          --config src-tauri/tauri.release.conf.json
+
+      - name: Build Apple-signed artifacts without updater packages
+        if: runner.os == 'macOS' && steps.signing.outputs.apple == 'true' && steps.signing.outputs.updater != 'true'
+        timeout-minutes: 40
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm exec tauri build --ci --target ${{ matrix.target }}
+
+      - name: Build unsigned development artifacts
+        if: steps.signing.outputs.updater != 'true' && (runner.os != 'macOS' || steps.signing.outputs.apple != 'true')
+        timeout-minutes: 40
+        run: pnpm exec tauri build --ci --no-sign --target ${{ matrix.target }}
 
       - name: Collect macOS artifacts
         if: runner.os == 'macOS'
@@ -202,6 +295,7 @@ jobs:
           mkdir -p dist-artifacts
           find target \( \
             -name "*-setup.exe" \
+            -o -name "*.msi" \
             -o -name "*.exe.zip" \
             -o -name "*.exe.zip.sig" \
           \) -exec cp {} dist-artifacts/ \; 2>/dev/null || true
@@ -214,15 +308,32 @@ jobs:
           mkdir -p dist-artifacts
           find target \( \
             -name "*.deb" \
-            -name "*.rpm" \
+            -o -name "*.rpm" \
             -o -name "*.AppImage" \
             -o -name "*.AppImage.tar.gz" \
             -o -name "*.AppImage.tar.gz.sig" \
           \) -exec cp {} dist-artifacts/ \; 2>/dev/null || true
           ls -la dist-artifacts/
 
+      - name: Namespace artifact filenames
+        shell: bash
+        run: |
+          for path in dist-artifacts/*; do
+            [ -f "$path" ] || continue
+            filename=$(basename "$path")
+            mv "$path" "dist-artifacts/${{ matrix.artifact_name }}-$filename"
+          done
+
+      - name: Verify collected artifacts
+        shell: bash
+        run: |
+          if [ -z "$(find dist-artifacts -type f -print -quit)" ]; then
+            echo "No release artifacts were collected for ${{ matrix.artifact_name }}." >&2
+            exit 1
+          fi
+
       - name: Sign Windows installers (Azure Trusted Signing)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && steps.signing.outputs.azure == 'true'
         uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -232,7 +343,7 @@ jobs:
           signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE }}
           files-folder: dist-artifacts
-          files-folder-filter: exe
+          files-folder-filter: exe,msi
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -243,33 +354,63 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: dist-artifacts/
           retention-days: 7
+          if-no-files-found: error
 
   # ── Deploy to Cloudflare R2 ──────────────────────────────────────────────────
   deploy:
     needs: [build, metadata]
     runs-on: ubuntu-latest
-
     steps:
+      - name: Detect optional R2 deployment
+        id: r2
+        shell: bash
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        run: |
+          if [ -n "$R2_ACCESS_KEY_ID" ] && [ -n "$R2_SECRET_ACCESS_KEY" ] && [ -n "$R2_ACCOUNT_ID" ]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+            echo 'Cloudflare R2 credentials found; versioned artifacts will be uploaded.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo 'Cloudflare R2 credentials are not configured; GitHub Release remains the publication target.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Download all build artifacts
+        if: steps.r2.outputs.enabled == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: all-artifacts
           merge-multiple: true
 
+      - name: Detect updater artifacts
+        if: steps.r2.outputs.enabled == 'true'
+        id: updater
+        shell: bash
+        run: |
+          if [ -n "$(find all-artifacts -type f -name '*.sig' -print -quit)" ]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: List files
+        if: steps.r2.outputs.enabled == 'true'
         run: find all-artifacts -type f | sort
 
       - name: Configure AWS CLI for R2
+        if: steps.r2.outputs.enabled == 'true'
         env:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         run: |
           aws configure set aws_access_key_id "$R2_ACCESS_KEY_ID"
           aws configure set aws_secret_access_key "$R2_SECRET_ACCESS_KEY"
           aws configure set default.region auto
 
       - name: Upload to R2 — versioned folder
+        if: steps.r2.outputs.enabled == 'true'
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         run: |
@@ -280,6 +421,10 @@ jobs:
             --delete
 
       - name: Upload to R2 — overwrite latest
+        if: >-
+          steps.r2.outputs.enabled == 'true' &&
+          needs.metadata.outputs.prerelease == 'false' &&
+          steps.updater.outputs.enabled == 'true'
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         run: |
@@ -289,6 +434,10 @@ jobs:
             --delete
 
       - name: Generate and upload latest.json
+        if: >-
+          steps.r2.outputs.enabled == 'true' &&
+          needs.metadata.outputs.prerelease == 'false' &&
+          steps.updater.outputs.enabled == 'true'
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         run: |
@@ -296,14 +445,29 @@ jobs:
           DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           BASE_URL="${NYALA_CDN_BASE_URL}"
 
-          MACOS_SIG=$(cat all-artifacts/*.app.tar.gz.sig 2>/dev/null | head -1 || echo "")
-          MACOS_FILE=$(ls all-artifacts/*.app.tar.gz 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "")
+          MACOS_ARM64_PATH=$(find all-artifacts -maxdepth 1 -type f -name 'macos-arm64-*.app.tar.gz' -print -quit)
+          MACOS_X64_PATH=$(find all-artifacts -maxdepth 1 -type f -name 'macos-x64-*.app.tar.gz' -print -quit)
+          WIN_X64_PATH=$(find all-artifacts -maxdepth 1 -type f -name 'windows-x64-*.exe.zip' -print -quit)
+          WIN_ARM64_PATH=$(find all-artifacts -maxdepth 1 -type f -name 'windows-arm64-*.exe.zip' -print -quit)
+          LINUX_X64_PATH=$(find all-artifacts -maxdepth 1 -type f -name 'linux-x64-*.AppImage.tar.gz' -print -quit)
 
-          WIN_SIG=$(cat all-artifacts/*x64-setup.exe.zip.sig 2>/dev/null | head -1 || echo "")
-          WIN_FILE=$(ls all-artifacts/*x64-setup.exe.zip 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "")
+          for path in "$MACOS_ARM64_PATH" "$MACOS_X64_PATH" "$WIN_X64_PATH" "$WIN_ARM64_PATH" "$LINUX_X64_PATH"; do
+            if [ ! -s "$path" ] || [ ! -s "$path.sig" ]; then
+              echo "Updater artifact or signature is missing: $path" >&2
+              exit 1
+            fi
+          done
 
-          LINUX_SIG=$(cat all-artifacts/*.AppImage.tar.gz.sig 2>/dev/null | head -1 || echo "")
-          LINUX_FILE=$(ls all-artifacts/*.AppImage.tar.gz 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "")
+          MACOS_ARM64_SIG=$(cat "$MACOS_ARM64_PATH.sig")
+          MACOS_ARM64_FILE=$(basename "$MACOS_ARM64_PATH")
+          MACOS_X64_SIG=$(cat "$MACOS_X64_PATH.sig")
+          MACOS_X64_FILE=$(basename "$MACOS_X64_PATH")
+          WIN_X64_SIG=$(cat "$WIN_X64_PATH.sig")
+          WIN_X64_FILE=$(basename "$WIN_X64_PATH")
+          WIN_ARM64_SIG=$(cat "$WIN_ARM64_PATH.sig")
+          WIN_ARM64_FILE=$(basename "$WIN_ARM64_PATH")
+          LINUX_X64_SIG=$(cat "$LINUX_X64_PATH.sig")
+          LINUX_X64_FILE=$(basename "$LINUX_X64_PATH")
 
           cat > latest.json << EOF
           {
@@ -311,10 +475,11 @@ jobs:
             "notes": "See the full changelog at https://github.com/${{ github.repository }}/releases/tag/v${VERSION}",
             "pub_date": "${DATE}",
             "platforms": {
-              "darwin-aarch64": { "signature": "${MACOS_SIG}", "url": "${BASE_URL}/${MACOS_FILE}" },
-              "darwin-x86_64": { "signature": "${MACOS_SIG}", "url": "${BASE_URL}/${MACOS_FILE}" },
-              "windows-x86_64": { "signature": "${WIN_SIG}", "url": "${BASE_URL}/${WIN_FILE}" },
-              "linux-x86_64": { "signature": "${LINUX_SIG}", "url": "${BASE_URL}/${LINUX_FILE}" }
+              "darwin-aarch64": { "signature": "${MACOS_ARM64_SIG}", "url": "${BASE_URL}/${MACOS_ARM64_FILE}" },
+              "darwin-x86_64": { "signature": "${MACOS_X64_SIG}", "url": "${BASE_URL}/${MACOS_X64_FILE}" },
+              "windows-x86_64": { "signature": "${WIN_X64_SIG}", "url": "${BASE_URL}/${WIN_X64_FILE}" },
+              "windows-aarch64": { "signature": "${WIN_ARM64_SIG}", "url": "${BASE_URL}/${WIN_ARM64_FILE}" },
+              "linux-x86_64": { "signature": "${LINUX_X64_SIG}", "url": "${BASE_URL}/${LINUX_X64_FILE}" }
             }
           }
           EOF
@@ -327,7 +492,7 @@ jobs:
 
   # ── GitHub Release ───────────────────────────────────────────────────────────
   release:
-    needs: [deploy, metadata]
+    needs: [build, metadata]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -340,13 +505,49 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: all-artifacts
-          merge-multiple: true
+
+      - name: Verify release artifact matrix
+        shell: bash
+        run: |
+          for artifact in macos-arm64 macos-x64 macos-universal windows-x64 windows-arm64 linux-x64; do
+            if [ -z "$(find "all-artifacts/$artifact" -type f -print -quit 2>/dev/null)" ]; then
+              echo "Release artifact is missing or empty: $artifact" >&2
+              exit 1
+            fi
+          done
+          find all-artifacts -type f | sort
+
+      - name: Prepare release assets and SHA-256 checksums
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          find all-artifacts -mindepth 2 -maxdepth 2 -type f -exec cp {} release-assets/ \;
+
+          INPUT_COUNT=$(find all-artifacts -mindepth 2 -maxdepth 2 -type f | wc -l | tr -d ' ')
+          OUTPUT_COUNT=$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')
+          if [ "$INPUT_COUNT" != "$OUTPUT_COUNT" ]; then
+            echo 'Release artifact filenames are not unique.' >&2
+            exit 1
+          fi
+
+          (
+            cd release-assets
+            find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+          ) > release-assets/SHA256SUMS.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: '${{ needs.metadata.outputs.tag }}'
+          target_commitish: '${{ github.sha }}'
           name: '${{ env.NYALA_PRODUCT_NAME }} v${{ needs.metadata.outputs.version }}'
-          draft: true
+          body: |
+            Release packages for installation and smoke testing.
+
+            Packages may be unsigned when platform signing secrets are not configured. Verify downloads against `SHA256SUMS.txt` before installation.
+          draft: false
+          prerelease: ${{ needs.metadata.outputs.prerelease }}
+          make_latest: ${{ needs.metadata.outputs.prerelease == 'false' }}
           generate_release_notes: true
-          files: all-artifacts/**
+          fail_on_unmatched_files: true
+          files: release-assets/*

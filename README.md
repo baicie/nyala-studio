@@ -179,6 +179,26 @@ pnpm run rust:clippy
 pnpm run test
 ```
 
+Prepare and validate a release version with the repository scripts:
+
+```bash
+pnpm run release:prepare -- 0.0.1-dev.0
+pnpm run release:check -- 0.0.1-dev.0
+```
+
+`release:prepare` updates `package.json`, `src-tauri/tauri.conf.json`,
+`src-tauri/Cargo.toml`, and the Cargo lock metadata together. The Release
+workflow can then be dispatched from the protected `mvp` branch or triggered
+by a matching `v*` tag. It runs the SQL MVP gate, builds macOS, Windows, and
+Linux installers, generates `SHA256SUMS.txt`, and publishes a GitHub Release.
+Prerelease versions such as `0.0.1-dev.0` are published as GitHub pre-releases
+and never replace the stable R2 `latest` channel.
+
+Platform signing and Cloudflare R2 deployment are optional. When their
+repository secrets are absent, development pre-releases still publish
+unsigned GitHub installation packages and state that limitation in the
+release notes. Production releases should configure signing before promotion.
+
 `pnpm run test` is a chain that runs the branding and application-icon guards,
 the runtime status consistency check, the demo data-directory suite, the Rust
 `cargo test --lib` suite (currently 199 passing tests plus 2 ignored live

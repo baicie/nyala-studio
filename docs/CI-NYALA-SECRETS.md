@@ -1,140 +1,137 @@
-# Release pipeline runbook — `.github/workflows/release.yml`
+# Release workflow configuration
 
-This runbook is for the maintainer who cuts a `v*` tag. After the
-mid-2026 Nyala retarget, every value listed below points at
-Nyala-owned endpoints; if any value still resolves to a SideX
-endpoint, **stop and reopen this file before tagging.**
+This document describes the configuration read by
+`.github/workflows/release.yml`. For the release-day procedure, see
+[`RELEASE-RUNBOOK.md`](./RELEASE-RUNBOOK.md).
 
-For the **operational** counterpart — actual provisioning steps
-(Cloudflare / Apple / Azure), DNS waits, artifact verification,
-rollback decisions — see
-[`docs/RELEASE-RUNBOOK.md`](./RELEASE-RUNBOOK.md). The two files
-deliberately split along this line: this file documents *what
-secrets the workflow expects and why*; the runbook documents
-*what the maintainer does on release day*.
+## Workflow contract
 
-## What this workflow does
+The workflow accepts either:
 
-`.github/workflows/release.yml` runs whenever a `v*` tag is pushed
-(or manually via `workflow_dispatch`). It:
+- a manual dispatch from the protected `mvp` branch with a SemVer `version`;
+- a pushed `v*` tag whose commit is contained in `mvp` and whose version
+  matches all application version files.
 
-1. Builds the Tauri desktop bundles for macOS (universal / arm64 /
-   x64), Windows (x64 + arm64), and Linux x64.
-2. Signs the macOS bundles via the imported Apple certificate and
-   the Windows installers via Azure Trusted Signing.
-3. Uploads all artifacts to Cloudflare R2 under
-   `${NYALA_R2_BUCKET}/releases/${NYALA_R2_RELEASE_PATH}/`.
-4. Refreshes the `latest/` mirror and writes
-   `latest/latest.json` so the in-app updater can discover the
-   current build.
-5. Creates a draft GitHub Release with the artifacts attached.
+Every run executes the SQL MVP gate, builds six artifact groups, verifies that
+none are empty, generates `SHA256SUMS.txt`, and publishes a non-draft GitHub
+Release. A SemVer prerelease such as `0.0.1-dev.0` is marked as a GitHub
+prerelease and is never promoted to the stable updater channel.
 
-The retarget commit introduced four workflow-level environment
-variables that parameterise the SideX legacy:
+The build matrix is:
 
-| Variable                 | Default                              | Purpose                                 |
-| ------------------------ | ------------------------------------ | --------------------------------------- |
-| `NYALA_R2_BUCKET`        | `nyala-assets`                       | Cloudflare R2 bucket (artifact storage) |
-| `NYALA_R2_RELEASE_PATH`  | `nyala`                              | Path segment under `/releases/`         |
-| `NYALA_CDN_BASE_URL`     | `https://cdn.nyala.studio/releases/nyala/latest` | Base URL embedded in `latest.json` |
-| `NYALA_PRODUCT_NAME`     | `Nyala Studio`                       | GitHub Release title prefix             |
+| Artifact group    | Runner           | Rust target                |
+| ----------------- | ---------------- | -------------------------- |
+| `macos-arm64`     | `macos-latest`   | `aarch64-apple-darwin`     |
+| `macos-x64`       | `macos-latest`   | `x86_64-apple-darwin`      |
+| `macos-universal` | `macos-latest`   | `universal-apple-darwin`   |
+| `windows-x64`     | `windows-latest` | `x86_64-pc-windows-msvc`   |
+| `windows-arm64`   | `windows-latest` | `aarch64-pc-windows-msvc`  |
+| `linux-x64`       | `ubuntu-22.04`   | `x86_64-unknown-linux-gnu` |
 
-These four are the **only** values to override if the maintainer
-renames a bucket or moves the CDN. Repository-level overrides go
-through *Settings → Secrets and variables → Actions → Variables*
-(repo variables, not secrets) and are surfaced to the workflow as
-`vars.NYALA_R2_BUCKET` etc. Each `aws s3 sync` call already pulls
-the value from `env:` so a maintainer override is automatic.
+Artifact filenames are prefixed with their group name before upload. This
+keeps updater archives from different architectures unique in GitHub Releases
+and Cloudflare R2.
 
-## Secrets the workflow reads
+## Development prereleases need no secrets
 
-The workflow needs every secret below before the first tag push.
-Missing any one will fail at the matching step, not at the start
-of the run, so a partial dry-run is possible by removing the
-artifact collection steps.
+A development release can run with no repository secrets. In that mode the
+workflow runs `tauri build --ci --no-sign`, skips R2, and publishes unsigned
+installers to GitHub with checksum verification. This is the expected mode for
+`0.0.1-dev.0`.
 
-| Secret                                   | Used by step                          | Required for                                          |
-| ---------------------------------------- | ------------------------------------- | ----------------------------------------------------- |
-| `R2_ACCESS_KEY_ID`                       | `R2 — *`                              | All Cloudflare R2 uploads                             |
-| `R2_SECRET_ACCESS_KEY`                   | `R2 — *`                              | All Cloudflare R2 uploads                             |
-| `R2_ACCOUNT_ID`                          | `R2 — *`                              | Endpoint URL assembly                                 |
-| `APPLE_CERTIFICATE` (base64)             | `Import Apple signing certificate`    | macOS signing                                         |
-| `APPLE_CERTIFICATE_PASSWORD`             | `Import Apple signing certificate`    | macOS signing                                         |
-| `KEYCHAIN_PASSWORD`                      | Apple import + unlock + signing       | macOS signing                                         |
-| `APPLE_ID`                               | `Build Tauri app`                     | macOS notarisation                                    |
-| `APPLE_ID_PASSWORD`                      | `Build Tauri app`                     | macOS notarisation                                    |
-| `APPLE_TEAM_ID`                          | `Build Tauri app`                     | macOS notarisation                                    |
-| `TAURI_SIGNING_PRIVATE_KEY`              | `Build Tauri app`                     | Update signing (consumed by `tauri build`)           |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`     | `Build Tauri app`                     | Update signing                                        |
-| `AZURE_TENANT_ID`                        | `Sign Windows installers`             | Windows authenticode                                  |
-| `AZURE_CLIENT_ID`                        | `Sign Windows installers`             | Windows authenticode                                  |
-| `AZURE_CLIENT_SECRET`                    | `Sign Windows installers`             | Windows authenticode                                  |
-| `AZURE_SIGNING_ENDPOINT`                 | `Sign Windows installers`             | Windows authenticode                                  |
-| `AZURE_SIGNING_ACCOUNT`                  | `Sign Windows installers`             | Windows authenticode                                  |
-| `AZURE_CERT_PROFILE`                     | `Sign Windows installers`             | Windows authenticode                                  |
+Unsigned packages are suitable for installation and smoke testing, but users
+will see platform trust warnings. They must not be represented as notarized,
+Authenticode-signed, or production-ready.
 
-The macOS secrets must belong to the **Nyala** Apple Developer
-team, not the original SideX team. Re-import is mandatory if the
-upstream SideX team's signing identity was used during the fork
-stabilisation phase.
+## Repository variables
 
-## Pre-tag checklist
+These optional Actions variables override Nyala defaults:
 
-Run through this list before `git push origin v0.1.0`:
+| Variable                | Default                                          | Purpose                        |
+| ----------------------- | ------------------------------------------------ | ------------------------------ |
+| `NYALA_R2_BUCKET`       | `nyala-assets`                                   | R2 artifact bucket             |
+| `NYALA_R2_RELEASE_PATH` | `nyala`                                          | Path below `/releases/`        |
+| `NYALA_CDN_BASE_URL`    | `https://cdn.nyala.studio/releases/nyala/latest` | URL root used by `latest.json` |
+| `NYALA_PRODUCT_NAME`    | `Nyala Studio`                                   | GitHub Release title prefix    |
 
-- [ ] Confirm every Cloudflare R2 path in the workflow resolves to
-      `${NYALA_R2_BUCKET}/releases/${NYALA_R2_RELEASE_PATH}/...`,
-      not `siden-assets/releases/sidex/...`. The grep for `siden`
-      should now return only the historical comment at lines 17–18.
-- [ ] Confirm `latest.json`'s `BASE_URL` resolves through
-      `${NYALA_CDN_BASE_URL}` and the bucket it points at serves
-      over HTTPS.
-- [ ] Confirm the macOS signing secrets belong to the Nyala Apple
-      Developer team.
-- [ ] Confirm the `tauri.release.conf.json` `signingIdentity`
-      and `signing` blocks reference the Nyala updater endpoint
-      rather than the SideX updater.
-- [ ] Run `pnpm run rust:fmt && pnpm run rust:check &&
-      pnpm run rust:clippy && pnpm run lint && pnpm run build &&
-      pnpm run test` locally; all must exit 0.
-- [ ] `git tag -a v0.1.0 -m "v0.1.0 MVP"` with a GPG-signed
-      annotated tag. Lightweight tags lose the running workflow's
-      ability to surface the cut line on the GitHub Release.
+Configure them under **Settings > Secrets and variables > Actions >
+Variables**. Empty or missing values use the defaults above.
 
-## workflow_dispatch
+## Optional secret groups
 
-The workflow also runs on `workflow_dispatch` with a single
-`version` input (default `0.1.3`). Use this for rehearsal runs
-that should not land on the public tag namespace. The same
-secret set applies; the `deploy` and `release` jobs will still
-fire unless the `version` input is preceded by a manual cancel
-from the Actions UI.
+Secrets are detected as complete groups. An incomplete group is treated as
+disabled rather than failing unrelated GitHub packaging.
 
-## Difference from the upstream SideX workflow
+### Tauri updater signing
 
-The two upstream SideX values are now env-resolved, not
-hardcoded:
+| Secret                               | Purpose                                      |
+| ------------------------------------ | -------------------------------------------- |
+| `TAURI_SIGNING_PRIVATE_KEY`          | Signs Tauri updater archives                 |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for the private key, when encrypted |
 
-- `siden-assets/releases/sidex/${VERSION}/` →
-  `${NYALA_R2_BUCKET}/releases/${NYALA_R2_RELEASE_PATH}/${VERSION}/`
-- `cdn.siden.ai/releases/sidex/latest` →
-  `${NYALA_CDN_BASE_URL}`
-- GitHub Release title `SideX v...` →
-  `${NYALA_PRODUCT_NAME} v...`
+`TAURI_SIGNING_PRIVATE_KEY` enables `tauri.release.conf.json`, which creates
+the `.tar.gz` or `.zip` updater archives and matching `.sig` files. The
+password may be empty only when the key itself has no password.
 
-If a maintainer needs to roll back to the original SideX
-endpoints for any reason (e.g. cross-team collaboration), they
-can do so without re-versioning this file by setting the four
-variables in repo settings; the workflow picks them up at run
-time.
+### Apple signing and notarization
 
-## Known follow-ups
+| Secret                       | Purpose                                        |
+| ---------------------------- | ---------------------------------------------- |
+| `APPLE_CERTIFICATE`          | Base64-encoded Developer ID Application `.p12` |
+| `APPLE_CERTIFICATE_PASSWORD` | `.p12` password                                |
+| `KEYCHAIN_PASSWORD`          | Temporary CI keychain password                 |
+| `APPLE_ID`                   | Apple account used for notarization            |
+| `APPLE_ID_PASSWORD`          | App-specific Apple password                    |
+| `APPLE_TEAM_ID`              | Apple Developer team ID                        |
 
-- The Windows `.exe.zip` and `.app.tar.gz` artifacts still use
-  filenames SideX chose. Renaming is out of scope for this
-  retarget because the in-app updater on the existing 0.1.0-rc
-  builds expects the historical names. A coordinated rename
-  must land with the first Nyala-public release.
-- The macOS signing certificate renew cadence matches SideX's
-  upstream; the Nyala Apple Developer team should re-import the
-  refreshed `.p12` before its current expiry.
+The first three secrets enable certificate import and macOS code signing. The
+last three enable notarization when Tauri detects the complete Apple account
+configuration. All identities must belong to the Nyala publisher.
+
+### Azure Trusted Signing
+
+| Secret                   | Purpose                        |
+| ------------------------ | ------------------------------ |
+| `AZURE_TENANT_ID`        | Microsoft Entra tenant         |
+| `AZURE_CLIENT_ID`        | Signing application client ID  |
+| `AZURE_CLIENT_SECRET`    | Signing application credential |
+| `AZURE_SIGNING_ENDPOINT` | Trusted Signing endpoint       |
+| `AZURE_SIGNING_ACCOUNT`  | Trusted Signing account        |
+| `AZURE_CERT_PROFILE`     | Certificate profile            |
+
+All six are required to enable the Azure step. It signs both `.exe` and `.msi`
+installers after Tauri packaging.
+
+### Cloudflare R2
+
+| Secret                 | Purpose                            |
+| ---------------------- | ---------------------------------- |
+| `R2_ACCESS_KEY_ID`     | R2 S3 API access key               |
+| `R2_SECRET_ACCESS_KEY` | R2 S3 API secret                   |
+| `R2_ACCOUNT_ID`        | Account-specific endpoint assembly |
+
+All three enable upload to the versioned R2 folder. The workflow updates
+`latest/` and `latest.json` only for a stable SemVer release and only when a
+Tauri updater signing key is present. Prereleases never overwrite `latest`.
+
+## Behavior matrix
+
+| Configuration           | GitHub packages           | Updater archives | R2 version folder | R2 `latest`                |
+| ----------------------- | ------------------------- | ---------------- | ----------------- | -------------------------- |
+| No secrets, prerelease  | unsigned                  | no               | skipped           | skipped                    |
+| Updater key, prerelease | platform signing optional | signed           | optional          | skipped                    |
+| R2 only, prerelease     | unsigned                  | no               | uploaded          | skipped                    |
+| Full signing, stable    | signed                    | signed           | optional          | updated when R2 is enabled |
+
+## Security properties
+
+- Workflow permissions default to `contents: read`; only the final Release job
+  receives `contents: write`.
+- Checkout credentials are not persisted.
+- Third-party actions are pinned to full commit SHAs.
+- Credentials are scoped to the detection or provider step that consumes them.
+- The workflow emits only boolean availability outputs, never secret values.
+- Prereleases cannot replace the stable R2 updater channel.
+
+Do not print, download, or add secret values to diagnostic output. Verify
+configured secret names through GitHub's metadata API or settings UI only.
