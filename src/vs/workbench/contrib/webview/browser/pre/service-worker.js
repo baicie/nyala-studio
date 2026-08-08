@@ -371,7 +371,7 @@ async function processResourceRequest(event, requestUrlComponents) {
 			headers['Cross-Origin-Opener-Policy'] = 'same-origin';
 		}
 
-		const response = new Response(entry.data, {
+		const response = new Response(new Uint8Array(entry.data), {
 			status: 200,
 			headers
 		});

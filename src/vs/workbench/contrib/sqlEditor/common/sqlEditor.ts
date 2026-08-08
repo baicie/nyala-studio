@@ -2,6 +2,8 @@
  * SQL Studio Next - SQL Editor constants.
  *--------------------------------------------------------------------------------------------*/
 
+import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
+
 export const SQL_EDITOR_INPUT_TYPE_ID = 'workbench.input.sqlStudio.query';
 export const SQL_EDITOR_PANE_ID = 'workbench.editor.sqlStudio.query';
 
@@ -11,7 +13,11 @@ export const SQL_NEW_QUERY_COMMAND_ID = 'sql.newQuery';
 export const SQL_EXECUTE_QUERY_COMMAND_ID = 'sql.executeQuery';
 export const SQL_EXECUTE_SELECTION_COMMAND_ID = 'sql.executeSelection';
 export const SQL_EXECUTE_CURRENT_STATEMENT_COMMAND_ID = 'sql.executeCurrentStatement';
+export const SQL_CANCEL_QUERY_COMMAND_ID = 'sql.cancelQuery';
 export const SQL_FORMAT_QUERY_COMMAND_ID = 'sql.formatQuery';
+
+export const SQL_EXECUTE_CURRENT_STATEMENT_KEYBINDING = KeyMod.CtrlCmd | KeyCode.Enter;
+export const SQL_EXECUTE_SELECTION_KEYBINDING = KeyMod.Shift | KeyCode.Enter;
 
 export const SQL_EDITOR_DEFAULT_QUERY = `-- Nyala Query
 SELECT 1 AS value;

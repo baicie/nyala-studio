@@ -1,0 +1,35 @@
+.sql-connector-brand {
+	width: 26px;
+	height: 26px;
+	flex: 0 0 auto;
+	display: block;
+	background-color: var(--sql-connector-brand-color);
+	mask-position: center;
+	mask-repeat: no-repeat;
+	mask-size: contain;
+}
+
+.sql-connector-brand--sqlite {
+	--sql-connector-brand-color: #0f80cc;
+	mask-image: url('./connectors/sqlite.svg');
+}
+
+.sql-connector-brand--mysql {
+	--sql-connector-brand-color: #e48e00;
+	mask-image: url('./connectors/mysql.svg');
+}
+
+.sql-connector-brand--postgresql {
+	--sql-connector-brand-color: #4b83d5;
+	mask-image: url('./connectors/postgresql.svg');
+}
+
+.sql-connector-delivery-badge {
+	height: 16px;
+	display: inline-flex;
+	align-items: center;
+	padding: 0 4px;
+	border: 1px solid var(--vscode-editorGroup-border);
+	color: var(--vscode-descriptionForeground);
+	font-size: 9px;
+}

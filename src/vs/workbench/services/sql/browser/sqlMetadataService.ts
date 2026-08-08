@@ -11,12 +11,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
-import {
-	ColumnDto,
-	ISqlMetadataService,
-	SchemataDto,
-	SchemaObjectDto,
-} from '../common/sqlMetadata.js';
+import { ColumnDto, ISqlMetadataService, SchemataDto, SchemaObjectDto } from '../common/sqlMetadata.js';
 import { SqlColumn, SqlDatabase, SqlListColumnsRequest, SqlTable } from '../common/sqlTypes.js';
 import { normalizeConnectionId, normalizeSqlListColumnsRequest } from '../common/sqlValidation.js';
 import { ISqlCommandExecutor, TauriSqlCommandExecutor, toSqlServiceError } from './sqlCommandExecutor.js';
@@ -40,6 +35,8 @@ export class SqlMetadataService extends Disposable implements ISqlMetadataServic
 	private readonly tablesCache = new Map<string, CacheEntry<SchemaObjectDto[]>>();
 	private readonly columnsCache = new Map<string, CacheEntry<ColumnDto[]>>();
 
+	constructor();
+	constructor(executor: ISqlCommandExecutor, options?: SqlMetadataServiceOptions);
 	constructor(
 		private readonly executor: ISqlCommandExecutor = new TauriSqlCommandExecutor(),
 		options: SqlMetadataServiceOptions = {}
@@ -95,16 +92,12 @@ export class SqlMetadataService extends Disposable implements ISqlMetadataServic
 		const key = normalized;
 		return this.cached(this.schemaCache, key, opts?.force, () =>
 			this.executor.execute<SchemataDto[]>('sql_list_schemas', { profileId: normalized })
-		).catch((err) => {
+		).catch(err => {
 			throw toSqlServiceError('sql_list_schemas', err);
 		});
 	}
 
-	async listTablesV2(
-		profileId: string,
-		schema: string,
-		opts?: { force?: boolean }
-	): Promise<SchemaObjectDto[]> {
+	async listTablesV2(profileId: string, schema: string, opts?: { force?: boolean }): Promise<SchemaObjectDto[]> {
 		const profile = this.normalizeProfileId(profileId);
 		const schemaName = this.normalizeSchema(schema);
 		const key = `${profile}|${schemaName}`;
@@ -113,7 +106,7 @@ export class SqlMetadataService extends Disposable implements ISqlMetadataServic
 				profileId: profile,
 				schema: schemaName
 			})
-		).catch((err) => {
+		).catch(err => {
 			throw toSqlServiceError('sql_list_tables_v2', err);
 		});
 	}
@@ -134,7 +127,7 @@ export class SqlMetadataService extends Disposable implements ISqlMetadataServic
 				schema: schemaName,
 				table: tableName
 			})
-		).catch((err) => {
+		).catch(err => {
 			throw toSqlServiceError('sql_list_columns_v2', err);
 		});
 	}

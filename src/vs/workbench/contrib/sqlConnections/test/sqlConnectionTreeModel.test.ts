@@ -182,17 +182,11 @@ test('connection node id matches encoded connection id convention', () => {
 });
 
 test('getConnectionNodeId escapes connection id', () => {
-	assert.equal(
-		getConnectionNodeId('local/db 1'),
-		'sql/connection/local%2Fdb%201'
-	);
+	assert.equal(getConnectionNodeId('local/db 1'), 'sql/connection/local%2Fdb%201');
 });
 
 test('getConnectionColumnsKeyPrefix matches table key prefix', () => {
-	assert.equal(
-		getConnectionColumnsKeyPrefix('local/db 1'),
-		'sql/connection/local%2Fdb%201/'
-	);
+	assert.equal(getConnectionColumnsKeyPrefix('local/db 1'), 'sql/connection/local%2Fdb%201/');
 });
 
 test('describeSqlConnectionKind returns driver label for each kind', () => {
@@ -308,10 +302,7 @@ test('SqlDriverAvailability catalog matches tree badge expectations', () => {
 });
 
 test('getDatabaseNodeId escapes special characters', () => {
-	assert.equal(
-		getDatabaseNodeId('local/db 1', 'app-db'),
-		'sql/connection/local%2Fdb%201/database/app-db'
-	);
+	assert.equal(getDatabaseNodeId('local/db 1', 'app-db'), 'sql/connection/local%2Fdb%201/database/app-db');
 });
 
 test('SQLite connection with explicit databases exposes database node with tables group', () => {
@@ -329,9 +320,7 @@ test('SQLite connection with explicit databases exposes database node with table
 			local: [{ name: 'main' }]
 		},
 		tablesByConnectionId: {
-			local: [
-				{ schema: 'main', name: 'users', tableType: SqlTableType.Table }
-			]
+			local: [{ schema: 'main', name: 'users', tableType: SqlTableType.Table }]
 		}
 	});
 
@@ -379,7 +368,9 @@ test('MySQL connection with explicit databases groups tables under schema', () =
 	const databases = connection.children ?? [];
 	assert.equal(databases.length, 2);
 
-	const appDatabase = databases.find(child => child.type === SqlConnectionTreeNodeType.Database && child.label === 'app');
+	const appDatabase = databases.find(
+		child => child.type === SqlConnectionTreeNodeType.Database && child.label === 'app'
+	);
 	assert.ok(appDatabase);
 	assert.equal(appDatabase?.description, 'schema');
 
@@ -436,9 +427,7 @@ test('Per-table column load error is isolated to the failed table', () => {
 			local: [usersTable, ordersTable]
 		},
 		columnsByTableId: {
-			[ordersKey]: [
-				{ name: 'id', ordinal: 0, notNull: true, primaryKey: true }
-			]
+			[ordersKey]: [{ name: 'id', ordinal: 0, notNull: true, primaryKey: true }]
 		},
 		errorsByTableId: {
 			[usersKey]: 'permission denied'
@@ -453,6 +442,7 @@ test('Per-table column load error is isolated to the failed table', () => {
 	assert.equal(failedTable?.children?.length, 1);
 	const failedChild = failedTable?.children?.[0];
 	assert.equal(failedChild?.type, SqlConnectionTreeNodeType.Error);
+	assert.equal(failedChild?.tableType, SqlTableType.Table);
 	assert.equal(failedChild?.label, 'Failed to load columns');
 	assert.match(failedChild?.description ?? '', /permission denied/);
 
@@ -500,9 +490,7 @@ test('MySQL derives database nodes from table schemas when database list is empt
 			mysql: [] as SqlDatabase[]
 		},
 		tablesByConnectionId: {
-			mysql: [
-				{ schema: 'app', name: 'users', tableType: SqlTableType.Table }
-			]
+			mysql: [{ schema: 'app', name: 'users', tableType: SqlTableType.Table }]
 		}
 	});
 

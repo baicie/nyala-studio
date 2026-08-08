@@ -2,17 +2,15 @@
  * SQL Studio Next - SQL Result pure model helpers.
  *--------------------------------------------------------------------------------------------*/
 
-import {
-	buildSqlResultGrid,
-	getSqlResultGridStatus,
-	SqlResultGrid
-} from './sqlResultGridModel.js';
+import { buildSqlResultGrid, getSqlResultGridStatus, SqlResultGrid } from './sqlResultGridModel.js';
 import { SqlCellKind, SqlCellValue, SqlQueryResult, SqlResultColumn } from '../../../services/sql/common/sqlTypes.js';
 import {
+	SqlEditorFailedStatement,
 	SqlEditorQueryCancelledEvent,
 	SqlEditorQueryCompletedEvent,
 	SqlEditorQueryFailedEvent,
-	SqlEditorQueryStartedEvent
+	SqlEditorQueryStartedEvent,
+	SqlEditorStatementResult
 } from '../../sqlEditor/common/sqlEditorEvents.js';
 import { SQL_RESULT_MAX_RENDER_ROWS } from './sqlResult.js';
 
@@ -50,7 +48,9 @@ export interface SqlResultSuccessState {
 export interface SqlResultErrorState {
 	kind: SqlResultStateKind.Error;
 	query: SqlResultQueryInfo;
+	errorCode?: string;
 	errorMessage: string;
+	errorDetail: string;
 }
 
 export interface SqlResultCancelledState {
@@ -60,11 +60,7 @@ export interface SqlResultCancelledState {
 }
 
 export type SqlResultState =
-	| SqlResultIdleState
-	| SqlResultRunningState
-	| SqlResultSuccessState
-	| SqlResultErrorState
-	| SqlResultCancelledState;
+	SqlResultIdleState | SqlResultRunningState | SqlResultSuccessState | SqlResultErrorState | SqlResultCancelledState;
 
 export interface SqlResultDisplayGrid {
 	columns: string[];
@@ -94,30 +90,35 @@ export function createRunningSqlResultState(event: SqlEditorQueryStartedEvent): 
 }
 
 export function createSuccessSqlResultState(event: SqlEditorQueryCompletedEvent): SqlResultSuccessState {
+	const finalStatement = event.statementResults?.[event.statementResults.length - 1];
 	return {
 		kind: SqlResultStateKind.Success,
 		query: {
 			editorId: event.editorId,
 			connectionId: event.connectionId,
-			sql: event.sql,
-			startedAt: event.startedAt,
-			completedAt: event.completedAt
+			sql: finalStatement?.sql ?? event.sql,
+			startedAt: finalStatement?.startedAt ?? event.startedAt,
+			completedAt: finalStatement?.completedAt ?? event.completedAt
 		},
-		result: event.result
+		result: finalStatement?.result ?? event.result
 	};
 }
 
 export function createErrorSqlResultState(event: SqlEditorQueryFailedEvent): SqlResultErrorState {
+	const failedStatement = event.failedStatement;
+	const error = normalizeSqlResultError(failedStatement?.error ?? event.error);
 	return {
 		kind: SqlResultStateKind.Error,
 		query: {
 			editorId: event.editorId,
 			connectionId: event.connectionId,
-			sql: event.sql,
-			startedAt: event.startedAt,
-			completedAt: event.completedAt
+			sql: failedStatement?.sql ?? event.sql,
+			startedAt: failedStatement?.startedAt ?? event.startedAt,
+			completedAt: failedStatement?.completedAt ?? event.completedAt
 		},
-		errorMessage: event.error.message
+		errorCode: error.code,
+		errorMessage: error.message,
+		errorDetail: error.detail
 	};
 }
 
@@ -144,7 +145,7 @@ export function getSqlResultSummary(state: SqlResultState): string {
 			return `Running query on ${state.query.connectionId}...`;
 
 		case SqlResultStateKind.Error:
-			return `Query failed: ${state.errorMessage}`;
+			return `Query failed${state.errorCode ? ` [${state.errorCode}]` : ''}: ${state.errorMessage}`;
 
 		case SqlResultStateKind.Cancelled:
 			return `Query cancelled: ${state.message}`;
@@ -248,10 +249,14 @@ export const enum SqlResultSnapshotKind {
 export interface SqlResultSnapshotBase {
 	readonly id: string;
 	readonly kind: SqlResultSnapshotKind;
+	readonly executionId?: string;
+	readonly statementIndex?: number;
+	readonly statementCount?: number;
 	readonly editorId: string;
 	readonly connectionId: string;
 	readonly sql: string;
 	readonly sqlPreview: string;
+	readonly startedAt: number;
 	readonly createdAt: number;
 	readonly title: string;
 }
@@ -265,6 +270,7 @@ export interface SqlResultSuccessSnapshot extends SqlResultSnapshotBase {
 
 export interface SqlResultErrorSnapshot extends SqlResultSnapshotBase {
 	readonly kind: SqlResultSnapshotKind.Error;
+	readonly errorCode?: string;
 	readonly errorMessage: string;
 	readonly detail: string;
 }
@@ -274,10 +280,7 @@ export interface SqlResultCancelledSnapshot extends SqlResultSnapshotBase {
 	readonly message: string;
 }
 
-export type SqlResultSnapshot =
-	| SqlResultSuccessSnapshot
-	| SqlResultErrorSnapshot
-	| SqlResultCancelledSnapshot;
+export type SqlResultSnapshot = SqlResultSuccessSnapshot | SqlResultErrorSnapshot | SqlResultCancelledSnapshot;
 
 export interface SqlResultPanelState {
 	readonly snapshots: readonly SqlResultSnapshot[];
@@ -290,22 +293,34 @@ export function createEmptySqlResultPanelState(): SqlResultPanelState {
 
 export function createSuccessResultSnapshot(options: {
 	readonly id: string;
+	readonly executionId?: string;
+	readonly statementIndex?: number;
+	readonly statementCount?: number;
 	readonly editorId: string;
 	readonly connectionId: string;
 	readonly sql: string;
 	readonly result: SqlQueryResult;
+	readonly startedAt?: number;
 	readonly createdAt: number;
 }): SqlResultSuccessSnapshot {
 	const grid = buildSqlResultGrid(options.result);
 	return {
 		id: options.id,
 		kind: SqlResultSnapshotKind.Success,
+		executionId: options.executionId,
+		statementIndex: options.statementIndex,
+		statementCount: options.statementCount,
 		editorId: options.editorId,
 		connectionId: options.connectionId,
 		sql: normalizeSnapshotSql(options.sql),
 		sqlPreview: createSqlResultPreview(options.sql),
+		startedAt: options.startedAt ?? options.createdAt,
 		createdAt: options.createdAt,
-		title: options.result.columns.length > 0 ? 'Query Result' : 'Statement Result',
+		title: formatStatementSnapshotTitle(
+			options.result.columns.length > 0 ? 'Query Result' : 'Statement Result',
+			options.statementIndex,
+			options.statementCount
+		),
 		result: options.result,
 		grid,
 		status: getSqlResultGridStatus(options.result, grid)
@@ -314,79 +329,133 @@ export function createSuccessResultSnapshot(options: {
 
 export function createErrorResultSnapshot(options: {
 	readonly id: string;
+	readonly executionId?: string;
+	readonly statementIndex?: number;
+	readonly statementCount?: number;
 	readonly editorId: string;
 	readonly connectionId: string;
 	readonly sql: string;
 	readonly error: unknown;
+	readonly startedAt?: number;
 	readonly createdAt: number;
 }): SqlResultErrorSnapshot {
-	const detail = normalizeSnapshotMessage(options.error);
+	const error = normalizeSqlResultError(options.error);
 	return {
 		id: options.id,
 		kind: SqlResultSnapshotKind.Error,
+		executionId: options.executionId,
+		statementIndex: options.statementIndex,
+		statementCount: options.statementCount,
 		editorId: options.editorId,
 		connectionId: options.connectionId,
 		sql: normalizeSnapshotSql(options.sql),
 		sqlPreview: createSqlResultPreview(options.sql),
+		startedAt: options.startedAt ?? options.createdAt,
 		createdAt: options.createdAt,
-		title: 'Query Error',
-		errorMessage: summarizeSnapshotMessage(detail),
-		detail
+		title: formatStatementSnapshotTitle('Query Error', options.statementIndex, options.statementCount),
+		errorCode: error.code,
+		errorMessage: error.message,
+		detail: error.detail
 	};
 }
 
 export function createCancelledResultSnapshot(options: {
 	readonly id: string;
+	readonly executionId?: string;
+	readonly statementIndex?: number;
+	readonly statementCount?: number;
 	readonly editorId: string;
 	readonly connectionId: string;
 	readonly sql: string;
 	readonly message: string;
+	readonly startedAt?: number;
 	readonly createdAt: number;
 }): SqlResultCancelledSnapshot {
 	return {
 		id: options.id,
 		kind: SqlResultSnapshotKind.Cancelled,
+		executionId: options.executionId,
+		statementIndex: options.statementIndex,
+		statementCount: options.statementCount,
 		editorId: options.editorId,
 		connectionId: options.connectionId,
 		sql: normalizeSnapshotSql(options.sql),
 		sqlPreview: createSqlResultPreview(options.sql),
+		startedAt: options.startedAt ?? options.createdAt,
 		createdAt: options.createdAt,
-		title: 'Query Cancelled',
+		title: formatStatementSnapshotTitle('Query Cancelled', options.statementIndex, options.statementCount),
 		message: options.message.trim() || 'Query was cancelled.'
 	};
 }
 
 export function createSuccessResultSnapshotFromEvent(event: SqlEditorQueryCompletedEvent): SqlResultSuccessSnapshot {
+	const finalStatement = event.statementResults?.[event.statementResults.length - 1];
+	if (finalStatement) {
+		return createSuccessResultSnapshotFromStatement(event, finalStatement);
+	}
+
 	return createSuccessResultSnapshot({
 		id: createResultSnapshotId(event.editorId, event.completedAt),
 		editorId: event.editorId,
 		connectionId: event.connectionId,
 		sql: event.sql,
 		result: event.result,
+		startedAt: event.startedAt,
 		createdAt: event.completedAt
 	});
 }
 
+export function createSuccessResultSnapshotsFromEvent(
+	event: SqlEditorQueryCompletedEvent | SqlEditorQueryFailedEvent | SqlEditorQueryCancelledEvent
+): SqlResultSuccessSnapshot[] {
+	return (event.statementResults ?? []).map(statement => createSuccessResultSnapshotFromStatement(event, statement));
+}
+
 export function createErrorResultSnapshotFromEvent(event: SqlEditorQueryFailedEvent): SqlResultErrorSnapshot {
+	if (event.failedStatement) {
+		return createErrorResultSnapshotFromFailedStatement(event, event.failedStatement);
+	}
+
 	return createErrorResultSnapshot({
-		id: createResultSnapshotId(event.editorId, event.completedAt),
+		id: event.executionId ? `${event.executionId}-error` : createResultSnapshotId(event.editorId, event.completedAt),
+		executionId: event.executionId,
 		editorId: event.editorId,
 		connectionId: event.connectionId,
 		sql: event.sql,
 		error: event.error,
+		startedAt: event.startedAt,
 		createdAt: event.completedAt
 	});
 }
 
-export function createCancelledResultSnapshotFromEvent(event: SqlEditorQueryCancelledEvent): SqlResultCancelledSnapshot {
+export function createCancelledResultSnapshotFromEvent(
+	event: SqlEditorQueryCancelledEvent
+): SqlResultCancelledSnapshot {
 	return createCancelledResultSnapshot({
-		id: createResultSnapshotId(event.editorId, event.completedAt),
+		id: event.executionId
+			? `${event.executionId}-cancelled`
+			: createResultSnapshotId(event.editorId, event.completedAt),
+		executionId: event.executionId,
 		editorId: event.editorId,
 		connectionId: event.connectionId,
 		sql: event.sql,
 		message: event.message,
+		startedAt: event.startedAt,
 		createdAt: event.completedAt
 	});
+}
+
+export function createSqlResultSnapshotsFromCompletedEvent(event: SqlEditorQueryCompletedEvent): SqlResultSnapshot[] {
+	const statements = createSuccessResultSnapshotsFromEvent(event);
+	return statements.length > 0 ? statements : [createSuccessResultSnapshotFromEvent(event)];
+}
+
+export function createSqlResultSnapshotsFromFailedEvent(event: SqlEditorQueryFailedEvent): SqlResultSnapshot[] {
+	return [...createSuccessResultSnapshotsFromEvent(event), createErrorResultSnapshotFromEvent(event)];
+}
+
+export function createSqlResultSnapshotsFromCancelledEvent(event: SqlEditorQueryCancelledEvent): SqlResultSnapshot[] {
+	return [...createSuccessResultSnapshotsFromEvent(event), createCancelledResultSnapshotFromEvent(event)];
 }
 
 export function addSqlResultSnapshot(
@@ -394,11 +463,48 @@ export function addSqlResultSnapshot(
 	snapshot: SqlResultSnapshot,
 	maxSnapshots = SQL_RESULT_MAX_SNAPSHOTS
 ): SqlResultPanelState {
+	return addSqlResultSnapshots(state, [snapshot], maxSnapshots);
+}
+
+export function addSqlResultSnapshots(
+	state: SqlResultPanelState,
+	snapshots: readonly SqlResultSnapshot[],
+	maxSnapshots = SQL_RESULT_MAX_SNAPSHOTS
+): SqlResultPanelState {
 	if (!Number.isInteger(maxSnapshots) || maxSnapshots <= 0) {
 		throw new Error('maxSnapshots must be a positive integer');
 	}
-	const snapshots = [snapshot, ...state.snapshots.filter(item => item.id !== snapshot.id)].slice(0, maxSnapshots);
-	return { snapshots, activeSnapshotId: snapshot.id };
+
+	const incoming = deduplicateSnapshots(snapshots);
+	if (incoming.length === 0) {
+		return state;
+	}
+
+	const incomingIds = new Set(incoming.map(snapshot => snapshot.id));
+	const incomingExecutionIds = new Set(
+		incoming.map(snapshot => snapshot.executionId).filter((value): value is string => Boolean(value))
+	);
+	const previous = state.snapshots.filter(
+		snapshot =>
+			!incomingIds.has(snapshot.id) && (!snapshot.executionId || !incomingExecutionIds.has(snapshot.executionId))
+	);
+	// Preserve the current execution in full, even when it alone exceeds the history limit.
+	const remainingCapacity = Math.max(0, maxSnapshots - incoming.length);
+	const retained = retainCompleteExecutions(previous, remainingCapacity);
+
+	return {
+		snapshots: [...incoming, ...retained],
+		activeSnapshotId: incoming[incoming.length - 1].id
+	};
+}
+
+export function activateSqlResultSnapshot(state: SqlResultPanelState, snapshotId: string): SqlResultPanelState {
+	const id = snapshotId.trim();
+	if (!id || state.activeSnapshotId === id || !state.snapshots.some(snapshot => snapshot.id === id)) {
+		return state;
+	}
+
+	return { ...state, activeSnapshotId: id };
 }
 
 export function removeSqlResultSnapshot(state: SqlResultPanelState, snapshotId: string): SqlResultPanelState {
@@ -417,6 +523,40 @@ export function getActiveSqlResultSnapshot(state: SqlResultPanelState): SqlResul
 	return state.snapshots.find(snapshot => snapshot.id === state.activeSnapshotId) ?? state.snapshots[0];
 }
 
+export function getSqlResultPanelContentState(state: SqlResultState, panelState: SqlResultPanelState): SqlResultState {
+	if (state.kind === SqlResultStateKind.Running) {
+		return state;
+	}
+
+	const snapshot = getActiveSqlResultSnapshot(panelState);
+	if (!snapshot) {
+		return state;
+	}
+
+	const query: SqlResultQueryInfo = {
+		editorId: snapshot.editorId,
+		connectionId: snapshot.connectionId,
+		sql: snapshot.sql,
+		startedAt: snapshot.startedAt,
+		completedAt: snapshot.createdAt
+	};
+
+	switch (snapshot.kind) {
+		case SqlResultSnapshotKind.Success:
+			return { kind: SqlResultStateKind.Success, query, result: snapshot.result };
+		case SqlResultSnapshotKind.Error:
+			return {
+				kind: SqlResultStateKind.Error,
+				query,
+				errorCode: snapshot.errorCode,
+				errorMessage: snapshot.errorMessage,
+				errorDetail: snapshot.detail
+			};
+		case SqlResultSnapshotKind.Cancelled:
+			return { kind: SqlResultStateKind.Cancelled, query, message: snapshot.message };
+	}
+}
+
 export function createSqlResultPreview(sql: string, maxLength = SQL_RESULT_SQL_PREVIEW_LENGTH): string {
 	const normalized = normalizeSnapshotSql(sql).replace(/\s+/g, ' ');
 	return normalized.length <= maxLength ? normalized : `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
@@ -430,12 +570,127 @@ function normalizeSnapshotSql(sql: string): string {
 	return typeof sql === 'string' ? sql.trim() : '';
 }
 
-function normalizeSnapshotMessage(error: unknown): string {
-	return error instanceof Error ? error.message || String(error) : String(error);
+function createSuccessResultSnapshotFromStatement(
+	event: SqlEditorQueryStartedEvent,
+	statement: SqlEditorStatementResult
+): SqlResultSuccessSnapshot {
+	return createSuccessResultSnapshot({
+		id: statement.resultId,
+		executionId: statement.executionId,
+		statementIndex: statement.statementIndex,
+		statementCount: statement.statementCount,
+		editorId: event.editorId,
+		connectionId: event.connectionId,
+		sql: statement.sql,
+		result: statement.result,
+		startedAt: statement.startedAt,
+		createdAt: statement.completedAt
+	});
+}
+
+function createErrorResultSnapshotFromFailedStatement(
+	event: SqlEditorQueryFailedEvent,
+	statement: SqlEditorFailedStatement
+): SqlResultErrorSnapshot {
+	return createErrorResultSnapshot({
+		id: statement.resultId,
+		executionId: statement.executionId,
+		statementIndex: statement.statementIndex,
+		statementCount: statement.statementCount,
+		editorId: event.editorId,
+		connectionId: event.connectionId,
+		sql: statement.sql,
+		error: statement.error,
+		startedAt: statement.startedAt,
+		createdAt: statement.completedAt
+	});
+}
+
+function formatStatementSnapshotTitle(base: string, statementIndex?: number, statementCount?: number): string {
+	return statementIndex !== undefined && statementCount !== undefined && statementCount > 1
+		? `${base} ${statementIndex + 1}/${statementCount}`
+		: base;
+}
+
+function deduplicateSnapshots(snapshots: readonly SqlResultSnapshot[]): SqlResultSnapshot[] {
+	const seen = new Set<string>();
+	return snapshots.filter(snapshot => {
+		if (seen.has(snapshot.id)) {
+			return false;
+		}
+		seen.add(snapshot.id);
+		return true;
+	});
+}
+
+function retainCompleteExecutions(snapshots: readonly SqlResultSnapshot[], capacity: number): SqlResultSnapshot[] {
+	if (capacity <= 0) {
+		return [];
+	}
+
+	const groups = new Map<string, SqlResultSnapshot[]>();
+	for (const snapshot of snapshots) {
+		const key = snapshot.executionId ?? snapshot.id;
+		const group = groups.get(key);
+		if (group) {
+			group.push(snapshot);
+		} else {
+			groups.set(key, [snapshot]);
+		}
+	}
+
+	const retained: SqlResultSnapshot[] = [];
+	for (const group of groups.values()) {
+		if (retained.length + group.length > capacity) {
+			break;
+		}
+		retained.push(...group);
+	}
+	return retained;
 }
 
 function summarizeSnapshotMessage(message: string): string {
-	return message.split(/\r?\n/).find(line => line.trim())?.trim() || 'Query failed.';
+	return (
+		message
+			.split(/\r?\n/)
+			.find(line => line.trim())
+			?.trim() || 'Query failed.'
+	);
+}
+
+function normalizeSqlResultError(error: unknown): {
+	readonly code?: string;
+	readonly message: string;
+	readonly detail: string;
+} {
+	const candidate = toErrorRecord(error);
+	const cause = toErrorRecord(candidate?.cause);
+	const rawMessage = error instanceof Error ? error.message : (readNonEmptyString(candidate?.message) ?? String(error));
+	const normalizedMessage = rawMessage.trim();
+	const backendDetail = readNonEmptyString(candidate?.detail) ?? readNonEmptyString(cause?.detail);
+	const detailParts = [normalizedMessage, backendDetail].filter(
+		(value, index, values): value is string => Boolean(value) && values.indexOf(value) === index
+	);
+	const detail = detailParts.join('\n') || 'Query failed.';
+	const code = readNonEmptyString(candidate?.code) ?? readNonEmptyString(cause?.code);
+
+	return {
+		code,
+		message: summarizeSnapshotMessage(normalizedMessage || detail),
+		detail
+	};
+}
+
+function toErrorRecord(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined;
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+	if (typeof value !== 'string') {
+		return undefined;
+	}
+	const normalized = value.trim();
+	return normalized || undefined;
 }
 
 function hashEditorId(value: string): string {

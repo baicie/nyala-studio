@@ -2,6 +2,10 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
+    println!("cargo:rerun-if-changed=icons/icon.ico");
+    println!("cargo:rerun-if-changed=icons/icon.png");
+    println!("cargo:rerun-if-changed=icons/icon.icns");
+
     let scripts_src = Path::new("../src/vs/workbench/contrib/terminal/common/scripts");
     let scripts_dst = Path::new("shell-integration");
 

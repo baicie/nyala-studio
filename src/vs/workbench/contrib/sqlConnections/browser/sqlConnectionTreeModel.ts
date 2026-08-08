@@ -61,16 +61,24 @@ export type TreeNode = DatasourceNode | SchemaNode | TableNode;
 export class SqlConnectionTreeModel extends Disposable {
 	declare readonly _brand: 'SqlConnectionTreeModel';
 	private readonly _onDidChange = this._register(new Emitter<void>());
-	private nodes: TreeNode[] = [];
+	private nodes: DatasourceNode[] = [];
 
 	constructor(
 		private readonly connections: ISqlConnectionServiceV2,
 		private readonly metadata: ISqlMetadataService,
-		private readonly catalog: ISqlDriverCatalogService,
+		private readonly catalog: ISqlDriverCatalogService
 	) {
 		super();
-		this._register(this.connections.onChange(() => { void this.rebuild(); }));
-		this._register(this.catalog.onChange(() => { void this.rebuild(); }));
+		this._register(
+			this.connections.onChange(() => {
+				void this.rebuild();
+			})
+		);
+		this._register(
+			this.catalog.onChange(() => {
+				void this.rebuild();
+			})
+		);
 	}
 
 	readonly onDidChange = this._onDidChange.event;
@@ -78,7 +86,7 @@ export class SqlConnectionTreeModel extends Disposable {
 	async rebuild(): Promise<void> {
 		const list = await this.connections.list();
 		this.nodes = list
-			.filter((c) => {
+			.filter(c => {
 				try {
 					const status = this.catalog.findRuntimeStatus(c.profile.driver)?.status;
 					return status !== 'planned' && status !== 'disabled';
@@ -86,12 +94,12 @@ export class SqlConnectionTreeModel extends Disposable {
 					return true;
 				}
 			})
-			.map<DatasourceNode>((c) => ({
+			.map<DatasourceNode>(c => ({
 				kind: 'datasource',
 				profileId: c.profile.id,
 				label: c.profile.label,
 				state: { kind: 'idle' },
-				schemas: [],
+				schemas: []
 			}));
 		this._onDidChange.fire();
 	}
@@ -105,12 +113,12 @@ export class SqlConnectionTreeModel extends Disposable {
 		this._onDidChange.fire();
 		try {
 			const schemas = await this.metadata.listSchemas(profileId);
-			node.schemas = schemas.map<SchemaNode>((s) => ({
+			node.schemas = schemas.map<SchemaNode>(s => ({
 				kind: 'schema',
 				profileId,
 				schema: s.schema,
 				state: { kind: 'idle' },
-				tables: [],
+				tables: []
 			}));
 			node.state = { kind: 'loaded', at: Date.now() };
 		} catch (error) {
@@ -124,7 +132,7 @@ export class SqlConnectionTreeModel extends Disposable {
 		if (!ds) {
 			return;
 		}
-		const node = ds.schemas.find((s) => s.schema === schema);
+		const node = ds.schemas.find(s => s.schema === schema);
 		if (!node) {
 			return;
 		}
@@ -132,7 +140,7 @@ export class SqlConnectionTreeModel extends Disposable {
 		this._onDidChange.fire();
 		try {
 			const tables = await this.metadata.listTablesV2(profileId, schema);
-			node.tables = tables.map<TableNode>((t) => ({
+			node.tables = tables.map<TableNode>(t => ({
 				kind: 'table',
 				profileId,
 				schema,
@@ -140,7 +148,7 @@ export class SqlConnectionTreeModel extends Disposable {
 				objectKind: t.kind === 'view' ? 'view' : 'table',
 				state: { kind: 'idle' },
 				columns: [],
-				primaryKey: [...t.primaryKey],
+				primaryKey: [...t.primaryKey]
 			}));
 			node.state = { kind: 'loaded', at: Date.now() };
 		} catch (error) {
@@ -151,8 +159,8 @@ export class SqlConnectionTreeModel extends Disposable {
 
 	async expandTable(profileId: string, schema: string, table: string): Promise<void> {
 		const ds = this.findDatasource(profileId);
-		const sn = ds?.schemas.find((s) => s.schema === schema);
-		const tn = sn?.tables.find((t) => t.table === table);
+		const sn = ds?.schemas.find(s => s.schema === schema);
+		const tn = sn?.tables.find(t => t.table === table);
 		if (!tn) {
 			return;
 		}
@@ -182,7 +190,7 @@ export class SqlConnectionTreeModel extends Disposable {
 		}
 	}
 
-	list(): readonly TreeNode[] {
+	list(): readonly DatasourceNode[] {
 		return this.nodes;
 	}
 

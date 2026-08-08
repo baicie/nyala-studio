@@ -3,10 +3,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { MysqlPreviewValidationController } from '../browser/mysqlValidationView.js';
 import { SqlSslMode } from '../../../services/sql/common/sqlTypes.js';
+
+const connectionEditorSource = readFileSync(new URL('../browser/sqlConnectionEditorPane.ts', import.meta.url), 'utf8');
 
 class FakeProductService {
 	readonly calls: Array<{ input: unknown; secret: unknown }> = [];
@@ -92,4 +95,18 @@ test('validate preserves structured service errors', async () => {
 		code: 'ddl_failed',
 		message: 'DDL denied'
 	});
+});
+
+test('MySQL Validate is visible beside Test and Connect instead of inside Advanced', () => {
+	const advancedStart = connectionEditorSource.indexOf('const advancedBody');
+	const footerStart = connectionEditorSource.indexOf('const footer', advancedStart);
+	const actionsStart = connectionEditorSource.indexOf('const actions', footerStart);
+	const listenersStart = connectionEditorSource.indexOf('this.registerFormListeners()', actionsStart);
+	const advancedSource = connectionEditorSource.slice(advancedStart, footerStart);
+	const actionSource = connectionEditorSource.slice(actionsStart, listenersStart);
+
+	assert.doesNotMatch(advancedSource, /this\.validateButton\s*=\s*append/);
+	assert.ok(actionSource.indexOf('this.testButton = append') < actionSource.indexOf('this.validateButton = append'));
+	assert.ok(actionSource.indexOf('this.validateButton = append') < actionSource.indexOf('this.connectButton = append'));
+	assert.match(connectionEditorSource, /this\.validateButton\.hidden\s*=\s*!isMysql/);
 });

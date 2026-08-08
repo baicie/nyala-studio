@@ -12,6 +12,7 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
+import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
@@ -32,8 +33,14 @@ import {
 } from '../../../common/views.js';
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import { IViewsService } from '../../../services/views/common/viewsService.js';
+import { IEditorPaneRegistry, EditorPaneDescriptor } from '../../../browser/editor.js';
+import { EditorExtensions } from '../../../common/editor.js';
 import { SqlConnectionsView } from './sqlConnectionsView.js';
-import type { SqlSavedConnection } from '../../../services/sql/common/sqlTypes.js';
+import { SqlConnectionKind, type SqlSavedConnection } from '../../../services/sql/common/sqlTypes.js';
+import { ISqlConnectionDialogService } from '../../../services/sql/common/sqlConnectionDialog.js';
+import { SqlConnectionEditorInput } from '../../../services/sql/common/sqlConnectionEditorInput.js';
+import { SqlConnectionDialogService } from './sqlConnectionDialogService.js';
+import { SqlConnectionEditorPane } from './sqlConnectionEditorPane.js';
 import { openNewSqlDataSourceForm, openSavedSqlDataSourceForm } from '../common/sqlConnectionNavigation.js';
 import {
 	SQL_CONNECTIONS_FOCUS_COMMAND_ID,
@@ -62,10 +69,8 @@ class SqlAddConnectionAction extends Action2 {
 		});
 	}
 
-	override async run(accessor: ServicesAccessor): Promise<void> {
-		await openNewSqlDataSourceForm((viewId, focus) =>
-			accessor.get(IViewsService).openView<SqlConnectionsView>(viewId, focus)
-		);
+	override async run(accessor: ServicesAccessor, kind: SqlConnectionKind = SqlConnectionKind.Sqlite): Promise<void> {
+		await openNewSqlDataSourceForm(accessor.get(ISqlConnectionDialogService), kind);
 	}
 }
 
@@ -79,10 +84,7 @@ class SqlOpenSavedConnectionAction extends Action2 {
 	}
 
 	override async run(accessor: ServicesAccessor, saved?: SqlSavedConnection): Promise<void> {
-		await openSavedSqlDataSourceForm(
-			(viewId, focus) => accessor.get(IViewsService).openView<SqlConnectionsView>(viewId, focus),
-			saved
-		);
+		await openSavedSqlDataSourceForm(accessor.get(ISqlConnectionDialogService), saved);
 	}
 }
 
@@ -232,6 +234,17 @@ viewsRegistry.registerViews(
 	],
 	SQL_CONNECTORS_VIEW_CONTAINER
 );
+
+Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
+	EditorPaneDescriptor.create(
+		SqlConnectionEditorPane,
+		SqlConnectionEditorPane.ID,
+		localize('sqlConnectionEditor', 'Data Source')
+	),
+	[new SyncDescriptor(SqlConnectionEditorInput)]
+);
+
+registerSingleton(ISqlConnectionDialogService, SqlConnectionDialogService, InstantiationType.Delayed);
 
 registerAction2(SqlAddConnectionAction);
 registerAction2(SqlOpenSavedConnectionAction);

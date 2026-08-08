@@ -39,11 +39,15 @@ pub struct SqlConnectionInput {
     pub password: Option<String>,
     pub ssl_mode: Option<SqlSslMode>,
 
-    #[serde(default)]
+    #[serde(default = "default_read_only")]
     pub read_only: bool,
 
     #[serde(default)]
     pub create_if_missing: bool,
+}
+
+fn default_read_only() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,7 +148,7 @@ pub struct SqlRestoreSavedConnectionsResult {
 pub struct SqlConnectionTestResult {
     pub ok: bool,
     pub connection: Option<SqlConnection>,
-    pub error: Option<String>,
+    pub error: Option<SqlCommandError>,
 }
 
 impl SqlConnectionTestResult {
@@ -156,11 +160,11 @@ impl SqlConnectionTestResult {
         }
     }
 
-    pub fn error(error: impl Into<String>) -> Self {
+    pub fn error(error: SqlCommandError) -> Self {
         Self {
             ok: false,
             connection: None,
-            error: Some(error.into()),
+            error: Some(error),
         }
     }
 }
@@ -392,6 +396,7 @@ impl ConnectionSecret {
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum SqlCommandError {
     DriverNotAvailable { message: String },
+    DriverPackage { message: String },
     UnknownDriver { message: String },
     OpenFailed { message: String },
     NotOpen { message: String },
@@ -403,6 +408,7 @@ pub enum SqlCommandError {
     InsertFailed { message: String },
     SelectFailed { message: String },
     DropFailed { message: String },
+    QueryFailed { message: String },
     Internal { message: String },
 }
 
@@ -410,6 +416,9 @@ impl SqlCommandError {
     pub fn new(code: &str, message: impl Into<String>) -> Self {
         match code {
             "driver_not_available" => SqlCommandError::DriverNotAvailable {
+                message: message.into(),
+            },
+            "driver_package" => SqlCommandError::DriverPackage {
                 message: message.into(),
             },
             "unknown_driver" => SqlCommandError::UnknownDriver {
@@ -445,6 +454,9 @@ impl SqlCommandError {
             "drop_failed" => SqlCommandError::DropFailed {
                 message: message.into(),
             },
+            "query_failed" => SqlCommandError::QueryFailed {
+                message: message.into(),
+            },
             _ => SqlCommandError::Internal {
                 message: message.into(),
             },
@@ -456,6 +468,7 @@ impl SqlCommandError {
         let suffix = suffix.as_ref();
         match &mut self {
             SqlCommandError::DriverNotAvailable { message }
+            | SqlCommandError::DriverPackage { message }
             | SqlCommandError::UnknownDriver { message }
             | SqlCommandError::OpenFailed { message }
             | SqlCommandError::NotOpen { message }
@@ -467,6 +480,7 @@ impl SqlCommandError {
             | SqlCommandError::InsertFailed { message }
             | SqlCommandError::SelectFailed { message }
             | SqlCommandError::DropFailed { message }
+            | SqlCommandError::QueryFailed { message }
             | SqlCommandError::Internal { message } => message.push_str(suffix),
         }
         self
@@ -477,6 +491,7 @@ impl std::fmt::Display for SqlCommandError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SqlCommandError::DriverNotAvailable { message }
+            | SqlCommandError::DriverPackage { message }
             | SqlCommandError::UnknownDriver { message }
             | SqlCommandError::OpenFailed { message }
             | SqlCommandError::NotOpen { message }
@@ -488,6 +503,7 @@ impl std::fmt::Display for SqlCommandError {
             | SqlCommandError::InsertFailed { message }
             | SqlCommandError::SelectFailed { message }
             | SqlCommandError::DropFailed { message }
+            | SqlCommandError::QueryFailed { message }
             | SqlCommandError::Internal { message } => write!(f, "{message}"),
         }
     }
@@ -617,6 +633,18 @@ mod phase01_tests {
         .unwrap();
 
         assert_eq!(input.kind, SqlConnectionKind::MySql);
+        assert!(!input.read_only);
+    }
+
+    #[test]
+    fn connection_input_defaults_to_read_only_when_wire_flag_is_omitted() {
+        let input: SqlConnectionInput = serde_json::from_value(serde_json::json!({
+            "kind": "sqlite",
+            "databasePath": ":memory:"
+        }))
+        .unwrap();
+
+        assert!(input.read_only);
     }
 
     #[test]
@@ -724,6 +752,7 @@ mod phase01_tests {
             "insert_failed",
             "select_failed",
             "drop_failed",
+            "query_failed",
         ] {
             let value = serde_json::to_value(SqlCommandError::new(code, "boom")).unwrap();
             assert_eq!(value["code"], code);
@@ -742,5 +771,17 @@ mod phase01_tests {
             json["message"],
             "insert denied; temporary table cleanup failed"
         );
+    }
+
+    #[test]
+    fn connection_test_error_serializes_structured_code_and_message() {
+        let result = SqlConnectionTestResult::error(SqlCommandError::new(
+            "connection_failed",
+            "Authentication rejected",
+        ));
+        let json = serde_json::to_value(result).unwrap();
+
+        assert_eq!(json["error"]["code"], "connection_failed");
+        assert_eq!(json["error"]["message"], "Authentication rejected");
     }
 }

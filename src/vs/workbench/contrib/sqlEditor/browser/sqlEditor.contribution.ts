@@ -9,7 +9,7 @@ import { SyncDescriptor } from '../../../../platform/instantiation/common/descri
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { EditorExtensions } from '../../../common/editor.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
-import { Extensions as WorkbenchExtensions, IWorkbenchContributionsRegistry, WorkbenchPhase } from '../../../common/contributions.js';
+import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { ISqlEditorDraftService, SqlEditorDraftService } from '../common/sqlEditorDraftService.js';
 import { ISqlEditorEventService, SqlEditorEventService } from '../common/sqlEditorEvents.js';
 import { SQL_EDITOR_PANE_ID } from '../common/sqlEditor.js';
@@ -26,7 +26,7 @@ Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane
 	[new SyncDescriptor(SqlEditorInput)]
 );
 
-Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).registerWorkbenchContribution2(
+registerWorkbenchContribution2(
 	'workbench.contrib.sqlEditorDraftRestore',
 	SqlEditorDraftRestoreContribution,
 	WorkbenchPhase.AfterRestored

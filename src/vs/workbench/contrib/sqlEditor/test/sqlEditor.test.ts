@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
+
 import {
 	createExecutePayload,
 	canLoadSqlEditorConnections,
@@ -16,7 +18,9 @@ import {
 	SQL_EDITOR_DEFAULT_QUERY,
 	SQL_EDITOR_INPUT_TYPE_ID,
 	SQL_EDITOR_PANE_ID,
-	SQL_EDITOR_SCHEME
+	SQL_EDITOR_SCHEME,
+	SQL_EXECUTE_CURRENT_STATEMENT_KEYBINDING,
+	SQL_EXECUTE_SELECTION_KEYBINDING
 } from '../common/sqlEditor.js';
 import { SqlEditorEventService } from '../common/sqlEditorEvents.js';
 import { EditorInputCapabilities } from '../../../common/editor.js';
@@ -27,6 +31,11 @@ test('normalizeSqlEditorOptions fills id and default sql', () => {
 	assert.equal(normalized.id, 'query-1');
 	assert.equal(normalized.initialSql, SQL_EDITOR_DEFAULT_QUERY);
 	assert.equal(normalized.connectionId, undefined);
+});
+
+test('SQL editor execution shortcuts follow the Phase 03 scope contract', () => {
+	assert.equal(SQL_EXECUTE_CURRENT_STATEMENT_KEYBINDING, KeyMod.CtrlCmd | KeyCode.Enter);
+	assert.equal(SQL_EXECUTE_SELECTION_KEYBINDING, KeyMod.Shift | KeyCode.Enter);
 });
 
 test('normalizeSqlEditorOptions trims connection metadata', () => {

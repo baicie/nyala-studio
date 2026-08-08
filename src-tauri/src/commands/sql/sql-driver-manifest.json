@@ -1,0 +1,30 @@
+{
+	"manifestVersion": 1,
+	"publicKey": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+	"signature": "Ev6zV41QPhTOIIUY6wvb1pV0VX4rjNt/mZa/SWnAqQ8ktmWi+wOeZg/wvpoEaB/vmx9oqXAs6Wy9dOhu2Rj6DA==",
+	"payload": {
+		"manifestVersion": 1,
+		"packages": [
+			{
+				"id": "mysql-jdbc",
+				"driverId": "mysql",
+				"displayName": "MySQL Connector/J",
+				"version": "9.3.0",
+				"fileName": "mysql-connector-j-9.3.0.jar",
+				"url": "https://repo.maven.apache.org/maven2/com/mysql/mysql-connector-j/9.3.0/mysql-connector-j-9.3.0.jar",
+				"sha256": "6c8e6692b521376d89bc5618c16cdeaf8c61854329f4fa25677ed08776c5bb76",
+				"sizeBytes": 2593726
+			},
+			{
+				"id": "postgresql-jdbc",
+				"driverId": "postgres",
+				"displayName": "PostgreSQL JDBC Driver",
+				"version": "42.7.8",
+				"fileName": "postgresql-42.7.8.jar",
+				"url": "https://repo.maven.apache.org/maven2/org/postgresql/postgresql/42.7.8/postgresql-42.7.8.jar",
+				"sha256": "2a32a9dcbc42d67a50ad3a0de5efd102c8d2be46720045f2cbd6689f160ab7c7",
+				"sizeBytes": 1116727
+			}
+		]
+	}
+}

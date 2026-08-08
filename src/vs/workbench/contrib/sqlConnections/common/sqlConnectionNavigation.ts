@@ -2,37 +2,32 @@
  * Nyala Studio - SQL connection navigation orchestration.
  *--------------------------------------------------------------------------------------------*/
 
-import type { SqlSavedConnection } from '../../../services/sql/common/sqlTypes.js';
-import {
-	SQL_CONNECTIONS_REFRESH_COMMAND_ID,
-	SQL_CONNECTORS_OPEN_SAVED_COMMAND_ID,
-	SQL_CONNECTORS_VIEW_ID
-} from './sqlConnections.js';
+import { SqlConnectionKind, type SqlSavedConnection } from '../../../services/sql/common/sqlTypes.js';
+import { SQL_CONNECTIONS_REFRESH_COMMAND_ID, SQL_CONNECTORS_OPEN_SAVED_COMMAND_ID } from './sqlConnections.js';
 
-export interface SqlConnectionFormView {
-	openConnectionForm(): void;
-	openSavedConnectionForm(saved: SqlSavedConnection): void;
+export interface SqlConnectionDialogNavigation {
+	openNew(kind?: SqlConnectionKind): Promise<void>;
+	openSaved(saved: SqlSavedConnection): Promise<void>;
 }
-
-export type OpenSqlConnectionView = (viewId: string, focus: boolean) => Promise<SqlConnectionFormView | null>;
 
 export type ExecuteSqlConnectionCommand = (commandId: string, ...args: unknown[]) => Promise<unknown>;
 
-export async function openNewSqlDataSourceForm(openView: OpenSqlConnectionView): Promise<void> {
-	const view = await openView(SQL_CONNECTORS_VIEW_ID, true);
-	view?.openConnectionForm();
+export async function openNewSqlDataSourceForm(
+	dialog: SqlConnectionDialogNavigation,
+	kind: SqlConnectionKind = SqlConnectionKind.Sqlite
+): Promise<void> {
+	await dialog.openNew(kind);
 }
 
 export async function openSavedSqlDataSourceForm(
-	openView: OpenSqlConnectionView,
+	dialog: SqlConnectionDialogNavigation,
 	saved: SqlSavedConnection | undefined
 ): Promise<void> {
 	if (!saved) {
 		return;
 	}
 
-	const view = await openView(SQL_CONNECTORS_VIEW_ID, true);
-	view?.openSavedConnectionForm(saved);
+	await dialog.openSaved(saved);
 }
 
 export async function refreshDataSourcesAfterConnection(

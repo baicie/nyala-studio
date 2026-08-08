@@ -1,6 +1,8 @@
 mod commands;
 pub(crate) mod product;
 pub mod runtime_status;
+#[cfg(target_os = "windows")]
+mod windows_icon;
 
 use commands::db_state::SidexDbState;
 use commands::debug::{DapClientStore, DebugAdapterStore};
@@ -374,7 +376,7 @@ pub fn run() {
         log::warn!("V2 SQL connection profiles could not be restored: {error}");
     }
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(UpdateManagerState::new())
@@ -445,6 +447,26 @@ pub fn run() {
                         .unwrap(),
                 );
             });
+        })
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "windows")]
+            if matches!(event, tauri::WindowEvent::ScaleFactorChanged { .. }) {
+                if let Err(error) = windows_icon::refresh_window_icons(window) {
+                    log::warn!("Windows window icons could not be refreshed: {error}");
+                }
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            let _ = (window, event);
+        })
+        .on_page_load(|webview, _payload| {
+            #[cfg(target_os = "windows")]
+            if let Err(error) = windows_icon::refresh_window_icons(&webview.window()) {
+                log::warn!("Windows window icons could not be finalized: {error}");
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            let _ = webview;
         })
         .setup(|app| {
             let app_data = app
@@ -669,10 +691,12 @@ pub fn run() {
             // Nyala database bridge
             commands::sql_test_connection,
             commands::sql_open_connection,
+            commands::sql_replace_connection,
             commands::sql_close_connection,
             commands::sql_list_connections,
             commands::sql_list_databases,
             commands::sql_save_connection,
+            commands::sql_save_and_open_connection,
             commands::sql_list_saved_connections,
             commands::sql_remove_saved_connection,
             commands::sql_restore_saved_connections,
@@ -682,6 +706,8 @@ pub fn run() {
             commands::sql_cancel_query,
             commands::sql_list_driver_runtime_status,
             commands::sql_assert_driver_runtime_status,
+            commands::sql_list_driver_packages,
+            commands::sql_download_driver,
             // Phase 08 - MVP Packaging
             commands::sql_bootstrap_demo,
             commands::sql_validate_mysql_preview,
@@ -912,6 +938,20 @@ pub fn run() {
             // Menu i18n
             commands::update_menu_labels,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    app.run(|app_handle, event| {
+        #[cfg(target_os = "windows")]
+        if matches!(event, tauri::RunEvent::Ready) {
+            if let Some(window) = app_handle.get_webview_window("main") {
+                if let Err(error) = windows_icon::set_webview_icons(&window) {
+                    log::warn!("Windows window icons could not be initialized: {error}");
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        let _ = (app_handle, event);
+    });
 }

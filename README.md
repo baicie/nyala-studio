@@ -27,6 +27,12 @@ Runtime driver status:
 | MySQL      | Preview    | Connection, metadata and query execution are enabled for local/dev validation. Query cancellation is not supported yet. |
 | PostgreSQL | Planned    | Protocol fields exist, but the runtime driver is not enabled yet.                                                       |
 
+The connector manager can cache the signed MySQL Connector/J and PostgreSQL
+JDBC packages for future runtime integrations. Package installation is kept
+separate from runtime maturity: downloading PostgreSQL does not enable its
+planned connection runtime, and MySQL connections continue to use the native
+Preview driver.
+
 The immediate MVP target is:
 
 ```txt
@@ -175,7 +181,7 @@ pnpm run test
 
 `pnpm run test` is a chain that runs the branding and application-icon guards,
 the runtime status consistency check, the demo data-directory suite, the Rust
-`cargo test --lib` suite (currently 176 passing tests plus 2 ignored live
+`cargo test --lib` suite (currently 199 passing tests plus 2 ignored live
 integration test), the Tauri search cancellation suite, and every
 per-subsystem frontend suite (`test:icons`, `test:seed-demo`, `test:search`,
 `test:sql-services`, `test:sql-domain`, `test:sql-connections`,

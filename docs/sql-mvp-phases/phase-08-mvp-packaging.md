@@ -85,19 +85,30 @@ Demo action 通过 `ISqlProductService.bootstrapDemo()` 访问 Tauri command；�
 - SQLite File / In-memory 模式；
 - SQLite、MySQL、disabled PostgreSQL 的 connector 选择；
 - Test / Validate / Connect 三个明确动作；
+- MySQL Connector/J 与 PostgreSQL JDBC 包显示 signed manifest 版本、缓存状态并支持显式下载；下载只缓存包，不改变 runtime status，也不会提前启用 PostgreSQL；
 - host / port / database / username 实时必填与端口校验（password 可选）、busy guard、窄侧栏响应式布局；
 - 所有操作结束后清空 password；
 - 保存 MySQL 时复用已打开连接的 id，保存失败会 best-effort 关闭刚打开的连接。
 
-### 2.6 Welcome Flow
+### 2.6 Driver Package Boundary
+
+驱动包清单内置在 Tauri 二进制资源中，使用固定 Ed25519 公钥验证；每个包还必须满足固定 HTTPS host、路径组件、大小与 SHA-256 校验。下载先写入 `.part` 文件，校验通过后再安装到：
+
+```txt
+<app_data_dir>/sql-drivers/<package>/<version>/<file>
+```
+
+`sql_list_driver_packages` 只把大小与 SHA-256 均匹配的缓存标记为 `installed`。这个状态与 `sql_list_driver_runtime_status` 独立：当前 MySQL 使用 Rust native runtime，PostgreSQL runtime 仍为 Planned，JDBC 缓存不会绕过连接页的 runtime guard。
+
+### 2.7 Welcome Flow
 
 Welcome 已实现为注册在 SQL Results container 的 `SqlProductWelcomePane`，四个 action 分别路由到 Demo、打开 Connectors 中的 New data source 表单、History 与 Command Palette。首次启动默认打开；`Add a connection` 会聚焦并展开 Connectors 表单，而不是只聚焦容器。
 
-### 2.7 README 与 Release Gate
+### 2.8 README 与 Release Gate
 
 Root `README.md` 记录 SQLite Demo Flow、完整本地 release commands 与 opt-in MySQL integration。CI 通过 `.github/workflows/sql-mvp-gate.yml` 在 `mvp` 的 push 与以 `mvp` 为目标的 PR 上执行同一套 pnpm/Rust gate；`release.yml` 在跨平台打包前调用该 reusable workflow。MySQL live flow 仅在手动 opt-in 时启动隔离 MySQL service。
 
-### 2.8 主要实现文件
+### 2.9 主要实现文件
 
 ```txt
 scripts/seed-demo-db.mjs
@@ -108,7 +119,13 @@ src/vs/workbench/services/sql/common/sqlProduct.ts
 src/vs/workbench/services/sql/browser/sqlProductService.ts
 src/vs/workbench/contrib/sqlConnections/browser/sqlConnections.contribution.ts
 src/vs/workbench/contrib/sqlConnections/browser/sqlConnectionsView.ts
+src/vs/workbench/contrib/sqlConnections/browser/sqlConnectionEditorPane.ts
+src/vs/workbench/contrib/sqlConnections/browser/driverPackageBadge.ts
 src/vs/workbench/contrib/sqlConnections/common/sqlConnections.ts
+src/vs/workbench/services/sql/common/sqlDriverPackages.ts
+src/vs/workbench/services/sql/browser/sqlDriverPackageService.ts
+src-tauri/src/commands/sql/driver_packages.rs
+src-tauri/src/commands/sql/sql-driver-manifest.json
 src/vs/workbench/contrib/sqlConnections/browser/mysqlValidationView.ts
 src/vs/workbench/contrib/sqlConnections/common/sqlConnectionSubmission.ts
 src/vs/workbench/contrib/sqlProduct/browser/sqlProductBootstrap.ts
@@ -118,22 +135,23 @@ src/vs/workbench/contrib/sqlProduct/browser/sqlProductWelcomePane.ts
 
 ## 3. 自动化验证
 
-2026-07-27 当前工作树的定向结果：
+2026-08-08 当前工作树的定向结果：
 
-| 检查                                | 结果                 | 覆盖重点                                                                                                 |
-| ----------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------- |
-| `pnpm run test:seed-demo`           | 7/7                  | 平台数据目录解析，以及重复 seed 保留与 seed 同值的用户订单                                               |
-| `cargo test --lib demo_seed`        | 6/6                  | seed、幂等复用、用户订单保留、V2 open、V1 查询                                                           |
-| `cargo test --lib mysql_validation` | 9 passed / 2 ignored | 输入、端口、TLS、共享网络超时、唯一表名、错误 code、清理失败告警；live contract 默认忽略                  |
-| `pnpm run test:search`              | 2/2                  | Tauri search cancellation race                                                                           |
-| `pnpm run test:sql-services`        | 69/69                | Product service、错误映射、driver catalog、V2 连接刷新事件                                               |
-| `pnpm run test:sql-connections`     | 117/117              | Connect form、strict refresh、保存同 id、失败清理、validation、Data Sources / Connectors navigation      |
-| `pnpm run test:sql-result`          | 58/58                | 结果模型、复制、状态与稀疏数值列可见性                                                                   |
-| `pnpm run test:sql-history`         | 28/28                | History 模型、服务、ViewPane 生命周期                                                                    |
-| `pnpm run test:sql-product`         | 65/65                | first-launch plan、Welcome、startup splash、zoom                                                         |
-| `pnpm run test`                     | exit 0               | 默认完整回归：branding、runtime status、Rust 176 passed / 2 ignored、Search 2/2 与全部 SQL 前端 suites   |
+| 检查                                | 结果                 | 覆盖重点                                                                                                               |
+| ----------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `pnpm run test:seed-demo`           | 7/7                  | 平台数据目录解析，以及重复 seed 保留与 seed 同值的用户订单                                                             |
+| `cargo test --lib demo_seed`        | 6/6                  | seed、幂等复用、用户订单保留、V2 open、V1 查询                                                                         |
+| `cargo test --lib mysql_validation` | 9 passed / 2 ignored | 输入、端口、TLS、共享网络超时、唯一表名、错误 code、清理失败告警；live contract 默认忽略                               |
+| `pnpm run test:search`              | 2/2                  | Tauri search cancellation race                                                                                         |
+| `pnpm run test:sql-services`        | 86/86                | Product service、错误映射、driver catalog/package service、V2 连接刷新事件、connector runtime guard                    |
+| `pnpm run test:sql-connections`     | 155/155              | Connect form、structured errors、strict refresh、保存同 id、失败清理、validation、Data Sources / Connectors navigation |
+| `pnpm run test:sql-editor`          | 73/73                | all / selection / current、多语句执行、取消与 MySQL/SQLite 语句边界                                                    |
+| `pnpm run test:sql-result`          | 77/77                | 结果模型、单元格/行/列/全表复制、状态与稀疏数值列可见性                                                                |
+| `pnpm run test:sql-history`         | 29/29                | History 模型、服务、ViewPane 生命周期                                                                                  |
+| `pnpm run test:sql-product`         | 65/65                | first-launch plan、Welcome、startup splash、zoom                                                                       |
+| `pnpm run test`                     | exit 0               | 默认完整回归：branding、icons、runtime status、Rust 199 passed / 2 ignored、Search 2/2 与全部 SQL 前端 suites          |
 
-本轮还完成了 `pnpm run lint`、`pnpm run build`、`pnpm run rust:check` 与 `pnpm run rust:clippy`，均 exit 0。`pnpm run rust:fmt` 在本机因未触碰文件的既有 Windows 换行基线问题返回 exit 1，未运行 `rust:fmt:fix` 以避免改写与本次文档记录无关的文件。live MySQL 仍为 opt-in，不计入默认单元测试通过数。
+本轮还完成了 `pnpm run lint`、`pnpm run build`、`pnpm run rust:check`、`pnpm run rust:clippy` 与 `pnpm run rust:fmt`，均 exit 0。全仓 `pnpm run format:check` 仍因 154 个既有 vendor/upstream 基线文件返回 exit 1；本次变更的 TypeScript/JavaScript/JSON 文件已单独通过 Prettier check。live MySQL 仍为 opt-in，不计入默认单元测试通过数。
 
 隔离 MySQL 8 live validation（2026-07-27）exit 0：
 
@@ -156,14 +174,16 @@ Windows/Tauri 原生走查（2026-07-26）exit 0：
 - [x] `cargo test --lib demo_seed` 6/6 通过；
 - [x] `cargo test --lib mysql_validation` 9 passed / 2 ignored；
 - [x] `pnpm run test:sql-product` 65/65 通过；
-- [x] `pnpm run test:sql-connections` 117/117 通过；
-- [x] `pnpm run test:sql-result` 58/58 通过；
+- [x] `pnpm run test:sql-connections` 155/155 通过；
+- [x] `pnpm run test:sql-editor` 73/73 通过；
+- [x] `pnpm run test:sql-result` 77/77 通过；
 - [x] Rust bootstrap 测试验证 Demo 同时进入 V1/V2，且 V1 查询 `users` 返回 5；
 - [x] CI/release workflow 强制执行 pnpm + Rust gate，并提供 live MySQL opt-in；
 - [x] 启动 Nyala Studio，自动出现 `Demo (SQLite)` 连接与 `users / orders`；
 - [x] 跑 `SELECT COUNT(*) FROM users` 返回 5；
 - [x] 跑 `SELECT u.name, o.amount FROM users u JOIN orders o ON u.id=o.user_id` 在 panel 出现 5 行；
 - [x] 连接页 `MysqlPreviewValidationController` 覆盖 MySQL Preview Validate 的字段与瞬时 secret 转发；隔离 MySQL 8 上的同一 Tauri command 返回成功报告与 cancellation warning（2026-07-27）。
+- [x] 连接器管理页与连接表单展示 signed driver package 状态，并可通过服务调用受信任包下载；下载结果不会提升 PostgreSQL runtime maturity。
 - [ ] 选择 MySQL Preview 并填 host/port/database/username（账户需要时填写 password），点 Validate，live MySQL 返回成功报告与 cancellation warning；已有相同 command 的 live contract 记录，尚缺原生 WebView 点击证据。
 
 ## 5. 风险
@@ -173,7 +193,7 @@ Windows/Tauri 原生走查（2026-07-26）exit 0：
 | Demo db 被意外覆盖          | Tauri bootstrap 只做幂等 seed，不删除已有文件；30 天刷新仅存在于显式运行的 Node helper。                       |
 | V1/V2 profile 漂移          | 两边使用稳定 id `demo-sqlite`，bootstrap 幂等测试同时检查两个 store。                                          |
 | MySQL validation 留下临时表 | 表名使用 pid + sequence；成功必须完成 DROP，失败路径执行 best-effort `DROP TABLE IF EXISTS` 并保留结构化错误。 |
-| Require TLS 的本地证书信任 | `Require` 保持 Rustls 证书链与主机名校验；使用自签名 MySQL 时需提供受信任 CA 的环境验证，不以降低校验替代。 |
+| Require TLS 的本地证书信任  | `Require` 保持 Rustls 证书链与主机名校验；使用自签名 MySQL 时需提供受信任 CA 的环境验证，不以降低校验替代。    |
 | Welcome 抢编辑器焦点        | 仅首次启动默认出现，可通过 product preference 关闭；bootstrap 全部成功后才写完成标记。                         |
 | MySQL Preview 取消不支持    | UI 持续展示 cancellation warning，默认 release gate 不把 live MySQL 当作普通单测。                             |
 

@@ -34,6 +34,15 @@ export interface SqlStatementRange {
 	readonly sql: string;
 }
 
+export interface SqlEditorToolbarState {
+	readonly canExecuteStatement: boolean;
+	readonly canExecuteSelection: boolean;
+	readonly canExecuteAll: boolean;
+	readonly canFormat: boolean;
+	readonly canChangeConnection: boolean;
+	readonly canCancel: boolean;
+}
+
 export function normalizeSqlEditorOptions(
 	options: SqlEditorOptions,
 	defaultSql: string,
@@ -116,19 +125,70 @@ export function findSqlStatementAtOffset(sql: string, offset: number): SqlStatem
 		break;
 	}
 
-	return trimStatementRange(sql, start, end);
+	const statement = trimStatementRange(sql, start, end);
+	if (statement.sql) {
+		return statement;
+	}
+
+	const statements = splitSqlStatements(sql);
+	return statements[statements.length - 1] ?? statement;
+}
+
+export function splitSqlStatements(sql: string): SqlStatementRange[] {
+	if (typeof sql !== 'string') {
+		throw new Error('sql must be a string');
+	}
+
+	const statements: SqlStatementRange[] = [];
+	let start = 0;
+
+	for (const boundary of findStatementBoundaries(sql)) {
+		const statement = trimStatementRange(sql, start, boundary);
+		if (statement.sql) {
+			statements.push(statement);
+		}
+		start = boundary + 1;
+	}
+
+	const tail = trimStatementRange(sql, start, sql.length);
+	if (tail.sql) {
+		statements.push(tail);
+	}
+
+	return statements;
 }
 
 export function getSqlEditorStatusLabel(options: {
 	readonly connectionId?: string;
 	readonly connectionName?: string;
+	readonly readOnly?: boolean;
 	readonly dirty?: boolean;
 	readonly running?: boolean;
 }): string {
 	const connection = options.connectionName ?? options.connectionId ?? 'No connection';
 	const state = options.running ? 'Running' : options.dirty ? 'Draft saved' : 'Ready';
+	const mode = options.readOnly === undefined ? undefined : options.readOnly ? 'Read-only' : 'Write mode';
 
-	return `${state} · ${connection}`;
+	return [state, connection, mode].filter(Boolean).join(' · ');
+}
+
+export function getSqlEditorToolbarState(options: {
+	readonly hasConnection: boolean;
+	readonly hasConnections: boolean;
+	readonly hasSelection: boolean;
+	readonly running: boolean;
+	readonly canCancel: boolean;
+}): SqlEditorToolbarState {
+	const canExecute = options.hasConnection && !options.running;
+
+	return {
+		canExecuteStatement: canExecute,
+		canExecuteSelection: canExecute && options.hasSelection,
+		canExecuteAll: canExecute,
+		canFormat: !options.running,
+		canChangeConnection: options.hasConnections && !options.running,
+		canCancel: options.running && options.canCancel
+	};
 }
 
 export function createFormatterPlaceholderResult(sql: string): string {
@@ -140,6 +200,8 @@ function findStatementBoundaries(sql: string): number[] {
 
 	let inSingleQuote = false;
 	let inDoubleQuote = false;
+	let inBacktickIdentifier = false;
+	let inBracketIdentifier = false;
 	let inLineComment = false;
 	let inBlockComment = false;
 
@@ -163,6 +225,11 @@ function findStatementBoundaries(sql: string): number[] {
 		}
 
 		if (inSingleQuote) {
+			if (char === '\\') {
+				index++;
+				continue;
+			}
+
 			if (char === "'" && next === "'") {
 				index++;
 				continue;
@@ -176,6 +243,11 @@ function findStatementBoundaries(sql: string): number[] {
 		}
 
 		if (inDoubleQuote) {
+			if (char === '\\') {
+				index++;
+				continue;
+			}
+
 			if (char === '"' && next === '"') {
 				index++;
 				continue;
@@ -188,9 +260,37 @@ function findStatementBoundaries(sql: string): number[] {
 			continue;
 		}
 
-		if (char === '-' && next === '-') {
+		if (inBacktickIdentifier) {
+			if (char === '`' && next === '`') {
+				index++;
+				continue;
+			}
+
+			if (char === '`') {
+				inBacktickIdentifier = false;
+			}
+
+			continue;
+		}
+
+		if (inBracketIdentifier) {
+			if (char === ']' && next === ']') {
+				index++;
+				continue;
+			}
+
+			if (char === ']') {
+				inBracketIdentifier = false;
+			}
+
+			continue;
+		}
+
+		if (char === '#' || (char === '-' && next === '-')) {
 			inLineComment = true;
-			index++;
+			if (char === '-') {
+				index++;
+			}
 			continue;
 		}
 
@@ -207,6 +307,16 @@ function findStatementBoundaries(sql: string): number[] {
 
 		if (char === '"') {
 			inDoubleQuote = true;
+			continue;
+		}
+
+		if (char === '`') {
+			inBacktickIdentifier = true;
+			continue;
+		}
+
+		if (char === '[') {
+			inBracketIdentifier = true;
 			continue;
 		}
 

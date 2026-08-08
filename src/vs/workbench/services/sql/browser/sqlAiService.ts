@@ -26,6 +26,8 @@ import {
 export class SqlAiService implements ISqlAiService {
 	declare readonly _serviceBrand: undefined;
 
+	constructor();
+	constructor(provider: ISqlAiProvider);
 	constructor(private readonly provider: ISqlAiProvider = new DeterministicSqlAiProvider()) {}
 
 	async complete(request: SqlAiRequest): Promise<SqlAiResponse> {

@@ -2,17 +2,16 @@
  * SQL Studio Next - SQL Result service.
  *
  * The service owns two parallel state shapes:
- *   - `state` / `onDidChangeResult` describe the in-flight query
- *     (Idle / Running / Success / Error / Cancelled). The Result View
- *     renders it directly as the live indicator.
+ *   - `state` / `onDidChangeResult` describe the live query lifecycle
+ *     (Idle / Running / Success / Error / Cancelled). Running state takes
+ *     display priority over terminal snapshots.
  *   - `panelState` / `onDidChangePanelState` describe the history of
  *     terminal queries (Success / Error / Cancelled snapshots, capped
- *     to SQL_RESULT_MAX_SNAPSHOTS). The Result View renders it as a
- *     history list with the latest entry active.
+ *     to SQL_RESULT_MAX_SNAPSHOTS). Its active snapshot drives terminal
+ *     content in the Result View.
  *
- * Both states are updated together on every terminal event so the
- * live indicator and the history list never disagree about which
- * query just finished.
+ * Terminal events update both states together. Explicit snapshot activation
+ * changes only panel state so users can inspect an older result.
  *--------------------------------------------------------------------------------------------*/
 
 import { Emitter, Event } from '../../../../base/common/event.js';
@@ -25,18 +24,20 @@ import {
 	SqlEditorQueryStartedEvent
 } from '../../sqlEditor/common/sqlEditorEvents.js';
 import {
-	addSqlResultSnapshot,
-	createCancelledResultSnapshotFromEvent,
+	activateSqlResultSnapshot,
+	addSqlResultSnapshots,
 	createCancelledSqlResultState,
 	createEmptySqlResultPanelState,
-	createErrorResultSnapshotFromEvent,
 	createErrorSqlResultState,
 	createIdleSqlResultState,
 	createRunningSqlResultState,
-	createSuccessResultSnapshotFromEvent,
+	createSqlResultSnapshotsFromCancelledEvent,
+	createSqlResultSnapshotsFromCompletedEvent,
+	createSqlResultSnapshotsFromFailedEvent,
 	createSuccessSqlResultState,
 	removeSqlResultSnapshot,
 	SqlResultPanelState,
+	SqlResultRunningState,
 	SqlResultSnapshot,
 	SqlResultState
 } from './sqlResultModel.js';
@@ -56,6 +57,7 @@ export interface ISqlResultService {
 	setSuccess(event: SqlEditorQueryCompletedEvent): void;
 	setError(event: SqlEditorQueryFailedEvent): void;
 	setCancelled(event: SqlEditorQueryCancelledEvent): void;
+	activateSnapshot(snapshotId: string): void;
 	removeSnapshot(snapshotId: string): void;
 	clear(): void;
 }
@@ -65,6 +67,7 @@ export class SqlResultService extends Disposable implements ISqlResultService {
 
 	private _state: SqlResultState = createIdleSqlResultState();
 	private _panelState: SqlResultPanelState = createEmptySqlResultPanelState();
+	private readonly runningStates = new Map<string, SqlResultRunningState>();
 
 	private readonly _onDidChangeResult = this._register(new Emitter<SqlResultState>());
 	readonly onDidChangeResult = this._onDidChangeResult.event;
@@ -81,22 +84,33 @@ export class SqlResultService extends Disposable implements ISqlResultService {
 	}
 
 	setRunning(event: SqlEditorQueryStartedEvent): void {
-		this.setState(createRunningSqlResultState(event));
+		const state = createRunningSqlResultState(event);
+		const key = getQueryEventKey(event);
+		this.runningStates.delete(key);
+		this.runningStates.set(key, state);
+		this.setState(state);
 	}
 
 	setSuccess(event: SqlEditorQueryCompletedEvent): void {
-		this.setState(createSuccessSqlResultState(event));
-		this.addSnapshot(createSuccessResultSnapshotFromEvent(event));
+		this.setTerminalState(event, createSuccessSqlResultState(event));
+		this.addSnapshots(createSqlResultSnapshotsFromCompletedEvent(event));
 	}
 
 	setError(event: SqlEditorQueryFailedEvent): void {
-		this.setState(createErrorSqlResultState(event));
-		this.addSnapshot(createErrorResultSnapshotFromEvent(event));
+		this.setTerminalState(event, createErrorSqlResultState(event));
+		this.addSnapshots(createSqlResultSnapshotsFromFailedEvent(event));
 	}
 
 	setCancelled(event: SqlEditorQueryCancelledEvent): void {
-		this.setState(createCancelledSqlResultState(event));
-		this.addSnapshot(createCancelledResultSnapshotFromEvent(event));
+		this.setTerminalState(event, createCancelledSqlResultState(event));
+		this.addSnapshots(createSqlResultSnapshotsFromCancelledEvent(event));
+	}
+
+	activateSnapshot(snapshotId: string): void {
+		const panelState = activateSqlResultSnapshot(this._panelState, snapshotId);
+		if (panelState !== this._panelState) {
+			this.setPanelState(panelState);
+		}
 	}
 
 	removeSnapshot(snapshotId: string): void {
@@ -104,12 +118,24 @@ export class SqlResultService extends Disposable implements ISqlResultService {
 	}
 
 	clear(): void {
+		this.runningStates.clear();
 		this.setState(createIdleSqlResultState());
 		this.setPanelState(createEmptySqlResultPanelState());
 	}
 
-	private addSnapshot(snapshot: SqlResultSnapshot): void {
-		this.setPanelState(addSqlResultSnapshot(this._panelState, snapshot));
+	private addSnapshots(snapshots: readonly SqlResultSnapshot[]): void {
+		this.setPanelState(addSqlResultSnapshots(this._panelState, snapshots));
+	}
+
+	private setTerminalState(event: SqlEditorQueryStartedEvent, terminalState: SqlResultState): void {
+		this.runningStates.delete(getQueryEventKey(event));
+
+		let latestRunningState: SqlResultRunningState | undefined;
+		for (const runningState of this.runningStates.values()) {
+			latestRunningState = runningState;
+		}
+
+		this.setState(latestRunningState ?? terminalState);
 	}
 
 	private setState(state: SqlResultState): void {
@@ -121,4 +147,8 @@ export class SqlResultService extends Disposable implements ISqlResultService {
 		this._panelState = state;
 		this._onDidChangePanelState.fire(state);
 	}
+}
+
+function getQueryEventKey(event: SqlEditorQueryStartedEvent): string {
+	return `${event.editorId}\0${event.startedAt}`;
 }

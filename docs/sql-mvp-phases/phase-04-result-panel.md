@@ -836,7 +836,7 @@ mod tests {
 | SQLite 不暴露 column type 于 prepare | 在 DTO 上写 UNKNOWN；Phase 09 后接 PG/MySQL 用真 type；本期不暴露 UI 反向影响。 |
 | `rusqlite::Statement::execute` 返回类型是 `Result<usize, ...>` | 我们用 mutate path 表达 affected 数；如果未来 driver 接入其 own mechanism，DriverRowSet 设计不变。 |
 | Blob 显示可读性差 | 不解析；用 `BLOB(Nb64)` 显示，与其他 database 工具一致。 |
-| 多 statement 中首个 SELECT 后跟 INSERT 时的双结果集 | Phase 04 已用 outcome kind enum 区分；UI 多 result 的 tab 在后续 Phase 04.5 引入（不在本 Phase）。
+| 多 statement 中首个 SELECT 后跟 INSERT 时的双结果集 | 执行控制器按顺序累积 `statementResults[]`；Result Service 按批次原子展开并保留每条 `resultId`，失败/取消保留此前成功结果，最后结果自动激活。Query History 仍按一次批量执行保存一条记录。
 
 ## 6. 与下游接口
 
@@ -848,7 +848,7 @@ mod tests {
 
 - 真有 columns/rows/affected/elapsed/error 四种 outcome；
 - 真有 NULL 显示、truncation 提示；
-- 真有 copy cell/row/column/table；
+- 真有 copy cell/row/all，并支持 CSV/TSV 两种表格格式；
 - 真有 wire format 兼容前端 camelCase。
 
 ## 8. 实现状态说明（与 §2 / §3 的偏差）
@@ -885,6 +885,8 @@ Phase 04 实装在 §1 列范围内的所有目标都已完成，但与 §2 / §
 - **Snapshot history**：最多 20 条 `SqlResultSnapshot`，包含 success / error / cancelled 三种。Panel 渲染为可点击切换的 history list。doc §1 列为"不在范围"，但因 Phase 04 与 Phase 05 history service 共享 state，由 Phase 04 提前提供。
 - **`SqlResultView`** 是真 `ViewPane`，不是 §2.5 的 stub。包括 toolbar（Copy Cell / Copy Row / Copy CSV / Copy TSV / Clear）、status bar、history list、grid 选中、cancellation message、truncation banner。
 - **`SqlResultBridgeContribution`** 串起 `ISqlEditorEventService` ↔ `ISqlResultService`，监听 Started / Completed / Failed / Cancelled 四个事件。
+- **多 statement 结果**：一次执行使用一个 execution identity，`statementResults[]` 保留顺序、SQL、耗时和唯一 `resultId`；同批结果逐项进入 history，当前批次不会被 20 条上限截断。
+- **可访问性与窄面板**：结果 toolbar 在受限宽度下换行，history listbox 使用唯一 `tabIndex=0` 的 active option，支持 Enter/Space、ArrowUp/ArrowDown、Home/End，并在重绘后恢复焦点。
 
 ### 8.5 验证命令汇总
 
@@ -893,8 +895,8 @@ pnpm run lint                              # exit 0
 pnpm run build                             # exit 0
 pnpm run rust:check                        # exit 0
 pnpm run rust:clippy                       # exit 0
-pnpm run test:sql-result                   # 57/57 pass
-pnpm run test:sql-services                 # 62/62 pass
-pnpm run test:sql-editor                   # 59/59 pass
+pnpm run test:sql-result                   # 74/74 pass
+pnpm run test:sql-services                 # 78/78 pass
+pnpm run test:sql-editor                   # 68/68 pass
 cd src-tauri && cargo test sql             # 119/119 pass
 ```

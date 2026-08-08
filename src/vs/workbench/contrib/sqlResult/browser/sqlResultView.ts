@@ -5,7 +5,9 @@
 import './media/sqlResult.css';
 
 import { $, addDisposableListener, append, clearNode, EventType } from '../../../../base/browser/dom.js';
+import { Codicon } from '../../../../base/common/codicons.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
 import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
@@ -19,9 +21,9 @@ import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPan
 import { IViewDescriptorService } from '../../../common/views.js';
 import {
 	getActiveSqlResultSnapshot,
+	getSqlResultPanelContentState,
 	getSqlResultSummary,
 	SqlResultPanelState,
-	SqlResultSnapshot,
 	SqlResultSnapshotKind,
 	SqlResultState,
 	SqlResultStateKind
@@ -45,7 +47,8 @@ export class SqlResultView extends ViewPane {
 	static readonly ID = SQL_RESULT_VIEW_ID;
 	static readonly NAME = localize('sqlResultViewName', 'Results');
 
-	private readonly renderDisposables = this._register(new DisposableStore());
+	private readonly contentRenderDisposables = this._register(new DisposableStore());
+	private readonly historyRenderDisposables = this._register(new DisposableStore());
 
 	private container!: HTMLElement;
 	private toolbarElement!: HTMLElement;
@@ -55,15 +58,15 @@ export class SqlResultView extends ViewPane {
 	private historyElement!: HTMLElement;
 	private copyCellButton!: HTMLButtonElement;
 	private copyRowButton!: HTMLButtonElement;
+	private copyColumnButton!: HTMLButtonElement;
 	private copyCsvButton!: HTMLButtonElement;
 	private copyTsvButton!: HTMLButtonElement;
 	private clearButton!: HTMLButtonElement;
 
 	private currentGrid: SqlResultGrid | undefined;
-	private currentSnapshots: readonly SqlResultSnapshot[] = [];
-	private activeSnapshotId: string | undefined;
 	private selectedCell: SqlResultCellAddress | undefined;
 	private selectedCellElement: HTMLElement | undefined;
+	private readonly historyItemElements = new Map<string, HTMLElement>();
 
 	constructor(
 		options: IViewPaneOptions,
@@ -93,6 +96,11 @@ export class SqlResultView extends ViewPane {
 		);
 	}
 
+	override dispose(): void {
+		this.historyItemElements.clear();
+		super.dispose();
+	}
+
 	protected override renderBody(container: HTMLElement): void {
 		this.container = append(container, $('.sql-result-view'));
 		this.toolbarElement = append(this.container, $('.sql-result-toolbar'));
@@ -107,6 +115,11 @@ export class SqlResultView extends ViewPane {
 		this.copyRowButton = append(
 			this.toolbarElement,
 			$('button.sql-result-button', { type: 'button', title: 'Copy selected row as TSV' }, 'Copy Row')
+		) as HTMLButtonElement;
+
+		this.copyColumnButton = append(
+			this.toolbarElement,
+			$('button.sql-result-button', { type: 'button', title: 'Copy selected column as TSV' }, 'Copy Column')
 		) as HTMLButtonElement;
 
 		this.copyCsvButton = append(
@@ -130,29 +143,41 @@ export class SqlResultView extends ViewPane {
 
 		this._register(
 			addDisposableListener(this.copyCellButton, EventType.CLICK, () => {
-				this.copySelection(SqlResultCopyMode.Cell, SqlResultCopyFormat.Tsv)
-					.catch(error => this.setStatus(toCopyErrorMessage(error)));
+				this.copySelection(SqlResultCopyMode.Cell, SqlResultCopyFormat.Tsv).catch(error =>
+					this.setStatus(toCopyErrorMessage(error))
+				);
 			})
 		);
 
 		this._register(
 			addDisposableListener(this.copyRowButton, EventType.CLICK, () => {
-				this.copySelection(SqlResultCopyMode.Row, SqlResultCopyFormat.Tsv)
-					.catch(error => this.setStatus(toCopyErrorMessage(error)));
+				this.copySelection(SqlResultCopyMode.Row, SqlResultCopyFormat.Tsv).catch(error =>
+					this.setStatus(toCopyErrorMessage(error))
+				);
+			})
+		);
+
+		this._register(
+			addDisposableListener(this.copyColumnButton, EventType.CLICK, () => {
+				this.copySelection(SqlResultCopyMode.Column, SqlResultCopyFormat.Tsv).catch(error =>
+					this.setStatus(toCopyErrorMessage(error))
+				);
 			})
 		);
 
 		this._register(
 			addDisposableListener(this.copyCsvButton, EventType.CLICK, () => {
-				this.copySelection(SqlResultCopyMode.All, SqlResultCopyFormat.Csv)
-					.catch(error => this.setStatus(toCopyErrorMessage(error)));
+				this.copySelection(SqlResultCopyMode.All, SqlResultCopyFormat.Csv).catch(error =>
+					this.setStatus(toCopyErrorMessage(error))
+				);
 			})
 		);
 
 		this._register(
 			addDisposableListener(this.copyTsvButton, EventType.CLICK, () => {
-				this.copySelection(SqlResultCopyMode.All, SqlResultCopyFormat.Tsv)
-					.catch(error => this.setStatus(toCopyErrorMessage(error)));
+				this.copySelection(SqlResultCopyMode.All, SqlResultCopyFormat.Tsv).catch(error =>
+					this.setStatus(toCopyErrorMessage(error))
+				);
 			})
 		);
 
@@ -162,10 +187,15 @@ export class SqlResultView extends ViewPane {
 			})
 		);
 
-		this._register(this.sqlResultService.onDidChangeResult(state => this.renderState(state)));
-		this._register(this.sqlResultService.onDidChangePanelState(state => this.renderPanelState(state)));
-		this._register(this.preferencesService.onDidChangePreferences(() => this.renderState(this.sqlResultService.state)));
-		this.renderState(this.sqlResultService.state);
+		this._register(this.sqlResultService.onDidChangeResult(() => this.renderCurrentContent()));
+		this._register(
+			this.sqlResultService.onDidChangePanelState(state => {
+				this.renderPanelState(state);
+				this.renderCurrentContent();
+			})
+		);
+		this._register(this.preferencesService.onDidChangePreferences(() => this.renderCurrentContent()));
+		this.renderCurrentContent();
 		this.renderPanelState(this.sqlResultService.panelState);
 	}
 
@@ -175,7 +205,7 @@ export class SqlResultView extends ViewPane {
 	}
 
 	private renderState(state: SqlResultState): void {
-		this.renderDisposables.clear();
+		this.contentRenderDisposables.clear();
 		clearNode(this.contentElement);
 
 		this.currentGrid = undefined;
@@ -197,12 +227,12 @@ export class SqlResultView extends ViewPane {
 
 			case SqlResultStateKind.Error:
 				this.renderError(state);
-				this.setStatus('Query failed.');
+				this.setStatus(getTerminalStatus('Query failed', state.query, state.errorCode));
 				break;
 
 			case SqlResultStateKind.Cancelled:
 				this.renderCancelled(state);
-				this.setStatus('Query cancelled.');
+				this.setStatus(getTerminalStatus('Query cancelled', state.query));
 				break;
 
 			case SqlResultStateKind.Success:
@@ -218,23 +248,36 @@ export class SqlResultView extends ViewPane {
 	}
 
 	private renderPanelState(state: SqlResultPanelState): void {
-		this.renderDisposables.clear();
+		this.historyRenderDisposables.clear();
+		this.historyItemElements.clear();
 		clearNode(this.historyElement);
 
-		this.currentSnapshots = state.snapshots;
-		this.activeSnapshotId = getActiveSqlResultSnapshot(state)?.id;
+		const activeSnapshotId = getActiveSqlResultSnapshot(state)?.id;
 
 		if (state.snapshots.length === 0) {
 			return;
 		}
 
-		append(this.historyElement, $('div.sql-result-history-title', undefined, 'History'));
+		append(this.historyElement, $('div.sql-result-history-heading', undefined, 'Results'));
 
-		const list = append(this.historyElement, $('ul.sql-result-history-list'));
+		const list = append(
+			this.historyElement,
+			$('ul.sql-result-history-list', { role: 'listbox', 'aria-label': 'Query results' })
+		);
 
 		for (const snapshot of state.snapshots) {
-			const item = append(list, $('li.sql-result-history-item', { 'data-snapshot-id': snapshot.id }));
-			if (snapshot.id === this.activeSnapshotId) {
+			const isActive = snapshot.id === activeSnapshotId;
+			const item = append(
+				list,
+				$('li.sql-result-history-item', {
+					'data-snapshot-id': snapshot.id,
+					role: 'option',
+					tabIndex: isActive ? 0 : -1,
+					'aria-selected': String(isActive)
+				})
+			);
+			this.historyItemElements.set(snapshot.id, item);
+			if (isActive) {
 				item.classList.add('active');
 			}
 			item.classList.add(`kind-${snapshot.kind}`);
@@ -245,21 +288,63 @@ export class SqlResultView extends ViewPane {
 
 			const removeButton = append(
 				item,
-				$('button.sql-result-history-remove', { type: 'button', title: 'Remove from history' }, '×')
+				$('button.sql-result-history-remove', {
+					type: 'button',
+					title: 'Remove from history',
+					'aria-label': `Remove ${snapshot.title} from history`
+				})
 			) as HTMLButtonElement;
+			removeButton.classList.add(...ThemeIcon.asClassName(Codicon.close).split(' '));
 
-			this.renderDisposables.add(
+			this.historyRenderDisposables.add(
 				addDisposableListener(removeButton, EventType.CLICK, event => {
 					event.stopPropagation();
 					this.sqlResultService.removeSnapshot(snapshot.id);
 				})
 			);
 
-			this.renderDisposables.add(
+			this.historyRenderDisposables.add(
 				addDisposableListener(item, EventType.CLICK, () => {
-					this.activeSnapshotId = snapshot.id;
-					this.renderPanelState(this.sqlResultService.panelState);
-					this.setStatus(`Activated snapshot ${snapshot.title}.`);
+					this.sqlResultService.activateSnapshot(snapshot.id);
+				})
+			);
+
+			this.historyRenderDisposables.add(
+				addDisposableListener(item, EventType.KEY_DOWN, event => {
+					if (event.target !== item) {
+						return;
+					}
+
+					let targetIndex: number | undefined;
+					switch (event.key) {
+						case 'ArrowUp':
+							targetIndex = Math.max(0, state.snapshots.indexOf(snapshot) - 1);
+							break;
+						case 'ArrowDown':
+							targetIndex = Math.min(state.snapshots.length - 1, state.snapshots.indexOf(snapshot) + 1);
+							break;
+						case 'Home':
+							targetIndex = 0;
+							break;
+						case 'End':
+							targetIndex = state.snapshots.length - 1;
+							break;
+						case 'Enter':
+						case ' ':
+							this.sqlResultService.activateSnapshot(snapshot.id);
+							this.historyItemElements.get(snapshot.id)?.focus();
+							event.preventDefault();
+							return;
+						default:
+							return;
+					}
+
+					const targetSnapshot = state.snapshots[targetIndex];
+					if (targetSnapshot) {
+						this.sqlResultService.activateSnapshot(targetSnapshot.id);
+						this.historyItemElements.get(targetSnapshot.id)?.focus();
+					}
+					event.preventDefault();
 				})
 			);
 		}
@@ -273,7 +358,13 @@ export class SqlResultView extends ViewPane {
 
 	private renderError(state: Extract<SqlResultState, { kind: SqlResultStateKind.Error }>): void {
 		const wrapper = append(this.contentElement, $('.sql-result-message.error'));
+		if (state.errorCode) {
+			append(wrapper, $('div.sql-result-error-code', undefined, state.errorCode));
+		}
 		append(wrapper, $('div.sql-result-error-title', undefined, state.errorMessage));
+		if (state.errorDetail !== state.errorMessage) {
+			append(wrapper, $('pre.sql-result-error-detail', undefined, state.errorDetail));
+		}
 		append(wrapper, $('pre.sql-result-sql', undefined, state.query.sql));
 	}
 
@@ -315,6 +406,12 @@ export class SqlResultView extends ViewPane {
 
 		const tbody = append(table, $('tbody'));
 
+		if (grid.isEmpty) {
+			const emptyRow = append(tbody, $('tr.sql-result-empty-row'));
+			const emptyCell = append(emptyRow, $('td', undefined, 'No rows returned.')) as HTMLTableCellElement;
+			emptyCell.colSpan = grid.columns.length + 1;
+		}
+
 		for (const row of grid.rows) {
 			const tr = append(tbody, $('tr.sql-result-row'));
 			append(tr, $('td.sql-result-row-number', undefined, String(row.index + 1)));
@@ -335,13 +432,13 @@ export class SqlResultView extends ViewPane {
 			}
 		}
 
-		this.renderDisposables.add(
+		this.contentRenderDisposables.add(
 			addDisposableListener(wrapper, EventType.CLICK, event => {
 				this.handleGridActivation(event);
 			})
 		);
 
-		this.renderDisposables.add(
+		this.contentRenderDisposables.add(
 			addDisposableListener(wrapper, EventType.KEY_DOWN, event => {
 				if (event.key === 'Enter' || event.key === ' ') {
 					this.handleGridActivation(event);
@@ -357,6 +454,10 @@ export class SqlResultView extends ViewPane {
 
 			append(this.contentElement, $('.sql-result-truncated', undefined, message));
 		}
+	}
+
+	private renderCurrentContent(): void {
+		this.renderState(getSqlResultPanelContentState(this.sqlResultService.state, this.sqlResultService.panelState));
 	}
 
 	private handleGridActivation(event: Event): void {
@@ -404,6 +505,7 @@ export class SqlResultView extends ViewPane {
 
 		this.copyCellButton.disabled = !hasSelection;
 		this.copyRowButton.disabled = !hasSelection;
+		this.copyColumnButton.disabled = !hasSelection;
 		this.copyCsvButton.disabled = !hasGrid;
 		this.copyTsvButton.disabled = !hasGrid;
 	}
@@ -436,6 +538,9 @@ export class SqlResultView extends ViewPane {
 
 			case SqlResultCopyMode.Row:
 				return `Copied selected row as ${format.toUpperCase()}.`;
+
+			case SqlResultCopyMode.Column:
+				return `Copied selected column as ${format.toUpperCase()}.`;
 
 			case SqlResultCopyMode.All:
 				return `Copied result as ${format.toUpperCase()}.`;
@@ -473,4 +578,16 @@ function snapshotKindLabel(kind: SqlResultSnapshotKind): string {
 		case SqlResultSnapshotKind.Cancelled:
 			return 'Cancelled';
 	}
+}
+
+function getTerminalStatus(
+	label: string,
+	query: { readonly startedAt: number; readonly completedAt?: number },
+	code?: string
+): string {
+	const parts = [code ? `${label} [${code}]` : label];
+	if (query.completedAt !== undefined) {
+		parts.push(`${Math.max(0, query.completedAt - query.startedAt)}ms`);
+	}
+	return parts.join(' · ');
 }

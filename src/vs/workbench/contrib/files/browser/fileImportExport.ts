@@ -813,7 +813,7 @@ export class FileDownload {
 				sourceStream,
 				{
 					onData: data => {
-						target.write(data.buffer as Uint8Array);
+						target.write(new Uint8Array(data.buffer));
 						this.reportProgress(contents.name, contents.size, data.byteLength, operation);
 					},
 					onError: error => {
@@ -838,7 +838,7 @@ export class FileDownload {
 	): Promise<void> {
 		const contents = await this.fileService.readFile(resource, undefined, token);
 		if (!token.isCancellationRequested) {
-			target.write(contents.value.buffer as Uint8Array);
+			target.write(new Uint8Array(contents.value.buffer));
 			this.reportProgress(contents.name, contents.size, contents.value.byteLength, operation);
 		}
 

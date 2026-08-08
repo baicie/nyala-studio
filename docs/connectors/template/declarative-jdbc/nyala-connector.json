@@ -1,0 +1,123 @@
+{
+	"$schema": "https://schemas.nyala.dev/connectors/v1/nyala-connector.schema.json",
+	"schemaVersion": 1,
+	"kind": "databaseConnector",
+	"id": "example.acmedb",
+	"displayName": "AcmeDB",
+	"description": "Example declarative JDBC connector. Replace before use.",
+	"version": "0.1.0",
+	"publisher": {
+		"id": "example",
+		"displayName": "Example Publisher",
+		"homepage": "https://example.invalid"
+	},
+	"license": "Apache-2.0",
+	"engines": {
+		"nyala": ">=0.2.0 <0.3.0",
+		"jdbcHostProtocol": ">=1.0.0 <2.0.0",
+		"java": ">=21 <22"
+	},
+	"connector": {
+		"driverId": "acmedb",
+		"dialectId": "generic-sql",
+		"driverClass": "com.example.acme.jdbc.AcmeDriver",
+		"jdbcUrlTemplate": "jdbc:acme://{host}:{port}/{database}",
+		"defaultPort": 15432,
+		"artifacts": [
+			{
+				"id": "jdbc-driver",
+				"role": "driver",
+				"delivery": "bundled",
+				"path": "lib/acmedb-jdbc-0.1.0.jar",
+				"sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+				"sizeBytes": 1
+			}
+		],
+		"connectionFields": [
+			{
+				"id": "host",
+				"label": "Host",
+				"type": "string",
+				"required": true,
+				"persistence": "profile"
+			},
+			{
+				"id": "port",
+				"label": "Port",
+				"type": "integer",
+				"required": true,
+				"persistence": "profile",
+				"default": 15432,
+				"minimum": 1,
+				"maximum": 65535
+			},
+			{
+				"id": "database",
+				"label": "Database",
+				"type": "string",
+				"required": true,
+				"persistence": "profile"
+			},
+			{
+				"id": "username",
+				"label": "Username",
+				"type": "string",
+				"required": true,
+				"persistence": "profile"
+			},
+			{
+				"id": "password",
+				"label": "Password",
+				"type": "secret",
+				"required": false,
+				"persistence": "never"
+			},
+			{
+				"id": "sslMode",
+				"label": "SSL mode",
+				"type": "enum",
+				"required": true,
+				"persistence": "profile",
+				"default": "prefer",
+				"options": ["disable", "prefer", "require"]
+			}
+		],
+		"connectionProperties": [
+			{
+				"name": "user",
+				"field": "username",
+				"omitWhenEmpty": true
+			},
+			{
+				"name": "password",
+				"field": "password",
+				"omitWhenEmpty": true
+			},
+			{
+				"name": "sslMode",
+				"field": "sslMode",
+				"omitWhenEmpty": true
+			}
+		],
+		"capabilities": [
+			"connection.test",
+			"query.execute",
+			"query.cancel",
+			"transaction",
+			"metadata.catalogs",
+			"metadata.schemas",
+			"metadata.tables",
+			"metadata.columns"
+		],
+		"defaults": {
+			"connectTimeoutMs": 5000,
+			"socketTimeoutMs": 30000,
+			"fetchSize": 500,
+			"maxRows": 100000
+		}
+	},
+	"support": {
+		"homepage": "https://example.invalid/acmedb",
+		"issues": "https://example.invalid/acmedb/issues"
+	}
+}

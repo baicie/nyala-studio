@@ -122,9 +122,11 @@ export interface ISqlConnectionService {
 
 	testConnection(input: SqlConnectionInput): Promise<SqlConnectionTestResult>;
 	openConnection(input: SqlConnectionInput): Promise<SqlConnection>;
+	replaceConnection(input: SqlConnectionInput): Promise<SqlConnection>;
 	closeConnection(connectionId: string): Promise<void>;
 	listConnections(): Promise<SqlConnection[]>;
 	saveConnection(request: SqlSaveConnectionRequest): Promise<SqlSavedConnection>;
+	saveAndOpenConnection(input: SqlConnectionInput, autoConnect: boolean, persist: boolean): Promise<SqlConnection>;
 	listSavedConnections(): Promise<SqlSavedConnection[]>;
 	removeSavedConnection(request: SqlRemoveSavedConnectionRequest): Promise<void>;
 	restoreSavedConnections(): Promise<SqlRestoreSavedConnectionsResult>;

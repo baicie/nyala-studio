@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { SqlCellKind, SqlQueryResult } from '../../../services/sql/common/sqlTypes.js';
 import {
+	activateSqlResultSnapshot,
 	addSqlResultSnapshot,
 	buildSqlResultDisplayGrid,
 	createCancelledResultSnapshot,
@@ -22,6 +23,7 @@ import {
 	formatColumnLabel,
 	formatSqlCellValue,
 	getActiveSqlResultSnapshot,
+	getSqlResultPanelContentState,
 	getSqlResultSummary,
 	removeSqlResultSnapshot,
 	sqlResultToCsv,
@@ -122,6 +124,24 @@ test('createErrorSqlResultState stores error message', () => {
 	assert.equal(getSqlResultSummary(state), 'Query failed: syntax error');
 });
 
+test('createErrorSqlResultState preserves structured error code and multiline detail', () => {
+	const error = Object.assign(new Error('syntax error\nnear "FROM"'), { code: 'sqlite_prepare' });
+	const state = createErrorSqlResultState({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT FROM',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 10,
+		completedAt: 20,
+		error
+	});
+
+	assert.equal(state.errorCode, 'sqlite_prepare');
+	assert.equal(state.errorMessage, 'syntax error');
+	assert.equal(state.errorDetail, 'syntax error\nnear "FROM"');
+	assert.equal(getSqlResultSummary(state), 'Query failed [sqlite_prepare]: syntax error');
+});
+
 test('createCancelledSqlResultState stores cancelled message', () => {
 	const state = createCancelledSqlResultState({
 		editorId: 'query-1',
@@ -180,6 +200,7 @@ test('createErrorResultSnapshotFromEvent creates error snapshot', () => {
 
 	assert.equal(snapshot.kind, SqlResultSnapshotKind.Error);
 	assert.equal(snapshot.errorMessage, 'syntax error');
+	assert.equal(snapshot.startedAt, 3);
 	assert.equal(snapshot.createdAt, 4);
 });
 
@@ -303,11 +324,220 @@ test('SqlResultService emits state changes for query lifecycle', () => {
 
 	service.clear();
 
-	assert.deepEqual(states, [
-		SqlResultStateKind.Running,
-		SqlResultStateKind.Success,
-		SqlResultStateKind.Idle
-	]);
+	assert.deepEqual(states, [SqlResultStateKind.Running, SqlResultStateKind.Success, SqlResultStateKind.Idle]);
+});
+
+test('SqlResultService keeps another editor query running when an older query completes', () => {
+	const service = new SqlResultService();
+
+	service.setRunning({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT slow_one()',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 1
+	});
+	service.setRunning({
+		editorId: 'query-2',
+		connectionId: 'local',
+		sql: 'SELECT slow_two()',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 2
+	});
+
+	service.setSuccess({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT slow_one()',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 1,
+		completedAt: 3,
+		result: snapshotResult
+	});
+
+	assert.equal(service.state.kind, SqlResultStateKind.Running);
+	assert.equal(service.state.kind === SqlResultStateKind.Running && service.state.query.editorId, 'query-2');
+	assert.equal(service.panelState.snapshots.length, 1);
+
+	service.setError({
+		editorId: 'query-2',
+		connectionId: 'local',
+		sql: 'SELECT slow_two()',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 2,
+		completedAt: 4,
+		error: new Error('second query failed')
+	});
+
+	assert.equal(service.state.kind, SqlResultStateKind.Error);
+	assert.equal(service.panelState.snapshots.length, 2);
+});
+
+test('SqlResultService records every statement result from one execution', () => {
+	const service = new SqlResultService();
+	let panelChanges = 0;
+	service.onDidChangePanelState(() => panelChanges++);
+	const firstResult = { ...snapshotResult, elapsedMs: 1 };
+	const secondResult = { ...snapshotResult, elapsedMs: 2 };
+
+	service.setSuccess({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1; SELECT 2;',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 10,
+		completedAt: 20,
+		result: secondResult,
+		executionId: 'execution-1',
+		statementResults: [
+			{
+				resultId: 'execution-1-result-1',
+				executionId: 'execution-1',
+				statementIndex: 0,
+				statementCount: 2,
+				sql: 'SELECT 1',
+				startedAt: 10,
+				completedAt: 15,
+				result: firstResult
+			},
+			{
+				resultId: 'execution-1-result-2',
+				executionId: 'execution-1',
+				statementIndex: 1,
+				statementCount: 2,
+				sql: 'SELECT 2',
+				startedAt: 15,
+				completedAt: 20,
+				result: secondResult
+			}
+		]
+	});
+
+	assert.deepEqual(
+		service.panelState.snapshots.map(snapshot => ({
+			id: snapshot.id,
+			sql: snapshot.sql,
+			title: snapshot.title
+		})),
+		[
+			{ id: 'execution-1-result-1', sql: 'SELECT 1', title: 'Query Result 1/2' },
+			{ id: 'execution-1-result-2', sql: 'SELECT 2', title: 'Query Result 2/2' }
+		]
+	);
+	assert.equal(getActiveSqlResultSnapshot(service.panelState)?.id, 'execution-1-result-2');
+	assert.equal(panelChanges, 1);
+});
+
+test('SqlResultService preserves successful statements before a failed statement', () => {
+	const service = new SqlResultService();
+
+	service.setError({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1; SELECT FROM;',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 10,
+		completedAt: 20,
+		error: new Error('syntax error'),
+		executionId: 'execution-2',
+		statementResults: [
+			{
+				resultId: 'execution-2-result-1',
+				executionId: 'execution-2',
+				statementIndex: 0,
+				statementCount: 2,
+				sql: 'SELECT 1',
+				startedAt: 10,
+				completedAt: 15,
+				result: snapshotResult
+			}
+		],
+		failedStatement: {
+			resultId: 'execution-2-result-2',
+			executionId: 'execution-2',
+			statementIndex: 1,
+			statementCount: 2,
+			sql: 'SELECT FROM',
+			startedAt: 15,
+			completedAt: 20,
+			error: new Error('syntax error')
+		}
+	});
+
+	assert.deepEqual(
+		service.panelState.snapshots.map(snapshot => [snapshot.kind, snapshot.sql, snapshot.title]),
+		[
+			[SqlResultSnapshotKind.Success, 'SELECT 1', 'Query Result 1/2'],
+			[SqlResultSnapshotKind.Error, 'SELECT FROM', 'Query Error 2/2']
+		]
+	);
+	assert.equal(getActiveSqlResultSnapshot(service.panelState)?.id, 'execution-2-result-2');
+});
+
+test('SqlResultService keeps completed statements visible when a batch is cancelled', () => {
+	const service = new SqlResultService();
+
+	service.setCancelled({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1; SELECT 2;',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 10,
+		completedAt: 20,
+		message: 'stopped',
+		executionId: 'execution-cancelled',
+		statementResults: [
+			{
+				resultId: 'execution-cancelled-result-1',
+				executionId: 'execution-cancelled',
+				statementIndex: 0,
+				statementCount: 2,
+				sql: 'SELECT 1',
+				startedAt: 10,
+				completedAt: 15,
+				result: snapshotResult
+			}
+		]
+	});
+
+	assert.deepEqual(
+		service.panelState.snapshots.map(snapshot => [snapshot.kind, snapshot.sql]),
+		[
+			[SqlResultSnapshotKind.Success, 'SELECT 1'],
+			[SqlResultSnapshotKind.Cancelled, 'SELECT 1; SELECT 2;']
+		]
+	);
+	assert.equal(getActiveSqlResultSnapshot(service.panelState)?.kind, SqlResultSnapshotKind.Cancelled);
+});
+
+test('SqlResultService does not truncate the current execution when it has more than the history limit', () => {
+	const service = new SqlResultService();
+	const statementCount = 21;
+
+	service.setSuccess({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: Array.from({ length: statementCount }, (_, index) => `SELECT ${index + 1}`).join('; '),
+		source: SqlEditorExecutionSource.All,
+		startedAt: 10,
+		completedAt: 20,
+		result: snapshotResult,
+		executionId: 'execution-large',
+		statementResults: Array.from({ length: statementCount }, (_, statementIndex) => ({
+			resultId: `execution-large-result-${statementIndex + 1}`,
+			executionId: 'execution-large',
+			statementIndex,
+			statementCount,
+			sql: `SELECT ${statementIndex + 1}`,
+			startedAt: 10,
+			completedAt: 20,
+			result: snapshotResult
+		}))
+	});
+
+	assert.equal(service.panelState.snapshots.length, statementCount);
+	assert.equal(new Set(service.panelState.snapshots.map(snapshot => snapshot.id)).size, statementCount);
+	assert.equal(getActiveSqlResultSnapshot(service.panelState)?.id, 'execution-large-result-21');
 });
 
 test('SqlResultService records success error and cancelled snapshots', () => {
@@ -345,11 +575,7 @@ test('SqlResultService records success error and cancelled snapshots', () => {
 
 	assert.deepEqual(
 		service.panelState.snapshots.map(snapshot => snapshot.kind),
-		[
-			SqlResultSnapshotKind.Cancelled,
-			SqlResultSnapshotKind.Error,
-			SqlResultSnapshotKind.Success
-		]
+		[SqlResultSnapshotKind.Cancelled, SqlResultSnapshotKind.Error, SqlResultSnapshotKind.Success]
 	);
 	assert.equal(service.panelState.activeSnapshotId, service.panelState.snapshots[0].id);
 	assert.equal(service.state.kind, SqlResultStateKind.Cancelled);
@@ -375,6 +601,41 @@ test('SqlResultService emits panel state change when a snapshot is added', () =>
 
 	assert.equal(lastPanelState.snapshots.length, 1);
 	assert.equal(lastPanelState.snapshots[0].kind, SqlResultSnapshotKind.Success);
+});
+
+test('SqlResultService activates an existing snapshot', () => {
+	const service = new SqlResultService();
+
+	service.setSuccess({
+		editorId: 'query-1',
+		connectionId: 'local',
+		sql: 'SELECT 1',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 1,
+		completedAt: 2,
+		result: snapshotResult
+	});
+	service.setSuccess({
+		editorId: 'query-2',
+		connectionId: 'local',
+		sql: 'SELECT 2',
+		source: SqlEditorExecutionSource.All,
+		startedAt: 3,
+		completedAt: 4,
+		result: snapshotResult
+	});
+
+	const firstSnapshotId = service.panelState.snapshots[1].id;
+	let activeSnapshotId: string | undefined;
+	service.onDidChangePanelState(state => {
+		activeSnapshotId = state.activeSnapshotId;
+	});
+
+	service.activateSnapshot(firstSnapshotId);
+
+	assert.equal(service.panelState.activeSnapshotId, firstSnapshotId);
+	assert.equal(activeSnapshotId, firstSnapshotId);
+	assert.equal(getActiveSqlResultSnapshot(service.panelState)?.sql, 'SELECT 1');
 });
 
 test('SqlResultService.removeSnapshot updates active snapshot', () => {
@@ -405,7 +666,10 @@ test('SqlResultService.removeSnapshot updates active snapshot', () => {
 
 	service.removeSnapshot(activeId!);
 
-	assert.equal(service.panelState.snapshots.find(s => s.id === activeId), undefined);
+	assert.equal(
+		service.panelState.snapshots.find(s => s.id === activeId),
+		undefined
+	);
 	assert.notEqual(service.panelState.activeSnapshotId, activeId);
 });
 
@@ -515,7 +779,10 @@ test('addSqlResultSnapshot puts newest first and limits size', () => {
 		);
 	}
 
-	assert.deepEqual(state.snapshots.map(item => item.id), ['r2', 'r1']);
+	assert.deepEqual(
+		state.snapshots.map(item => item.id),
+		['r2', 'r1']
+	);
 	assert.equal(state.activeSnapshotId, 'r2');
 });
 
@@ -559,6 +826,118 @@ test('addSqlResultSnapshot rejects non-positive maxSnapshots', () => {
 		() => addSqlResultSnapshot(createEmptySqlResultPanelState(), snapshot, 0),
 		/maxSnapshots must be a positive integer/
 	);
+});
+
+test('activateSqlResultSnapshot selects an existing snapshot', () => {
+	const r1 = createSuccessResultSnapshot({
+		id: 'r1',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 1',
+		result: snapshotResult,
+		createdAt: 1
+	});
+	const r2 = createSuccessResultSnapshot({
+		id: 'r2',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 2',
+		result: snapshotResult,
+		createdAt: 2
+	});
+
+	const state = addSqlResultSnapshot(addSqlResultSnapshot(createEmptySqlResultPanelState(), r1), r2);
+	const next = activateSqlResultSnapshot(state, ' r1 ');
+
+	assert.equal(next.activeSnapshotId, 'r1');
+	assert.equal(getActiveSqlResultSnapshot(next)?.id, 'r1');
+	assert.deepEqual(
+		next.snapshots.map(snapshot => snapshot.id),
+		['r2', 'r1']
+	);
+});
+
+test('getSqlResultPanelContentState returns the active snapshot result', () => {
+	const success = createSuccessResultSnapshot({
+		id: 'success',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 1',
+		result: snapshotResult,
+		createdAt: 1
+	});
+	const error = createErrorResultSnapshot({
+		id: 'error',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select from',
+		error: new Error('syntax error'),
+		createdAt: 2
+	});
+	let panelState = addSqlResultSnapshot(addSqlResultSnapshot(createEmptySqlResultPanelState(), success), error);
+	panelState = activateSqlResultSnapshot(panelState, success.id);
+	const liveState = createErrorSqlResultState({
+		editorId: 'e',
+		connectionId: 'c',
+		sql: error.sql,
+		startedAt: 1,
+		completedAt: 2,
+		error: new Error(error.errorMessage)
+	});
+
+	const contentState = getSqlResultPanelContentState(liveState, panelState);
+
+	assert.equal(contentState.kind, SqlResultStateKind.Success);
+	assert.equal(contentState.query.sql, success.sql);
+	if (contentState.kind === SqlResultStateKind.Success) {
+		assert.equal(contentState.result, success.result);
+	}
+});
+
+test('getSqlResultPanelContentState preserves an in-flight query', () => {
+	const snapshot = createSuccessResultSnapshot({
+		id: 'success',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 1',
+		result: snapshotResult,
+		createdAt: 1
+	});
+	const panelState = addSqlResultSnapshot(createEmptySqlResultPanelState(), snapshot);
+	const runningState = createRunningSqlResultState({
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select 2',
+		startedAt: 2
+	});
+
+	const contentState = getSqlResultPanelContentState(runningState, panelState);
+
+	assert.equal(contentState, runningState);
+});
+
+test('getSqlResultPanelContentState preserves error code detail and timing from history', () => {
+	const error = Object.assign(new Error('syntax error\nnear "FROM"'), { code: 'sqlite_prepare' });
+	const snapshot = createErrorResultSnapshot({
+		id: 'error',
+		editorId: 'e',
+		connectionId: 'c',
+		sql: 'select from',
+		error,
+		startedAt: 10,
+		createdAt: 25
+	});
+	const panelState = addSqlResultSnapshot(createEmptySqlResultPanelState(), snapshot);
+	const contentState = getSqlResultPanelContentState(createIdleSqlResultState(), panelState);
+
+	assert.equal(contentState.kind, SqlResultStateKind.Error);
+	if (contentState.kind === SqlResultStateKind.Error) {
+		assert.equal(contentState.errorCode, 'sqlite_prepare');
+		assert.equal(contentState.errorMessage, 'syntax error');
+		assert.equal(contentState.errorDetail, 'syntax error\nnear "FROM"');
+		assert.equal(contentState.query.startedAt, 10);
+		assert.equal(contentState.query.completedAt, 25);
+	}
 });
 
 test('removeSqlResultSnapshot moves active snapshot', () => {

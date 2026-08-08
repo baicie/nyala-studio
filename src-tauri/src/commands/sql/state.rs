@@ -4,9 +4,10 @@ use super::mysql_runtime::{
     open_mysql_pool, test_mysql_connection,
 };
 use super::persistence::{load_saved_connections, save_saved_connections};
+use super::sql_lexer::{first_sql_keyword, statement_keyword_after_with};
 use super::types::{
-    SqlCancelQueryRequest, SqlCancelQueryResult, SqlCellValue, SqlColumn, SqlConnection,
-    SqlConnectionInput, SqlConnectionKind, SqlConnectionTestResult, SqlDatabase,
+    SqlCancelQueryRequest, SqlCancelQueryResult, SqlCellValue, SqlColumn, SqlCommandError,
+    SqlConnection, SqlConnectionInput, SqlConnectionKind, SqlConnectionTestResult, SqlDatabase,
     SqlExecuteQueryRequest, SqlListColumnsRequest, SqlQueryResult, SqlRemoveSavedConnectionRequest,
     SqlRestoreSavedConnectionError, SqlRestoreSavedConnectionsResult, SqlResultColumn,
     SqlSaveConnectionRequest, SqlSavedConnection, SqlTable, SqlTableType, DEFAULT_QUERY_ROW_LIMIT,
@@ -96,10 +97,15 @@ impl SqlConnectionStore {
 
                 match result {
                     Ok(()) => SqlConnectionTestResult::ok(connection),
-                    Err(error) => SqlConnectionTestResult::error(error),
+                    Err(error) => SqlConnectionTestResult::error(SqlCommandError::new(
+                        "connection_failed",
+                        error,
+                    )),
                 }
             }
-            Err(error) => SqlConnectionTestResult::error(error),
+            Err(error) => {
+                SqlConnectionTestResult::error(SqlCommandError::new("invalid_input", error))
+            }
         }
     }
 
@@ -148,6 +154,23 @@ impl SqlConnectionStore {
         connections.insert(connection.id.clone(), handle);
 
         Ok(connection)
+    }
+
+    /// Replaces an open runtime connection with the same id. If opening the
+    /// replacement fails, the previous runtime handle is restored.
+    pub fn replace_connection(&self, input: SqlConnectionInput) -> Result<SqlConnection, String> {
+        let connection = normalize_connection_input(&input)?;
+        let previous = self.connections()?.remove(&connection.id);
+
+        match self.open_connection(input) {
+            Ok(connection) => Ok(connection),
+            Err(error) => {
+                if let Some(previous) = previous {
+                    self.connections()?.insert(connection.id, previous);
+                }
+                Err(error)
+            }
+        }
     }
 
     pub fn close_connection(&self, connection_id: &str) -> Result<(), String> {
@@ -244,6 +267,80 @@ impl SqlConnectionStore {
         }
 
         Ok(saved)
+    }
+
+    /// Opens or replaces a runtime connection and optionally persists its public
+    /// profile. The runtime input may contain a transient password; the saved
+    /// profile never does. When `persist` is false, an existing profile with the
+    /// same id is removed atomically with the runtime replacement.
+    pub fn save_and_open_connection(
+        &self,
+        input: SqlConnectionInput,
+        auto_connect: bool,
+        persist: bool,
+    ) -> Result<SqlConnection, String> {
+        let connection = normalize_connection_input(&input)?;
+
+        if persist && !is_persistable_connection(&connection) {
+            return Err("in-memory SQLite connections cannot be saved".to_string());
+        }
+
+        let saved = persist.then(|| SqlSavedConnection {
+            id: connection.id.clone(),
+            name: connection.name.clone(),
+            kind: connection.kind,
+            database_path: connection.database_path.clone(),
+            host: connection.host.clone(),
+            port: connection.port,
+            database: connection.database.clone(),
+            username: connection.username.clone(),
+            ssl_mode: connection.ssl_mode,
+            read_only: connection.read_only,
+            create_if_missing: input.create_if_missing,
+            auto_connect,
+        });
+
+        let previous_runtime = self.connections()?.remove(&connection.id);
+        let opened = match self.open_connection(input) {
+            Ok(connection) => connection,
+            Err(error) => {
+                if let Some(previous_runtime) = previous_runtime {
+                    self.connections()?
+                        .insert(connection.id.clone(), previous_runtime);
+                }
+                return Err(error);
+            }
+        };
+
+        let previous_saved = {
+            let mut saved_connections = self.saved_connections()?;
+            match saved {
+                Some(saved) => saved_connections.insert(saved.id.clone(), saved),
+                None => saved_connections.remove(&opened.id),
+            }
+        };
+
+        let persistence_changed = persist || previous_saved.is_some();
+        if persistence_changed {
+            if let Err(error) = self.flush_saved_connections() {
+                let _ = self.close_connection(&opened.id);
+                if let Some(previous_runtime) = previous_runtime {
+                    self.connections()?
+                        .insert(opened.id.clone(), previous_runtime);
+                }
+
+                let mut saved_connections = self.saved_connections()?;
+                if let Some(previous_saved) = previous_saved {
+                    saved_connections.insert(opened.id.clone(), previous_saved);
+                } else if persist {
+                    saved_connections.remove(&opened.id);
+                }
+
+                return Err(error);
+            }
+        }
+
+        Ok(opened)
     }
 
     pub fn list_saved_connections(&self) -> Result<Vec<SqlSavedConnection>, String> {
@@ -448,7 +545,7 @@ impl SqlConnectionStore {
 
         if handle.info.read_only && sql_may_mutate(sql) {
             return Err(
-                "read-only connection only allows SELECT/WITH/EXPLAIN style statements".to_string(),
+                "read-only connection only allows explicitly read-only statements".to_string(),
             );
         }
 
@@ -729,73 +826,31 @@ fn quote_sqlite_identifier(identifier: &str) -> Result<String, String> {
 
 fn sql_may_mutate(sql: &str) -> bool {
     let Some(keyword) = first_sql_keyword(sql) else {
-        return false;
+        return true;
     };
 
-    matches!(
-        keyword.as_str(),
-        "alter"
-            | "attach"
-            | "begin"
-            | "commit"
-            | "create"
-            | "delete"
-            | "detach"
-            | "drop"
-            | "insert"
-            | "pragma"
-            | "replace"
-            | "rollback"
-            | "truncate"
-            | "update"
-            | "vacuum"
-    )
+    if keyword == "with" {
+        return with_statement_may_mutate(sql);
+    }
+
+    !is_read_only_sql_keyword(&keyword)
 }
 
-fn first_sql_keyword(sql: &str) -> Option<String> {
-    let bytes = sql.as_bytes();
-    let mut index = 0;
+fn with_statement_may_mutate(sql: &str) -> bool {
+    let Some(keyword) = statement_keyword_after_with(sql) else {
+        // A malformed or unsupported CTE is safer to reject on a read-only
+        // connection than to treat as a guaranteed read.
+        return true;
+    };
 
-    while index < bytes.len() {
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
+    !is_read_only_sql_keyword(&keyword)
+}
 
-        if index + 1 < bytes.len() && bytes[index] == b'-' && bytes[index + 1] == b'-' {
-            index += 2;
-            while index < bytes.len() && bytes[index] != b'\n' {
-                index += 1;
-            }
-            continue;
-        }
-
-        if index + 1 < bytes.len() && bytes[index] == b'/' && bytes[index + 1] == b'*' {
-            index += 2;
-            while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
-                index += 1;
-            }
-
-            if index + 1 < bytes.len() {
-                index += 2;
-            }
-
-            continue;
-        }
-
-        break;
-    }
-
-    let start = index;
-
-    while index < bytes.len() && (bytes[index].is_ascii_alphabetic() || bytes[index] == b'_') {
-        index += 1;
-    }
-
-    if start == index {
-        return None;
-    }
-
-    Some(sql[start..index].to_ascii_lowercase())
+fn is_read_only_sql_keyword(keyword: &str) -> bool {
+    matches!(
+        keyword,
+        "select" | "show" | "describe" | "desc" | "explain" | "values"
+    )
 }
 
 fn elapsed_ms(started_at: Instant) -> u64 {
@@ -891,11 +946,10 @@ mod tests {
 
         assert!(!result.ok);
         assert!(result.connection.is_none());
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or_default()
-            .contains("does not exist"));
+        assert!(matches!(
+            result.error,
+            Some(SqlCommandError::ConnectionFailed { message }) if message.contains("does not exist")
+        ));
     }
 
     #[test]
@@ -1096,6 +1150,16 @@ mod tests {
             .unwrap_err();
 
         assert!(err.contains("read-only connection"));
+
+        let cte_err = store
+            .execute_query(SqlExecuteQueryRequest {
+                connection_id: "reader".to_string(),
+                sql: "WITH cte AS (SELECT 1) DELETE FROM users WHERE id = 1".to_string(),
+                limit: None,
+            })
+            .unwrap_err();
+
+        assert!(cte_err.contains("read-only connection"));
     }
 
     #[test]
@@ -1138,26 +1202,54 @@ mod tests {
     }
 
     #[test]
-    fn first_sql_keyword_skips_comments() {
-        assert_eq!(
-            first_sql_keyword("-- comment\nSELECT 1").as_deref(),
-            Some("select")
-        );
-        assert_eq!(
-            first_sql_keyword("/* comment */\nWITH cte AS (SELECT 1) SELECT * FROM cte").as_deref(),
-            Some("with")
-        );
-    }
-
-    #[test]
     fn sql_may_mutate_detects_mutating_statements() {
         assert!(!sql_may_mutate("SELECT 1"));
         assert!(!sql_may_mutate(
             "-- comment\nWITH cte AS (SELECT 1) SELECT * FROM cte"
         ));
+        assert!(!sql_may_mutate(
+            "WITH first_cte AS (SELECT 1), second_cte AS (SELECT 2) SELECT * FROM second_cte"
+        ));
+        assert!(sql_may_mutate(
+            "WITH cte AS (SELECT 1) DELETE FROM users WHERE id = 1"
+        ));
+        assert!(sql_may_mutate(
+            "WITH cte AS (SELECT 1) UPDATE users SET name = 'changed'"
+        ));
+        assert!(sql_may_mutate(
+            "WITH cte AS (SELECT 1) INSERT INTO users(name) SELECT 'changed'"
+        ));
         assert!(sql_may_mutate("INSERT INTO users VALUES (1)"));
         assert!(sql_may_mutate("/* comment */ DROP TABLE users"));
         assert!(sql_may_mutate("PRAGMA journal_mode = WAL"));
+    }
+
+    #[test]
+    fn sql_may_mutate_allows_mysql_show() {
+        assert!(!sql_may_mutate("SHOW TABLES"));
+    }
+
+    #[test]
+    fn sql_may_mutate_allows_values() {
+        assert!(!sql_may_mutate("VALUES (1), (2)"));
+    }
+
+    #[test]
+    fn sql_may_mutate_allows_cte_followed_by_values() {
+        assert!(!sql_may_mutate(
+            "WITH cte AS (SELECT 1) VALUES ((SELECT * FROM cte))"
+        ));
+    }
+
+    #[test]
+    fn sql_may_mutate_blocks_unknown_statement_keywords() {
+        assert!([
+            "REINDEX users",
+            "GRANT SELECT ON users TO reader",
+            "CALL refresh_cache()"
+        ]
+        .into_iter()
+        .all(sql_may_mutate));
     }
 
     #[test]
@@ -1185,6 +1277,99 @@ mod tests {
 
         assert!(err.contains("already exists"));
         assert_eq!(store.list_connections().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn replace_connection_swaps_runtime_and_restores_after_failure() {
+        let store = SqlConnectionStore::new();
+        let old_db = TempDb::new("replace-old");
+        let new_db = TempDb::new("replace-new");
+
+        store.open_connection(old_db.input("local")).unwrap();
+
+        let replaced = store.replace_connection(new_db.input("local")).unwrap();
+        assert_eq!(
+            replaced.database_path,
+            Some(new_db.path.display().to_string())
+        );
+        assert_eq!(
+            store.list_connections().unwrap()[0].database_path,
+            replaced.database_path
+        );
+
+        let missing_path =
+            std::env::temp_dir().join(format!("sql-studio-next-missing-{}.db", Uuid::new_v4()));
+        let mut failing_input = new_db.input("local");
+        failing_input.database_path = Some(missing_path.display().to_string());
+        failing_input.create_if_missing = false;
+
+        assert!(store.replace_connection(failing_input).is_err());
+        assert_eq!(
+            store.list_connections().unwrap()[0].database_path,
+            Some(new_db.path.display().to_string())
+        );
+    }
+
+    #[test]
+    fn save_and_open_connection_replaces_runtime_and_persists_public_fields() {
+        let store = SqlConnectionStore::new();
+        let path = temp_json_file("save-and-open-replace");
+        store.initialize_persistence(path.clone()).unwrap();
+
+        let old_db = TempDb::new("save-and-open-old");
+        let new_db = TempDb::new("save-and-open-new");
+        store.open_connection(old_db.input("local")).unwrap();
+
+        let mut input = new_db.input("local");
+        input.password = Some("transient-secret".to_string());
+        let opened = store.save_and_open_connection(input, true, true).unwrap();
+
+        assert_eq!(
+            opened.database_path,
+            Some(new_db.path.display().to_string())
+        );
+        assert_eq!(
+            store.list_connections().unwrap()[0].database_path,
+            opened.database_path
+        );
+        let saved = store.list_saved_connections().unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].database_path, opened.database_path);
+        assert!(saved[0].auto_connect);
+        let persisted = std::fs::read_to_string(&path).unwrap();
+        assert!(!persisted.contains("password"));
+        assert!(!persisted.contains("transient-secret"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn save_and_open_connection_can_forget_an_existing_profile_atomically() {
+        let store = SqlConnectionStore::new();
+        let path = temp_json_file("save-and-open-forget");
+        store.initialize_persistence(path.clone()).unwrap();
+
+        let old_db = TempDb::new("save-and-open-forget-old");
+        let new_db = TempDb::new("save-and-open-forget-new");
+        let mut original = old_db.input("local");
+        original.name = Some("Saved local".to_string());
+        store
+            .save_and_open_connection(original, false, true)
+            .unwrap();
+
+        let mut replacement = new_db.input("local");
+        replacement.name = Some("Unsaved local".to_string());
+        let opened = store
+            .save_and_open_connection(replacement, false, false)
+            .unwrap();
+
+        assert_eq!(opened.name, "Unsaved local");
+        assert!(store.list_saved_connections().unwrap().is_empty());
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("Saved local"));
+
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

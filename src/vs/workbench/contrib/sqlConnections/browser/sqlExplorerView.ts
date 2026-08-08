@@ -57,7 +57,7 @@ export class SqlExplorerView extends ViewPane {
 	static readonly ID = SQL_EXPLORER_VIEW_ID;
 	static readonly NAME = localize('sqlExplorerViewName', 'SQL Explorer');
 
-	private body!: HTMLElement;
+	private bodyContainer!: HTMLElement;
 	private treeElement!: HTMLElement;
 	private messageElement!: HTMLElement;
 	private readonly treeRenderDisposables = this._register(new DisposableStore());
@@ -93,9 +93,9 @@ export class SqlExplorerView extends ViewPane {
 	}
 
 	protected override renderBody(container: HTMLElement): void {
-		this.body = append(container, $('.sql-connections-view'));
-		this.messageElement = append(this.body, $('.sql-connections-message'));
-		this.treeElement = append(this.body, $('.sql-connections-tree', { role: 'tree', tabIndex: 0 }));
+		this.bodyContainer = append(container, $('.sql-connections-view'));
+		this.messageElement = append(this.bodyContainer, $('.sql-connections-message'));
+		this.treeElement = append(this.bodyContainer, $('.sql-connections-tree', { role: 'tree', tabIndex: 0 }));
 
 		const model = new SqlConnectionTreeModel(this.connections, this.metadata, this.catalog);
 		void model.rebuild();
@@ -109,9 +109,9 @@ export class SqlExplorerView extends ViewPane {
 		clearNode(this.treeElement);
 
 		const datasources = model.list();
-		this.renderMessage(datasources.length === 0
-			? localize('sqlExplorerEmpty', 'No connections yet. Add one in SQL Connections.')
-			: '');
+		this.renderMessage(
+			datasources.length === 0 ? localize('sqlExplorerEmpty', 'No connections yet. Add one in SQL Connections.') : ''
+		);
 
 		for (const ds of datasources) {
 			const row = this.ensureRowState(ds.profileId, 'collapsed');
@@ -143,10 +143,13 @@ export class SqlExplorerView extends ViewPane {
 			errEl.textContent = node.state.message;
 		}
 
-		const refresh = append(row, $('button.sql-connection-node-refresh', {
-			type: 'button',
-			title: localize('sqlExplorerRefresh', 'Refresh')
-		}));
+		const refresh = append(
+			row,
+			$('button.sql-connection-node-refresh', {
+				type: 'button',
+				title: localize('sqlExplorerRefresh', 'Refresh')
+			})
+		);
 		refresh.textContent = '\u21bb';
 		this.treeRenderDisposables.add(
 			addDisposableListener(refresh, EventType.CLICK, event => {
@@ -191,10 +194,13 @@ export class SqlExplorerView extends ViewPane {
 			errEl.textContent = node.state.message;
 		}
 
-		const refresh = append(row, $('button.sql-connection-node-refresh', {
-			type: 'button',
-			title: localize('sqlExplorerRefresh', 'Refresh')
-		}));
+		const refresh = append(
+			row,
+			$('button.sql-connection-node-refresh', {
+				type: 'button',
+				title: localize('sqlExplorerRefresh', 'Refresh')
+			})
+		);
 		refresh.textContent = '\u21bb';
 		this.treeRenderDisposables.add(
 			addDisposableListener(refresh, EventType.CLICK, event => {
@@ -239,10 +245,13 @@ export class SqlExplorerView extends ViewPane {
 			errEl.textContent = node.state.message;
 		}
 
-		const refresh = append(row, $('button.sql-connection-node-refresh', {
-			type: 'button',
-			title: localize('sqlExplorerRefresh', 'Refresh')
-		}));
+		const refresh = append(
+			row,
+			$('button.sql-connection-node-refresh', {
+				type: 'button',
+				title: localize('sqlExplorerRefresh', 'Refresh')
+			})
+		);
 		refresh.textContent = '\u21bb';
 		this.treeRenderDisposables.add(
 			addDisposableListener(refresh, EventType.CLICK, event => {
@@ -269,10 +278,9 @@ export class SqlExplorerView extends ViewPane {
 				const type = append(colRow, $('span.sql-connection-column-type'));
 				type.textContent = col.dataType;
 				const flags = append(colRow, $('span.sql-connection-column-flags'));
-				flags.textContent = [
-					col.isPrimaryKey ? 'PK' : '',
-					col.isNullable ? '' : 'NOT NULL'
-				].filter(Boolean).join(' · ');
+				flags.textContent = [col.isPrimaryKey ? 'PK' : '', col.isNullable ? '' : 'NOT NULL']
+					.filter(Boolean)
+					.join(' · ');
 			}
 		}
 
@@ -281,12 +289,15 @@ export class SqlExplorerView extends ViewPane {
 	}
 
 	private renderTwisty(parent: HTMLElement, expanded: boolean, onClick: () => void): HTMLButtonElement {
-		const twisty = append(parent, $('button.sql-connection-node-twisty', {
-			type: 'button',
-			tabIndex: 0,
-			'aria-label': expanded ? 'Collapse' : 'Expand',
-			'aria-expanded': String(expanded)
-		})) as HTMLButtonElement;
+		const twisty = append(
+			parent,
+			$('button.sql-connection-node-twisty', {
+				type: 'button',
+				tabIndex: 0,
+				'aria-label': expanded ? 'Collapse' : 'Expand',
+				'aria-expanded': String(expanded)
+			})
+		) as HTMLButtonElement;
 		twisty.textContent = expanded ? TWISTY_EXPANDED : TWISTY_COLLAPSED;
 		this.treeRenderDisposables.add(
 			addDisposableListener(twisty, EventType.CLICK, event => {
@@ -327,7 +338,12 @@ export class SqlExplorerView extends ViewPane {
 		void this.renderTree(model);
 	}
 
-	private async toggleTable(profileId: string, schema: string, table: string, model: SqlConnectionTreeModel): Promise<void> {
+	private async toggleTable(
+		profileId: string,
+		schema: string,
+		table: string,
+		model: SqlConnectionTreeModel
+	): Promise<void> {
 		const state = this.rowStates.get(profileId);
 		if (!state) {
 			return;
@@ -373,19 +389,26 @@ export class SqlExplorerView extends ViewPane {
 
 	private formatState(kind: 'idle' | 'loading' | 'loaded' | 'error'): string {
 		switch (kind) {
-			case 'idle': return '';
-			case 'loading': return 'loading...';
-			case 'loaded': return '';
-			case 'error': return '';
+			case 'idle':
+				return '';
+			case 'loading':
+				return 'loading...';
+			case 'loaded':
+				return '';
+			case 'error':
+				return '';
 		}
 	}
 
 	/** Test helper exposed for node tests. */
 	static buildTreeArgs(node: TreeNode): string {
 		switch (node.kind) {
-			case 'datasource': return `datasource:${node.profileId}`;
-			case 'schema': return `schema:${node.profileId}/${node.schema}`;
-			case 'table': return `table:${node.profileId}/${node.schema}/${node.table}`;
+			case 'datasource':
+				return `datasource:${node.profileId}`;
+			case 'schema':
+				return `schema:${node.profileId}/${node.schema}`;
+			case 'table':
+				return `table:${node.profileId}/${node.schema}/${node.table}`;
 		}
 	}
 }

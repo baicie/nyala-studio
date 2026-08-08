@@ -8,6 +8,7 @@ import {
 	clampColumnWidth,
 	copyAllRows,
 	copySelectedCell,
+	copySelectedColumn,
 	copySelectedRow,
 	copySqlResultGrid,
 	escapeCsvCell,
@@ -21,6 +22,7 @@ import {
 } from '../common/sqlResultGridModel.js';
 
 const resultGridStyles = readFileSync(new URL('../browser/media/sqlResult.css', import.meta.url), 'utf8');
+const resultViewSource = readFileSync(new URL('../browser/sqlResultView.ts', import.meta.url), 'utf8');
 
 const sampleResult: SqlQueryResult = {
 	columns: [
@@ -51,6 +53,71 @@ test('result table keeps sparse numeric columns near their headers', () => {
 	assert.ok(tableRule);
 	assert.match(tableRule, /width:\s*max-content/);
 	assert.doesNotMatch(tableRule, /min-width:\s*100%/);
+});
+
+test('result grid owns both scroll axes so sticky headers remain anchored', () => {
+	const contentRule = resultGridStyles.match(/\.sql-result-content\s*\{(?<declarations>[^}]*)\}/s)?.groups
+		?.declarations;
+	const wrapperRule = resultGridStyles.match(/\.sql-result-table-wrapper\s*\{(?<declarations>[^}]*)\}/s)?.groups
+		?.declarations;
+
+	assert.ok(contentRule);
+	assert.match(contentRule, /display:\s*flex/);
+	assert.match(contentRule, /overflow:\s*hidden/);
+	assert.ok(wrapperRule);
+	assert.match(wrapperRule, /flex:\s*1 1 auto/);
+	assert.match(wrapperRule, /overflow:\s*auto/);
+});
+
+test('result toolbar keeps every action reachable in a narrow pane without horizontal scrolling', () => {
+	const toolbarRule = resultGridStyles.match(/\.sql-result-toolbar\s*\{(?<declarations>[^}]*)\}/s)?.groups
+		?.declarations;
+
+	assert.ok(toolbarRule);
+	assert.match(
+		toolbarRule,
+		/flex-wrap:\s*wrap/,
+		'result actions must wrap instead of overflowing behind the pane clipping boundary'
+	);
+	assert.doesNotMatch(toolbarRule, /overflow-x:\s*(?:auto|scroll)/);
+});
+
+test('result history reserves one grid track for each rendered control', () => {
+	const historyItemRule = resultGridStyles.match(/\.sql-result-history-item\s*\{(?<declarations>[^}]*)\}/s)?.groups
+		?.declarations;
+
+	assert.ok(historyItemRule);
+	assert.match(
+		historyItemRule,
+		/grid-template-columns:\s*minmax\(64px, 76px\) minmax\(96px, 140px\) minmax\(0, 1fr\) 24px/
+	);
+	assert.match(resultGridStyles, /\.sql-result-history-heading\s*\{/);
+});
+
+test('result history uses roving focus and supports listbox navigation keys', () => {
+	const renderPanelStateSource = resultViewSource.match(
+		/private renderPanelState\([\s\S]*?(?=\n\tprivate renderRunning)/
+	)?.[0];
+
+	assert.ok(renderPanelStateSource);
+
+	const missingBehaviors: string[] = [];
+	if (!/tabIndex:\s*isActive\s*\?\s*0\s*:\s*-1/.test(renderPanelStateSource)) {
+		missingBehaviors.push('only the active option participates in the tab order');
+	}
+	if (!/'aria-selected':\s*String\(isActive\)/.test(renderPanelStateSource)) {
+		missingBehaviors.push('exactly the active option is exposed as selected');
+	}
+	for (const key of ['ArrowUp', 'ArrowDown', 'Home', 'End']) {
+		if (!renderPanelStateSource.includes(`'${key}'`) && !renderPanelStateSource.includes(`"${key}"`)) {
+			missingBehaviors.push(`handles ${key}`);
+		}
+	}
+	if (!/\.focus\(\)/.test(renderPanelStateSource)) {
+		missingBehaviors.push('moves DOM focus to the navigated option');
+	}
+
+	assert.deepEqual(missingBehaviors, []);
 });
 
 test('buildSqlResultGrid keeps column and cell metadata', () => {
@@ -86,6 +153,16 @@ test('buildSqlResultGrid marks panel truncation', () => {
 	assert.equal(grid.totalRowCount, 2);
 	assert.equal(grid.truncatedByPanel, true);
 	assert.equal(grid.truncatedByBackend, false);
+});
+
+test('buildSqlResultGrid identifies an empty rowset', () => {
+	const grid = buildSqlResultGrid({
+		...sampleResult,
+		rows: [],
+		rowCount: 0
+	});
+
+	assert.equal(grid.isEmpty, true);
 });
 
 test('buildSqlResultGrid rejects invalid maxRows', () => {
@@ -171,6 +248,30 @@ test('copySelectedRow returns empty string for negative row', () => {
 	assert.equal(copySelectedRow(grid, { rowIndex: -1, columnIndex: 0 }, SqlResultCopyFormat.Tsv, true), '');
 });
 
+test('copySelectedColumn copies the selected column as TSV with header', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(
+		copySelectedColumn(grid, { rowIndex: 0, columnIndex: 1 }, SqlResultCopyFormat.Tsv, true),
+		'name\nAlice\nNULL'
+	);
+});
+
+test('copySelectedColumn copies the selected column as CSV without header', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(
+		copySelectedColumn(grid, { rowIndex: 0, columnIndex: 2 }, SqlResultCopyFormat.Csv, false),
+		'"hello, ""world"""\n[blob 3 bytes]'
+	);
+});
+
+test('copySelectedColumn returns empty string without a valid selection', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(copySelectedColumn(grid, { rowIndex: 0, columnIndex: 99 }, SqlResultCopyFormat.Tsv), '');
+});
+
 test('copyAllRows copies all rows as CSV', () => {
 	const grid = buildSqlResultGrid(sampleResult);
 
@@ -180,7 +281,7 @@ test('copyAllRows copies all rows as CSV', () => {
 	);
 });
 
-test('copySqlResultGrid supports cell row and all modes', () => {
+test('copySqlResultGrid supports cell row column and all modes', () => {
 	const grid = buildSqlResultGrid(sampleResult);
 
 	assert.equal(
@@ -199,6 +300,15 @@ test('copySqlResultGrid supports cell row and all modes', () => {
 			selection: { rowIndex: 0, columnIndex: 0 }
 		}),
 		'id\tname\tnote\n1\tAlice\thello, "world"'
+	);
+
+	assert.equal(
+		copySqlResultGrid(grid, {
+			mode: SqlResultCopyMode.Column,
+			format: SqlResultCopyFormat.Tsv,
+			selection: { rowIndex: 0, columnIndex: 0 }
+		}),
+		'id\n1\n2'
 	);
 
 	assert.equal(

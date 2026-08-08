@@ -7,9 +7,11 @@ import { invoke, isTauri } from '../../../../sidex-bridge.js';
 export type SqlCommandName =
 	| 'sql_test_connection'
 	| 'sql_open_connection'
+	| 'sql_replace_connection'
 	| 'sql_close_connection'
 	| 'sql_list_connections'
 	| 'sql_save_connection'
+	| 'sql_save_and_open_connection'
 	| 'sql_list_saved_connections'
 	| 'sql_remove_saved_connection'
 	| 'sql_restore_saved_connections'
@@ -20,6 +22,8 @@ export type SqlCommandName =
 	| 'sql_cancel_query'
 	| 'sql_list_driver_runtime_status'
 	| 'sql_assert_driver_runtime_status'
+	| 'sql_list_driver_packages'
+	| 'sql_download_driver'
 	| 'sql_bootstrap_demo'
 	| 'sql_validate_mysql_preview'
 	// Phase 01 - Connection MVP commands.

@@ -26,28 +26,52 @@ export interface SqlEditorQueryStartedEvent {
 	readonly sql: string;
 	readonly source: SqlEditorExecutionSource;
 	readonly startedAt: number;
+	readonly executionId?: string;
+}
+
+export interface SqlEditorStatementResult {
+	readonly resultId: string;
+	readonly executionId: string;
+	readonly statementIndex: number;
+	readonly statementCount: number;
+	readonly sql: string;
+	readonly startedAt: number;
+	readonly completedAt: number;
+	readonly result: SqlQueryResult;
+}
+
+export interface SqlEditorFailedStatement {
+	readonly resultId: string;
+	readonly executionId: string;
+	readonly statementIndex: number;
+	readonly statementCount: number;
+	readonly sql: string;
+	readonly startedAt: number;
+	readonly completedAt: number;
+	readonly error: Error;
 }
 
 export interface SqlEditorQueryCompletedEvent extends SqlEditorQueryStartedEvent {
 	readonly result: SqlQueryResult;
 	readonly completedAt: number;
+	readonly statementResults?: readonly SqlEditorStatementResult[];
 }
 
 export interface SqlEditorQueryFailedEvent extends SqlEditorQueryStartedEvent {
 	readonly error: Error;
 	readonly completedAt: number;
+	readonly statementResults?: readonly SqlEditorStatementResult[];
+	readonly failedStatement?: SqlEditorFailedStatement;
 }
 
 export interface SqlEditorQueryCancelledEvent extends SqlEditorQueryStartedEvent {
 	readonly message: string;
 	readonly completedAt: number;
+	readonly statementResults?: readonly SqlEditorStatementResult[];
 }
 
 export type SqlEditorExecutionEvent =
-	| SqlEditorQueryStartedEvent
-	| SqlEditorQueryCompletedEvent
-	| SqlEditorQueryFailedEvent
-	| SqlEditorQueryCancelledEvent;
+	SqlEditorQueryStartedEvent | SqlEditorQueryCompletedEvent | SqlEditorQueryFailedEvent | SqlEditorQueryCancelledEvent;
 
 export interface ISqlEditorEventService {
 	readonly _serviceBrand: undefined;

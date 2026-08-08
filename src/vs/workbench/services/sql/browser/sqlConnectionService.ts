@@ -23,6 +23,8 @@ import { ISqlCommandExecutor, TauriSqlCommandExecutor, toSqlServiceError } from 
 export class SqlConnectionService implements ISqlConnectionService {
 	declare readonly _serviceBrand: undefined;
 
+	constructor();
+	constructor(executor: ISqlCommandExecutor);
 	constructor(private readonly executor: ISqlCommandExecutor = new TauriSqlCommandExecutor()) {}
 
 	async testConnection(input: SqlConnectionInput): Promise<SqlConnectionTestResult> {
@@ -50,6 +52,20 @@ export class SqlConnectionService implements ISqlConnectionService {
 			});
 		} catch (error) {
 			throw toSqlServiceError('sql_open_connection', error);
+		}
+	}
+
+	async replaceConnection(input: SqlConnectionInput): Promise<SqlConnection> {
+		const normalized = normalizeSqlConnectionInput(input, {
+			preserveSecrets: true
+		});
+
+		try {
+			return await this.executor.execute<SqlConnection>('sql_replace_connection', {
+				input: normalized
+			});
+		} catch (error) {
+			throw toSqlServiceError('sql_replace_connection', error);
 		}
 	}
 
@@ -89,6 +105,26 @@ export class SqlConnectionService implements ISqlConnectionService {
 			});
 		} catch (error) {
 			throw toSqlServiceError('sql_save_connection', error);
+		}
+	}
+
+	async saveAndOpenConnection(
+		input: SqlConnectionInput,
+		autoConnect: boolean,
+		persist: boolean
+	): Promise<SqlConnection> {
+		const normalized = normalizeSqlConnectionInput(input, {
+			preserveSecrets: true
+		});
+
+		try {
+			return await this.executor.execute<SqlConnection>('sql_save_and_open_connection', {
+				input: normalized,
+				autoConnect,
+				persist
+			});
+		} catch (error) {
+			throw toSqlServiceError('sql_save_and_open_connection', error);
 		}
 	}
 

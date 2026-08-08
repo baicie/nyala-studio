@@ -1,41 +1,75 @@
 # Generates the full Nyala icon set from a source PNG.
 # Uses System.Drawing for high-quality alpha-aware resize.
-# Source PNG is centered on a transparent canvas with ~38% margin
-# so macOS/Windows dock rendering shows the leopard at a comparable
-# visual size to native icons.
+# The source is cropped to its dark artwork bounds, its connected white
+# background is removed, and the result is centered on a transparent canvas.
 
 param(
-  [Parameter(Position=0)][string]$SourcePath,
+  [Parameter(Position=0)][string]$SourcePath = "src-tauri/icons/icon-source.png",
   [string]$OutputDir = "src-tauri/icons"
 )
-
-if (-not $SourcePath) {
-  # Use the leopard source explicitly
-  $SourcePath = (Get-ChildItem -Filter 'ChatGPT*' | Select-Object -First 1).Name
-  if (-not $SourcePath) {
-    $SourcePath = (Get-ChildItem -Name *.png | Where-Object { $_.Name -like '*ChatGPT*' } | Select-Object -First 1)
-  }
-}
-if (-not $SourcePath) { throw "no source PNG found; pass as positional arg" }
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 
-# 2000x2000 canvas with 62% coverage (38% margin, 19% each side) gives
-# a leopard roughly 1240px on a 2000px canvas — comparable visual ratio
-# to Apple Mail / Finder in dock.
+# Keep a 7% transparent inset around the cropped squircle.
 $CanvasSize = 2000
-$Coverage = 0.62
+$Coverage = 0.86
+
+function Get-DarkArtworkBounds([System.Drawing.Bitmap]$bitmap) {
+  $minX = $bitmap.Width
+  $minY = $bitmap.Height
+  $maxX = -1
+  $maxY = -1
+
+  for ($y = 0; $y -lt $bitmap.Height; $y++) {
+    for ($x = 0; $x -lt $bitmap.Width; $x++) {
+      $pixel = $bitmap.GetPixel($x, $y)
+      if ($pixel.A -gt 8 -and ($pixel.R -lt 245 -or $pixel.G -lt 245 -or $pixel.B -lt 245)) {
+        $minX = [Math]::Min($minX, $x)
+        $minY = [Math]::Min($minY, $y)
+        $maxX = [Math]::Max($maxX, $x)
+        $maxY = [Math]::Max($maxY, $y)
+      }
+    }
+  }
+
+  if ($maxX -lt $minX -or $maxY -lt $minY) { throw "source contains no visible dark artwork" }
+  return [System.Drawing.Rectangle]::FromLTRB($minX, $minY, $maxX + 1, $maxY + 1)
+}
+
+function Prepare-TransparentSource([string]$src, [string]$dst) {
+  if (-not (Test-Path $src)) { throw "source not found: $src" }
+  $bitmap = New-Object System.Drawing.Bitmap ((Resolve-Path $src).Path)
+  $bounds = Get-DarkArtworkBounds $bitmap
+  $logoMinX = [int][Math]::Floor($bounds.Left + $bounds.Width * 0.23)
+  $logoMaxX = [int][Math]::Ceiling($bounds.Left + $bounds.Width * 0.77)
+  $logoMinY = [int][Math]::Floor($bounds.Top + $bounds.Height * 0.14)
+  $logoMaxY = [int][Math]::Ceiling($bounds.Top + $bounds.Height * 0.88)
+
+  for ($y = 0; $y -lt $bitmap.Height; $y++) {
+    for ($x = 0; $x -lt $bitmap.Width; $x++) {
+      $insideLogo = $x -ge $logoMinX -and $x -le $logoMaxX -and $y -ge $logoMinY -and $y -le $logoMaxY
+      if ($insideLogo) { continue }
+
+      $pixel = $bitmap.GetPixel($x, $y)
+      $luminance = ($pixel.R + $pixel.G + $pixel.B) / 3
+      $recoveredAlpha = [int][Math]::Round($pixel.A * (255 - $luminance) / 255)
+      $bitmap.SetPixel($x, $y, [System.Drawing.Color]::FromArgb($recoveredAlpha, 0, 0, 0))
+    }
+  }
+
+  $bitmap.Save($dst, [System.Drawing.Imaging.ImageFormat]::Png)
+  $bitmap.Dispose()
+}
 
 function Pad-Source([string]$src, [string]$dst, [int]$canvasSize, [double]$coverage) {
   if (-not (Test-Path $src)) { throw "source not found: $src" }
   $full = (Resolve-Path $src).Path
   $bitmap = [System.Drawing.Bitmap]::FromFile($full)
-  $bmpW = $bitmap.Width
-  $bmpH = $bitmap.Height
-  $scale = $canvasSize * $coverage / [Math]::Max($bmpW, $bmpH)
-  $newW = [int]([Math]::Round($bmpW * $scale))
-  $newH = [int]([Math]::Round($bmpH * $scale))
+  $bounds = Get-DarkArtworkBounds $bitmap
+  $scale = $canvasSize * $coverage / [Math]::Max($bounds.Width, $bounds.Height)
+  $newW = [int]([Math]::Round($bounds.Width * $scale))
+  $newH = [int]([Math]::Round($bounds.Height * $scale))
   $canvas = New-Object System.Drawing.Bitmap $canvasSize, $canvasSize, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
   $g = [System.Drawing.Graphics]::FromImage($canvas)
   $g.Clear([System.Drawing.Color]::Transparent)
@@ -44,7 +78,8 @@ function Pad-Source([string]$src, [string]$dst, [int]$canvasSize, [double]$cover
   $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
   $x = [int](($canvasSize - $newW) / 2)
   $y = [int](($canvasSize - $newH) / 2)
-  $g.DrawImage($bitmap, $x, $y, $newW, $newH)
+  $destination = New-Object System.Drawing.Rectangle $x, $y, $newW, $newH
+  $g.DrawImage($bitmap, $destination, $bounds, [System.Drawing.GraphicsUnit]::Pixel)
   $g.Dispose(); $bitmap.Dispose(); $canvas.Save($dst, [System.Drawing.Imaging.ImageFormat]::Png); $canvas.Dispose()
 }
 
@@ -60,6 +95,25 @@ function Resize-Png([string]$src, [string]$dst, [int]$size) {
   $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
   $g.DrawImage($bitmap, 0, 0, $size, $size)
   $g.Dispose(); $bitmap.Dispose(); $canvas.Save($dst, [System.Drawing.Imaging.ImageFormat]::Png); $canvas.Dispose()
+}
+
+function Increase-SmallIconContrast([string]$path, [int]$size) {
+  if ($size -gt 48) { return }
+  $bitmap = New-Object System.Drawing.Bitmap ((Resolve-Path $path).Path)
+  for ($y = 0; $y -lt $bitmap.Height; $y++) {
+    for ($x = 0; $x -lt $bitmap.Width; $x++) {
+      $pixel = $bitmap.GetPixel($x, $y)
+      if ($pixel.A -eq 0) { continue }
+      $r = [Math]::Max(0, [Math]::Min(255, [int][Math]::Round(($pixel.R - 128) * 1.3 + 128)))
+      $g = [Math]::Max(0, [Math]::Min(255, [int][Math]::Round(($pixel.G - 128) * 1.3 + 128)))
+      $b = [Math]::Max(0, [Math]::Min(255, [int][Math]::Round(($pixel.B - 128) * 1.3 + 128)))
+      $bitmap.SetPixel($x, $y, [System.Drawing.Color]::FromArgb($pixel.A, $r, $g, $b))
+    }
+  }
+  $contrastPath = "$path.contrast.png"
+  $bitmap.Save($contrastPath, [System.Drawing.Imaging.ImageFormat]::Png)
+  $bitmap.Dispose()
+  Move-Item -LiteralPath $contrastPath -Destination $path -Force
 }
 
 function Write-Icns($map, $dst) {
@@ -136,13 +190,16 @@ if (Test-Path $tmpDir) { Remove-Item -Recurse -Force $tmpDir }
 New-Item -ItemType Directory -Path $tmpDir | Out-Null
 
 # 1) Pad source
+$cleanSource = "$tmpDir/source-transparent.png"
+Prepare-TransparentSource $SourcePath $cleanSource
 $padded = "$tmpDir/master-2000.png"
-Pad-Source $SourcePath $padded $CanvasSize $Coverage
+Pad-Source $cleanSource $padded $CanvasSize $Coverage
 
 # 2) Generate all sizes we need
-$requiredSizes = @(16, 24, 32, 48, 50, 64, 72, 89, 107, 128, 142, 150, 192, 256, 284, 310, 384, 512, 1024)
+$requiredSizes = @(16, 20, 24, 28, 32, 36, 40, 48, 50, 56, 64, 72, 80, 89, 96, 107, 112, 128, 142, 150, 192, 256, 284, 310, 384, 512, 1024)
 foreach ($sz in $requiredSizes) {
   Resize-Png $padded "$tmpDir/$($sz).png" $sz
+  Increase-SmallIconContrast "$tmpDir/$($sz).png" $sz
 }
 
 # 3) Lay out the canonical Tauri files
@@ -180,24 +237,32 @@ $icnsMap = [ordered]@{
   'ic07' = "$tmpDir/128.png"
   'ic08' = "$tmpDir/256.png"
   'ic09' = "$tmpDir/512.png"
-  'ic10' = "$tmpDir/32.png"   # 16@2x = 32
-  'ic11' = "$tmpDir/64.png"   # 32@2x = 64
-  'ic12' = "$tmpDir/128.png"  # 64@2x = 128
+  'ic10' = "$tmpDir/1024.png" # 512@2x = 1024
+  'ic11' = "$tmpDir/32.png"   # 16@2x = 32
+  'ic12' = "$tmpDir/64.png"   # 32@2x = 64
   'ic13' = "$tmpDir/256.png"  # 128@2x = 256
   'ic14' = "$tmpDir/512.png"  # 256@2x = 512
-  'ic15' = "$tmpDir/1024.png" # 512@2x = 1024
 }
 Write-Icns $icnsMap "$OutputDir/icon.icns"
 
 # 5) Build .ico
 $icoEntries = @(
-  # Tauri's Windows icon loader uses the first ICO entry.
+  # Tauri decodes the first entry for its default Windows window icon (ICON_SMALL).
+  @{ size = 32;  path = "$tmpDir/32.png" },
   @{ size = 256; path = "$tmpDir/256.png" },
   @{ size = 128; path = "$tmpDir/128.png" },
+  @{ size = 112; path = "$tmpDir/112.png" },
+  @{ size = 96;  path = "$tmpDir/96.png" },
+  @{ size = 80;  path = "$tmpDir/80.png" },
+  @{ size = 72;  path = "$tmpDir/72.png" },
   @{ size = 64;  path = "$tmpDir/64.png" },
+  @{ size = 56;  path = "$tmpDir/56.png" },
   @{ size = 48;  path = "$tmpDir/48.png" },
-  @{ size = 32;  path = "$tmpDir/32.png" },
+  @{ size = 40;  path = "$tmpDir/40.png" },
+  @{ size = 36;  path = "$tmpDir/36.png" },
+  @{ size = 28;  path = "$tmpDir/28.png" },
   @{ size = 24;  path = "$tmpDir/24.png" },
+  @{ size = 20;  path = "$tmpDir/20.png" },
   @{ size = 16;  path = "$tmpDir/16.png" }
 )
 Write-Ico $icoEntries "$OutputDir/icon.ico"
