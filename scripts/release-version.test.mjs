@@ -6,6 +6,7 @@ import {
 	formatGitHubReleaseMetadata,
 	isPrereleaseVersion,
 	isWindowsMsiCompatibleVersion,
+	normalizeReleaseAssetFilename,
 	parseReleaseArguments,
 	readCargoLockPackageVersion,
 	readCargoPackageVersion,
@@ -51,6 +52,18 @@ test('selects Windows bundles that can represent the release version', () => {
 		formatGitHubReleaseMetadata('0.0.1-dev.0'),
 		['version=0.0.1-dev.0', 'tag=v0.0.1-dev.0', 'prerelease=true', 'windows_bundles=nsis'].join('\n')
 	);
+});
+
+test('normalizes release asset filenames before checksum generation', () => {
+	assert.equal(
+		normalizeReleaseAssetFilename('Nyala Studio_0.0.1-dev.0_x64-setup.exe'),
+		'Nyala.Studio_0.0.1-dev.0_x64-setup.exe'
+	);
+	assert.equal(normalizeReleaseAssetFilename('Nyala.Studio_0.0.1_x64.dmg'), 'Nyala.Studio_0.0.1_x64.dmg');
+	assert.equal(normalizeReleaseAssetFilename('Nyala Studio_0.0.1+build.9.dmg'), 'Nyala.Studio_0.0.1.build.9.dmg');
+	for (const filename of ['', '   ', '../Nyala.dmg', 'folder\\Nyala.dmg', '\0']) {
+		assert.throws(() => normalizeReleaseAssetFilename(filename));
+	}
 });
 
 test('rejects ambiguous or invalid release versions', () => {

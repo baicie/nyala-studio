@@ -149,6 +149,8 @@ The release must contain nonempty packages prefixed by each artifact group:
 
 The exact extensions depend on Tauri's platform bundles. The current target
 set normally includes DMG, NSIS/MSI, DEB/RPM, and AppImage packages.
+Asset filenames are normalized before upload so the names in
+`SHA256SUMS.txt` exactly match the names returned by GitHub downloads.
 Named prereleases such as `0.0.1-dev.0` use NSIS only on Windows because WiX
 cannot encode nonnumeric prerelease identifiers. Versions compatible with
 WiX's numeric version model continue to produce both MSI and NSIS installers.

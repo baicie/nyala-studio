@@ -334,7 +334,8 @@ jobs:
           for path in dist-artifacts/*; do
             [ -f "$path" ] || continue
             filename=$(basename "$path")
-            mv "$path" "dist-artifacts/${{ matrix.artifact_name }}-$filename"
+            safe_filename=$(node scripts/release-version.mjs asset-name "$filename")
+            mv "$path" "dist-artifacts/${{ matrix.artifact_name }}-$safe_filename"
           done
 
       - name: Verify collected artifacts
