@@ -45,6 +45,7 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       tag: ${{ steps.release.outputs.tag }}
       prerelease: ${{ steps.release.outputs.prerelease }}
+      windows_bundles: ${{ steps.release.outputs.windows_bundles }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,15 +74,7 @@ jobs:
             exit 1
           fi
 
-          PRERELEASE=false
-          VERSION_WITHOUT_BUILD="${VERSION%%+*}"
-          if [[ "$VERSION_WITHOUT_BUILD" == *-* ]]; then
-            PRERELEASE=true
-          fi
-
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          node scripts/release-version.mjs metadata "$VERSION" >> "$GITHUB_OUTPUT"
 
   gate:
     name: SQL MVP gate
@@ -251,8 +244,20 @@ jobs:
           --target ${{ matrix.target }}
           --config src-tauri/tauri.release.conf.json
 
-      - name: Build signed updater artifacts
-        if: runner.os != 'macOS' && steps.signing.outputs.updater == 'true'
+      - name: Build signed Windows updater artifacts
+        if: runner.os == 'Windows' && steps.signing.outputs.updater == 'true'
+        timeout-minutes: 40
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: >-
+          pnpm exec tauri build --ci
+          --target ${{ matrix.target }}
+          --bundles ${{ needs.metadata.outputs.windows_bundles }}
+          --config src-tauri/tauri.release.conf.json
+
+      - name: Build signed Linux updater artifacts
+        if: runner.os == 'Linux' && steps.signing.outputs.updater == 'true'
         timeout-minutes: 40
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -271,8 +276,16 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm exec tauri build --ci --target ${{ matrix.target }}
 
+      - name: Build unsigned Windows development artifacts
+        if: runner.os == 'Windows' && steps.signing.outputs.updater != 'true'
+        timeout-minutes: 40
+        run: >-
+          pnpm exec tauri build --ci --no-sign
+          --target ${{ matrix.target }}
+          --bundles ${{ needs.metadata.outputs.windows_bundles }}
+
       - name: Build unsigned development artifacts
-        if: steps.signing.outputs.updater != 'true' && (runner.os != 'macOS' || steps.signing.outputs.apple != 'true')
+        if: runner.os != 'Windows' && steps.signing.outputs.updater != 'true' && (runner.os != 'macOS' || steps.signing.outputs.apple != 'true')
         timeout-minutes: 40
         run: pnpm exec tauri build --ci --no-sign --target ${{ matrix.target }}
 

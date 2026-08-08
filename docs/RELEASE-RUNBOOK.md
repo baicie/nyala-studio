@@ -149,6 +149,9 @@ The release must contain nonempty packages prefixed by each artifact group:
 
 The exact extensions depend on Tauri's platform bundles. The current target
 set normally includes DMG, NSIS/MSI, DEB/RPM, and AppImage packages.
+Named prereleases such as `0.0.1-dev.0` use NSIS only on Windows because WiX
+cannot encode nonnumeric prerelease identifiers. Versions compatible with
+WiX's numeric version model continue to produce both MSI and NSIS installers.
 
 ## 5. Platform smoke checks
 

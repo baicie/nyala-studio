@@ -55,6 +55,48 @@ export function isPrereleaseVersion(version) {
 	return version.split('+', 1)[0].includes('-');
 }
 
+export function isWindowsMsiCompatibleVersion(version) {
+	validateReleaseVersion(version);
+
+	const buildSeparator = version.indexOf('+');
+	const coreAndPrerelease = buildSeparator === -1 ? version : version.slice(0, buildSeparator);
+	const build = buildSeparator === -1 ? undefined : version.slice(buildSeparator + 1);
+	const prereleaseSeparator = coreAndPrerelease.indexOf('-');
+	const core = prereleaseSeparator === -1 ? coreAndPrerelease : coreAndPrerelease.slice(0, prereleaseSeparator);
+	const prerelease = prereleaseSeparator === -1 ? undefined : coreAndPrerelease.slice(prereleaseSeparator + 1);
+	const [major, minor, patch] = core.split('.').map(part => BigInt(part));
+
+	if (major > 255n || minor > 255n || patch > 65535n) {
+		return false;
+	}
+
+	const optionalWindowsComponent = build ?? prerelease;
+	return (
+		optionalWindowsComponent === undefined ||
+		(/^\d+$/.test(optionalWindowsComponent) && BigInt(optionalWindowsComponent) <= 65535n)
+	);
+}
+
+export function resolveReleaseMetadata(version) {
+	validateReleaseVersion(version);
+	return {
+		version,
+		tag: `v${version}`,
+		prerelease: isPrereleaseVersion(version),
+		windowsBundles: isWindowsMsiCompatibleVersion(version) ? 'msi,nsis' : 'nsis'
+	};
+}
+
+export function formatGitHubReleaseMetadata(version) {
+	const metadata = resolveReleaseMetadata(version);
+	return [
+		`version=${metadata.version}`,
+		`tag=${metadata.tag}`,
+		`prerelease=${metadata.prerelease}`,
+		`windows_bundles=${metadata.windowsBundles}`
+	].join('\n');
+}
+
 export function parseReleaseArguments(arguments_) {
 	return arguments_.filter(argument => argument !== '--');
 }
@@ -232,11 +274,15 @@ async function main() {
 		await checkReleaseVersion(process.cwd(), version);
 		return;
 	}
+	if (command === 'metadata' && version && arguments_.length === 2) {
+		console.log(formatGitHubReleaseMetadata(version));
+		return;
+	}
 	if (command === 'prepare' && version && arguments_.length === 2) {
 		await prepareReleaseVersion(process.cwd(), version);
 		return;
 	}
-	fail('Usage: release-version.mjs check [version] | prepare <version>');
+	fail('Usage: release-version.mjs check [version] | metadata <version> | prepare <version>');
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
