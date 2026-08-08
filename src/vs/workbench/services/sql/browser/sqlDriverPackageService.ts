@@ -27,6 +27,8 @@ export class SqlDriverPackageService extends Disposable implements ISqlDriverPac
 	private packagesLoad: Promise<readonly SqlDriverPackage[]> | undefined;
 	private readonly onDidChangeEmitter = this._register(new Emitter<void>());
 
+	constructor();
+	constructor(executor: ISqlCommandExecutor);
 	constructor(private readonly executor: ISqlCommandExecutor = new TauriSqlCommandExecutor()) {
 		super();
 	}

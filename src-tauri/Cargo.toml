@@ -83,13 +83,13 @@ url = "2"
 
 # WASM extension runtime. Wasmtime 36 is the newest fully patched line that
 # remains compatible with the workspace's Rust 1.91 minimum (45+ needs 1.93).
-wasmtime = { version = "36.0.12", default-features = false, features = [
+wasmtime = { version = "36.0.13", default-features = false, features = [
   "runtime",
   "component-model",
   "cranelift",
   "async",
 ] }
-wasmtime-wasi = "36.0.12"
+wasmtime-wasi = "36.0.13"
 toml = "0.8"
 anyhow = "1"
 sidex-db = { path = "../crates/sidex-db" }

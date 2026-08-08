@@ -86,6 +86,8 @@ export class SqlDriverCatalogService extends Disposable implements ISqlDriverCat
 	private readonly executor: TauriSqlCommandExecutor;
 	private readonly onDidChangeEmitter = this._register(new Emitter<void>());
 
+	constructor();
+	constructor(executor: TauriSqlCommandExecutor);
 	constructor(executor: TauriSqlCommandExecutor = new TauriSqlCommandExecutor()) {
 		super();
 		this.executor = executor;
@@ -131,7 +133,8 @@ export class SqlDriverCatalogService extends Disposable implements ISqlDriverCat
 			);
 
 			const entries = Array.isArray(raw) ? raw.map(toEntry) : [];
-			this.cache = Object.freeze(entries);
+			Object.freeze(entries);
+			this.cache = entries;
 			this.onDidChangeEmitter.fire();
 			return this.cache;
 		} catch (error) {
@@ -139,7 +142,9 @@ export class SqlDriverCatalogService extends Disposable implements ISqlDriverCat
 			// Tauri runtime), fall back to the documented truth-of-record so
 			// UI still renders meaningful labels.
 			if (error instanceof SqlServiceError) {
-				this.cache = Object.freeze(buildOfflineFallback());
+				const fallback = buildOfflineFallback();
+				Object.freeze(fallback);
+				this.cache = fallback;
 				this.onDidChangeEmitter.fire();
 				return this.cache;
 			}

@@ -5,37 +5,19 @@
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
-import {
-	IStorageService,
-	StorageScope,
-	StorageTarget
-} from '../../../../platform/storage/common/storage.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { SqlDialect } from '../../../services/sql/common/sqlDialect.js';
 import { SQL_ADVANCED_SNIPPETS_STORAGE_KEY, SQL_ADVANCED_WORKSPACE_STORAGE_KEY } from './sqlAdvanced.js';
 import { createExplainSql, SqlExplainPlanRequest } from './sqlAdvancedExplain.js';
 import { formatSql, SqlFormatOptions } from './sqlAdvancedFormatter.js';
-import {
-	BUILTIN_SQL_SNIPPETS,
-	mergeSnippets,
-	normalizeSnippet,
-	SqlSnippet
-} from './sqlAdvancedSnippets.js';
+import { BUILTIN_SQL_SNIPPETS, mergeSnippets, normalizeSnippet, SqlSnippet } from './sqlAdvancedSnippets.js';
 import {
 	createDefaultWorkspaceProject,
 	normalizeWorkspaceProject,
 	SqlWorkspaceProject
 } from './sqlAdvancedWorkspace.js';
-import {
-	DeterministicSqlAiProvider,
-	ISqlAiProvider,
-	SqlAiRequest,
-	SqlAiResponse
-} from './sqlAdvancedAi.js';
-import {
-	SqlStudioPluginManifest,
-	SqlStudioPluginRegistry,
-	SqlStudioRegisteredPlugin
-} from './sqlAdvancedPluginApi.js';
+import { DeterministicSqlAiProvider, ISqlAiProvider, SqlAiRequest, SqlAiResponse } from './sqlAdvancedAi.js';
+import { SqlStudioPluginManifest, SqlStudioPluginRegistry, SqlStudioRegisteredPlugin } from './sqlAdvancedPluginApi.js';
 
 export const ISqlAdvancedService = createDecorator<ISqlAdvancedService>('sqlAdvancedService');
 
@@ -74,6 +56,8 @@ export class SqlAdvancedService extends Disposable implements ISqlAdvancedServic
 	private workspace: SqlWorkspaceProject;
 	private snippets: SqlSnippet[];
 
+	constructor(storageService: IStorageService);
+	constructor(storageService: IStorageService, aiProvider: ISqlAiProvider);
 	constructor(
 		@IStorageService private readonly storageService: IStorageService,
 		private readonly aiProvider: ISqlAiProvider = new DeterministicSqlAiProvider()
@@ -109,10 +93,7 @@ export class SqlAdvancedService extends Disposable implements ISqlAdvancedServic
 			builtin: false
 		});
 
-		this.snippets = [
-			...this.snippets.filter(item => item.id !== normalized.id),
-			normalized
-		];
+		this.snippets = [...this.snippets.filter(item => item.id !== normalized.id), normalized];
 
 		this.storageService.store(
 			SQL_ADVANCED_SNIPPETS_STORAGE_KEY,

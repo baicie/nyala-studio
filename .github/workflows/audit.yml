@@ -54,12 +54,16 @@ jobs:
         run: cargo install cargo-audit --locked
 
       - name: Run cargo audit
-        # Tauri's Linux GTK3 stack and build-only HTML parser still carry these
-        # two upstream advisories. Deny every other current or future unsound warning.
+        # Tauri's Linux GTK3 stack and build-only HTML parser still carry two
+        # upstream advisories. rust_decimal also records optional rkyv 0.7 in
+        # Cargo.lock, but no active workspace feature or target enables it
+        # (`cargo tree -e features -i rkyv@0.7.46` is empty).
+        # Deny every other current or future unsound warning.
         run: >-
           cargo audit --file Cargo.lock --deny unsound
           --ignore RUSTSEC-2024-0429
           --ignore RUSTSEC-2026-0097
+          --ignore RUSTSEC-2026-0235
 
   pnpm-audit:
     name: pnpm audit

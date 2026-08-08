@@ -23,6 +23,8 @@ import { ISqlCommandExecutor, TauriSqlCommandExecutor, toSqlServiceError } from 
 export class SqlConnectionService implements ISqlConnectionService {
 	declare readonly _serviceBrand: undefined;
 
+	constructor();
+	constructor(executor: ISqlCommandExecutor);
 	constructor(private readonly executor: ISqlCommandExecutor = new TauriSqlCommandExecutor()) {}
 
 	async testConnection(input: SqlConnectionInput): Promise<SqlConnectionTestResult> {

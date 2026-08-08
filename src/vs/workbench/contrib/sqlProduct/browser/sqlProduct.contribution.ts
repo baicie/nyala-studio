@@ -6,11 +6,7 @@ import { localize2 } from '../../../../nls.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
-import {
-	Extensions as WorkbenchExtensions,
-	IWorkbenchContributionsRegistry,
-	WorkbenchPhase
-} from '../../../common/contributions.js';
+import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { Extensions as ViewExtensions, IViewsRegistry } from '../../../common/views.js';
 import { SQL_RESULT_VIEW_CONTAINER } from '../../sqlResult/browser/sqlResult.contribution.js';
 import { ISqlProductPreferencesService, SqlProductPreferencesService } from '../common/sqlProductPreferencesService.js';
@@ -53,7 +49,7 @@ Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews(
 	SQL_RESULT_VIEW_CONTAINER
 );
 
-Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).registerWorkbenchContribution2(
+registerWorkbenchContribution2(
 	'workbench.contrib.sqlProductBootstrap',
 	SqlProductBootstrapContribution,
 	WorkbenchPhase.AfterRestored
@@ -62,7 +58,7 @@ Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).regi
 // Register at startup so the 12-second safety timer also protects a
 // workbench that never reaches Restored. The contribution itself waits
 // for Restored before beginning the normal dismissal transition.
-Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).registerWorkbenchContribution2(
+registerWorkbenchContribution2(
 	SqlWorkbenchSplashContribution.ID,
 	SqlWorkbenchSplashContribution,
 	WorkbenchPhase.BlockStartup

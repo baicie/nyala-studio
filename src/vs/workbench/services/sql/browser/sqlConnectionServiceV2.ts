@@ -23,6 +23,8 @@ export class SqlConnectionServiceV2 extends Disposable implements ISqlConnection
 	private readonly _onChange = this._register(new Emitter<void>());
 	private profiles: IConnectionWithStatus[] = [];
 
+	constructor();
+	constructor(executor: ISqlCommandExecutor);
 	constructor(private readonly executor: ISqlCommandExecutor = new TauriSqlCommandExecutor()) {
 		super();
 	}

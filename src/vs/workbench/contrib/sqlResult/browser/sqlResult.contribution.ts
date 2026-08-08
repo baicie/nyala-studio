@@ -29,11 +29,7 @@ import {
 	ViewContainer,
 	ViewContainerLocation
 } from '../../../common/views.js';
-import {
-	Extensions as WorkbenchExtensions,
-	IWorkbenchContributionsRegistry,
-	WorkbenchPhase
-} from '../../../common/contributions.js';
+import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import {
 	SQL_RESULT_FOCUS_COMMAND_ID,
@@ -146,13 +142,13 @@ viewsRegistry.registerViews(
 	SQL_RESULT_VIEW_CONTAINER
 );
 
-Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).registerWorkbenchContribution2(
+registerWorkbenchContribution2(
 	'workbench.contrib.sqlResultBridge',
 	SqlResultBridgeContribution,
 	WorkbenchPhase.AfterRestored
 );
 
-Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).registerWorkbenchContribution2(
+registerWorkbenchContribution2(
 	'workbench.contrib.sqlQueryHistoryBridge',
 	SqlQueryHistoryBridgeContribution,
 	WorkbenchPhase.AfterRestored

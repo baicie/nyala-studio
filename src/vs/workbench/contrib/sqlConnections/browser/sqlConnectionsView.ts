@@ -114,7 +114,7 @@ export class SqlConnectionsView extends ViewPane {
 	private readonly treeRenderDisposables = this._register(new DisposableStore());
 	private readonly dataSourceRenderDisposables = this._register(new DisposableStore());
 
-	private body!: HTMLElement;
+	private bodyContainer!: HTMLElement;
 	private messageElement!: HTMLElement;
 	private treeElement!: HTMLElement;
 	private dataSourceSearchInput!: HTMLInputElement;
@@ -185,8 +185,8 @@ export class SqlConnectionsView extends ViewPane {
 	}
 
 	protected override renderBody(container: HTMLElement): void {
-		this.body = append(container, $('.sql-connections-view'));
-		this.body.classList.add(this.isConnectorView ? 'sql-connectors-mode' : 'sql-data-sources-mode');
+		this.bodyContainer = append(container, $('.sql-connections-view'));
+		this.bodyContainer.classList.add(this.isConnectorView ? 'sql-connectors-mode' : 'sql-data-sources-mode');
 
 		if (this.isConnectorView) {
 			this.renderConnectorBody();
@@ -197,7 +197,7 @@ export class SqlConnectionsView extends ViewPane {
 	}
 
 	private renderConnectorBody(): void {
-		const toolbar = append(this.body, $('.sql-connector-manager-toolbar'));
+		const toolbar = append(this.bodyContainer, $('.sql-connector-manager-toolbar'));
 		const searchWrap = append(toolbar, $('.sql-connector-manager-search-wrap'));
 		append(searchWrap, $('.codicon.codicon-search', { 'aria-hidden': 'true' }));
 		this.connectorSearchInput = append(
@@ -209,10 +209,10 @@ export class SqlConnectionsView extends ViewPane {
 			})
 		) as HTMLInputElement;
 		const refreshButton = this.appendIconButton(toolbar, 'refresh', 'Refresh connector status');
-		this.connectorCountElement = append(this.body, $('.sql-connector-manager-summary'));
-		this.connectorListElement = append(this.body, $('.sql-connector-manager-list'));
+		this.connectorCountElement = append(this.bodyContainer, $('.sql-connector-manager-summary'));
+		this.connectorListElement = append(this.bodyContainer, $('.sql-connector-manager-list'));
 		this.messageElement = append(
-			this.body,
+			this.bodyContainer,
 			$('.sql-connections-message', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' })
 		);
 
@@ -245,7 +245,7 @@ export class SqlConnectionsView extends ViewPane {
 	}
 
 	private renderDataSourcesBody(): void {
-		const actions = append(this.body, $('.sql-data-sources-actions'));
+		const actions = append(this.bodyContainer, $('.sql-data-sources-actions'));
 		const searchWrap = append(actions, $('.sql-data-source-search-wrap'));
 		append(searchWrap, $('.codicon.codicon-search', { 'aria-hidden': 'true' }));
 		this.dataSourceSearchInput = append(
@@ -273,14 +273,14 @@ export class SqlConnectionsView extends ViewPane {
 			})
 		);
 
-		this.dataSourceCountElement = append(this.body, $('.sql-data-source-summary'));
-		this.dataSourceListElement = append(this.body, $('.sql-data-source-list', { role: 'list' }));
-		append(this.body, $('.sql-data-source-section-title', undefined, 'Database Navigator'));
+		this.dataSourceCountElement = append(this.bodyContainer, $('.sql-data-source-summary'));
+		this.dataSourceListElement = append(this.bodyContainer, $('.sql-data-source-list', { role: 'list' }));
+		append(this.bodyContainer, $('.sql-data-source-section-title', undefined, 'Database Navigator'));
 		this.messageElement = append(
-			this.body,
+			this.bodyContainer,
 			$('.sql-connections-message', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' })
 		);
-		this.treeElement = append(this.body, $('.sql-connections-tree', { role: 'tree', tabIndex: 0 }));
+		this.treeElement = append(this.bodyContainer, $('.sql-connections-tree', { role: 'tree', tabIndex: 0 }));
 		this.renderDataSourceManagement();
 		this.renderTree();
 

@@ -15,6 +15,8 @@ import { ISqlCommandExecutor, TauriSqlCommandExecutor, toSqlServiceError } from 
 export class SqlQueryService implements ISqlQueryService {
 	declare readonly _serviceBrand: undefined;
 
+	constructor();
+	constructor(executor: ISqlCommandExecutor);
 	constructor(private readonly executor: ISqlCommandExecutor = new TauriSqlCommandExecutor()) {}
 
 	async executeQuery(request: SqlExecuteQueryRequest): Promise<SqlQueryResult> {

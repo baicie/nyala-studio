@@ -1836,7 +1836,7 @@ export function triggerDownload(dataOrUri: Uint8Array | URI, name: string): void
 	if (URI.isUri(dataOrUri)) {
 		url = dataOrUri.toString(true);
 	} else {
-		const blob = new Blob([dataOrUri as Uint8Array]);
+		const blob = new Blob([new Uint8Array(dataOrUri)]);
 		url = URL.createObjectURL(blob);
 
 		// Ensure to free the data from DOM eventually

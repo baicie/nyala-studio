@@ -14,6 +14,8 @@ import { ISqlCommandExecutor, TauriSqlCommandExecutor } from './sqlCommandExecut
 export class SqlProductService implements ISqlProductService {
 	declare readonly _serviceBrand: undefined;
 
+	constructor();
+	constructor(executor: ISqlCommandExecutor);
 	constructor(private readonly executor: ISqlCommandExecutor = new TauriSqlCommandExecutor()) {}
 
 	bootstrapDemo(): Promise<SqlDemoBootstrapResult> {
