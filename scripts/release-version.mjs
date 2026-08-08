@@ -97,6 +97,24 @@ export function formatGitHubReleaseMetadata(version) {
 	].join('\n');
 }
 
+export function normalizeReleaseAssetFilename(filename) {
+	if (
+		typeof filename !== 'string' ||
+		filename.length === 0 ||
+		filename.includes('/') ||
+		filename.includes('\\') ||
+		filename.includes('\0')
+	) {
+		fail('Release asset filename must be a non-empty basename.');
+	}
+
+	const normalized = filename.replace(/[^0-9A-Za-z._-]+/g, '.');
+	if (!/[0-9A-Za-z]/.test(normalized) || normalized === '.' || normalized === '..') {
+		fail('Release asset filename must contain an ASCII letter or digit.');
+	}
+	return normalized;
+}
+
 export function parseReleaseArguments(arguments_) {
 	return arguments_.filter(argument => argument !== '--');
 }
@@ -269,20 +287,24 @@ async function prepareReleaseVersion(root, version) {
 
 async function main() {
 	const arguments_ = parseReleaseArguments(process.argv.slice(2));
-	const [command, version] = arguments_;
+	const [command, value] = arguments_;
 	if (command === 'check' && arguments_.length <= 2) {
-		await checkReleaseVersion(process.cwd(), version);
+		await checkReleaseVersion(process.cwd(), value);
 		return;
 	}
-	if (command === 'metadata' && version && arguments_.length === 2) {
-		console.log(formatGitHubReleaseMetadata(version));
+	if (command === 'metadata' && value && arguments_.length === 2) {
+		console.log(formatGitHubReleaseMetadata(value));
 		return;
 	}
-	if (command === 'prepare' && version && arguments_.length === 2) {
-		await prepareReleaseVersion(process.cwd(), version);
+	if (command === 'asset-name' && value && arguments_.length === 2) {
+		console.log(normalizeReleaseAssetFilename(value));
 		return;
 	}
-	fail('Usage: release-version.mjs check [version] | metadata <version> | prepare <version>');
+	if (command === 'prepare' && value && arguments_.length === 2) {
+		await prepareReleaseVersion(process.cwd(), value);
+		return;
+	}
+	fail('Usage: release-version.mjs asset-name <filename> | check [version] | metadata <version> | prepare <version>');
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
