@@ -1,10 +1,10 @@
 [package]
 name = "sql-studio-next"
-version = "0.1.0"
+version = "0.0.1-dev.0"
 description = "SQL Studio Next - A VS Code-like SQL workbench built on Tauri"
 authors = ["baicie"]
 license = "MIT"
-repository = "https://github.com/baicie/sql-studio-next"
+repository = "https://github.com/baicie/nyala-studio"
 edition = "2021"
 rust-version = "1.91.0"
 

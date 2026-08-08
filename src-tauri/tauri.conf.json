@@ -1,83 +1,74 @@
 {
-  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Nyala Studio",
-  "version": "0.1.0",
-  "identifier": "com.baicie.sqlstudio",
-  "build": {
-    "frontendDist": "../dist",
-    "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "pnpm run dev:vite",
-    "beforeBuildCommand": "pnpm run build"
-  },
-  "app": {
-    "windows": [
-      {
-        "title": "Nyala",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 800,
-        "minHeight": 600,
-        "resizable": true,
-        "fullscreen": false,
-        "decorations": false,
-        "shadow": true,
-        "visible": false,
-        "dragDropEnabled": false,
-        "useHttpsScheme": true,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true
-      }
-    ],
-    "security": {
-      "csp": null,
-      "assetProtocol": {
-        "enable": true,
-        "scope": ["$HOME/**", "/tmp/**"]
-      }
-    }
-  },
-  "plugins": {},
-  "bundle": {
-    "active": true,
-    "targets": "all",
-    "copyright": "Copyright © 2026 baicie. All rights reserved.",
-    "category": "DeveloperTool",
-    "shortDescription": "Local-first SQL Workbench.",
-    "longDescription": "Nyala Studio is a local-first SQL database workbench built on a Tauri-based VS Code-style workbench.",
-    "resources": [
-      "extension-host/*",
-      "shell-integration/*"
-    ],
-    "icon": [
-      "icons/32x32.png",
-      "icons/64x64.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ],
-    "macOS": {
-      "entitlements": "entitlements.plist",
-      "minimumSystemVersion": "10.15"
-    },
-    "windows": {
-      "webviewInstallMode": {
-        "type": "downloadBootstrapper"
-      }
-    },
-    "linux": {
-      "deb": {
-        "depends": [
-          "libwebkit2gtk-4.1-0",
-          "libgtk-3-0"
-        ]
-      },
-      "rpm": {
-        "depends": [
-          "webkit2gtk4.1",
-          "gtk3"
-        ]
-      }
-    }
-  }
+	"$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+	"productName": "Nyala Studio",
+	"version": "0.0.1-dev.0",
+	"identifier": "com.baicie.sqlstudio",
+	"build": {
+		"frontendDist": "../dist",
+		"devUrl": "http://localhost:1420",
+		"beforeDevCommand": "pnpm run dev:vite",
+		"beforeBuildCommand": "pnpm run build"
+	},
+	"app": {
+		"windows": [
+			{
+				"title": "Nyala",
+				"width": 1280,
+				"height": 800,
+				"minWidth": 800,
+				"minHeight": 600,
+				"resizable": true,
+				"fullscreen": false,
+				"decorations": false,
+				"shadow": true,
+				"visible": false,
+				"dragDropEnabled": false,
+				"useHttpsScheme": true,
+				"titleBarStyle": "Overlay",
+				"hiddenTitle": true
+			}
+		],
+		"security": {
+			"csp": null,
+			"assetProtocol": {
+				"enable": true,
+				"scope": ["$HOME/**", "/tmp/**"]
+			}
+		}
+	},
+	"plugins": {},
+	"bundle": {
+		"active": true,
+		"targets": "all",
+		"copyright": "Copyright © 2026 baicie. All rights reserved.",
+		"category": "DeveloperTool",
+		"shortDescription": "Local-first SQL Workbench.",
+		"longDescription": "Nyala Studio is a local-first SQL database workbench built on a Tauri-based VS Code-style workbench.",
+		"resources": ["extension-host/*", "shell-integration/*"],
+		"icon": [
+			"icons/32x32.png",
+			"icons/64x64.png",
+			"icons/128x128.png",
+			"icons/128x128@2x.png",
+			"icons/icon.icns",
+			"icons/icon.ico"
+		],
+		"macOS": {
+			"entitlements": "entitlements.plist",
+			"minimumSystemVersion": "10.15"
+		},
+		"windows": {
+			"webviewInstallMode": {
+				"type": "downloadBootstrapper"
+			}
+		},
+		"linux": {
+			"deb": {
+				"depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+			},
+			"rpm": {
+				"depends": ["webkit2gtk4.1", "gtk3"]
+			}
+		}
+	}
 }

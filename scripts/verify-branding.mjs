@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
+import { assertReleaseVersions, readCargoPackageVersion } from './release-version.mjs';
+
 function assert(condition, message) {
 	if (!condition) {
 		throw new Error(message);
@@ -28,7 +30,11 @@ const readme = await readFile('README.md', 'utf8');
 
 assert(packageJson.name === 'sql-studio-next', `package.json name must be sql-studio-next, got ${packageJson.name}`);
 
-assert(packageJson.version === '0.1.0', `package.json version must be 0.1.0, got ${packageJson.version}`);
+assertReleaseVersions({
+	'package.json': packageJson.version,
+	'src-tauri/tauri.conf.json': tauriConfig.version,
+	'src-tauri/Cargo.toml': readCargoPackageVersion(srcTauriCargo)
+});
 
 assert(packageJson.packageManager?.startsWith('pnpm@'), 'packageManager must use pnpm');
 
@@ -86,11 +92,9 @@ assert(
 	'src-tauri/Cargo.toml package name must be sql-studio-next'
 );
 
-assert(cargoPackageSection.includes('version = "0.1.0"'), 'src-tauri/Cargo.toml package version must be 0.1.0');
-
 assert(
-	cargoPackageSection.includes('repository = "https://github.com/baicie/sql-studio-next"'),
-	'src-tauri/Cargo.toml repository must point to baicie/sql-studio-next'
+	cargoPackageSection.includes('repository = "https://github.com/baicie/nyala-studio"'),
+	'src-tauri/Cargo.toml repository must point to baicie/nyala-studio'
 );
 
 assert(
@@ -108,10 +112,7 @@ assertStringDoesNotContain(
 );
 
 // product.rs must define TERMINAL_PROGRAM_NAME
-assert(
-	productRs.includes('TERMINAL_PROGRAM_NAME'),
-	'product.rs must define TERMINAL_PROGRAM_NAME'
-);
+assert(productRs.includes('TERMINAL_PROGRAM_NAME'), 'product.rs must define TERMINAL_PROGRAM_NAME');
 
 // product.rs must define the Nyala product identity
 assert(
@@ -120,11 +121,7 @@ assert(
 );
 
 // lib.rs app menu must not expose "About SideX"
-assertStringDoesNotContain(
-	libRs,
-	'About SideX',
-	'macOS app menu must not expose "About SideX"'
-);
+assertStringDoesNotContain(libRs, 'About SideX', 'macOS app menu must not expose "About SideX"');
 
 // ── Legacy migration constants (Problem 3) ───────────────────────────────────
 
@@ -139,10 +136,7 @@ assert(
 );
 
 // lib.rs must use resolve_product_data_file for both DB files
-assert(
-	libRs.includes('resolve_product_data_file'),
-	'lib.rs must use resolve_product_data_file for DB file migration'
-);
+assert(libRs.includes('resolve_product_data_file'), 'lib.rs must use resolve_product_data_file for DB file migration');
 
 // ── Updater branding check ────────────────────────────────────────────────────
 
@@ -152,17 +146,9 @@ assertStringDoesNotContain(
 	'update manager fallback artifact name must not expose legacy SideX branding'
 );
 
-assertStringDoesNotContain(
-	sidexBridgeTs,
-	'[SideX]',
-	'sidex-bridge runtime logs must not expose legacy SideX branding'
-);
+assertStringDoesNotContain(sidexBridgeTs, '[SideX]', 'sidex-bridge runtime logs must not expose legacy SideX branding');
 
-assertStringDoesNotContain(
-	sidexBridgeTs,
-	'SideX —',
-	'sidex-bridge header must not expose legacy SideX branding'
-);
+assertStringDoesNotContain(sidexBridgeTs, 'SideX —', 'sidex-bridge header must not expose legacy SideX branding');
 
 // ── Web entrypoint branding ─────────────────────────────────────────────────
 

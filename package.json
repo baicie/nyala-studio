@@ -1,6 +1,6 @@
 {
 	"name": "sql-studio-next",
-	"version": "0.1.0",
+	"version": "0.0.1-dev.0",
 	"type": "module",
 	"private": true,
 	"packageManager": "pnpm@10.33.4",
@@ -22,6 +22,9 @@
 		"rust:clippy": "cd src-tauri && cargo clippy --all-targets -- -D warnings",
 		"rust:fmt": "cd src-tauri && cargo fmt --all -- --check",
 		"rust:fmt:fix": "cd src-tauri && cargo fmt --all",
+		"release:check": "node scripts/release-version.mjs check",
+		"release:prepare": "node scripts/release-version.mjs prepare",
+		"test:release": "node --test scripts/release-version.test.mjs && pnpm run release:check",
 		"test:branding": "node scripts/verify-branding.mjs",
 		"test:icons": "node scripts/verify-icons.mjs",
 		"test:sql-runtime-status": "node scripts/verify-sql-runtime-status.mjs",
@@ -40,7 +43,7 @@
 		"test:sql-history": "node --test --import tsx src/vs/workbench/contrib/sqlHistory/test/sqlQueryHistoryModel.test.ts src/vs/workbench/contrib/sqlHistory/test/sqlQueryHistoryService.test.ts src/vs/workbench/contrib/sqlHistory/test/sqlQueryHistoryViewModel.test.ts src/vs/workbench/contrib/sqlHistory/test/sqlQueryHistoryViewLifecycle.test.ts",
 		"test:sql-product": "node --test --import tsx src/vs/workbench/contrib/sqlProduct/test/sqlProductProfile.test.ts src/vs/workbench/contrib/sqlProduct/test/sqlProductBootstrapModel.test.ts src/vs/workbench/contrib/sqlProduct/test/sqlProductPreferences.test.ts src/vs/workbench/contrib/sqlProduct/test/sqlProductPreferencesService.test.ts src/vs/workbench/contrib/sqlProduct/test/sqlProductIntegrationModel.test.ts src/vs/workbench/contrib/sqlProduct/test/sqlProductWelcomeView.test.ts src/vs/workbench/contrib/sqlProduct/test/sqlProductWelcomePane.test.ts src/vs/workbench/contrib/sqlProduct/test/sqlWorkbenchSplash.test.ts src/vs/workbench/browser/test/windowZoomLevel.test.ts",
 		"test:sql-advanced": "node --test --import tsx src/vs/workbench/contrib/sqlAdvanced/test/sqlAdvancedFormatter.test.ts src/vs/workbench/contrib/sqlAdvanced/test/sqlAdvancedExplain.test.ts src/vs/workbench/contrib/sqlAdvanced/test/sqlAdvancedSnippets.test.ts src/vs/workbench/contrib/sqlAdvanced/test/sqlAdvancedWorkspace.test.ts src/vs/workbench/contrib/sqlAdvanced/test/sqlAdvancedPluginApi.test.ts src/vs/workbench/contrib/sqlAdvanced/test/sqlAdvancedAi.test.ts src/vs/workbench/contrib/sqlAdvanced/test/sqlAdvancedCommands.test.ts src/vs/workbench/contrib/sqlAdvanced/test/sqlAiContextBuilder.test.ts src/vs/workbench/contrib/sqlAdvanced/test/sqlPluginContributionBridge.test.ts",
-		"test": "pnpm run test:branding && pnpm run test:icons && pnpm run test:sql-runtime-status && pnpm run test:seed-demo && pnpm run test:rust && pnpm run test:search && pnpm run test:sql-services && pnpm run test:sql-domain && pnpm run test:sql-connections && pnpm run test:sql-editor && pnpm run test:sql-result && pnpm run test:sql-history && pnpm run test:sql-product && pnpm run test:sql-advanced"
+		"test": "pnpm run test:release && pnpm run test:branding && pnpm run test:icons && pnpm run test:sql-runtime-status && pnpm run test:seed-demo && pnpm run test:rust && pnpm run test:search && pnpm run test:sql-services && pnpm run test:sql-domain && pnpm run test:sql-connections && pnpm run test:sql-editor && pnpm run test:sql-result && pnpm run test:sql-history && pnpm run test:sql-product && pnpm run test:sql-advanced"
 	},
 	"dependencies": {
 		"@microsoft/1ds-core-js": "^4.4.3",
