@@ -3,11 +3,14 @@ import test from 'node:test';
 
 import {
 	assertReleaseVersions,
+	formatGitHubReleaseMetadata,
 	isPrereleaseVersion,
+	isWindowsMsiCompatibleVersion,
 	parseReleaseArguments,
 	readCargoLockPackageVersion,
 	readCargoPackageVersion,
 	replaceCargoPackageVersion,
+	resolveReleaseMetadata,
 	validateReleaseVersion
 } from './release-version.mjs';
 
@@ -22,6 +25,32 @@ test('accepts stable and prerelease SemVer versions', () => {
 	assert.equal(isPrereleaseVersion('0.0.1-dev.0'), true);
 	assert.equal(isPrereleaseVersion('0.0.1'), false);
 	assert.equal(isPrereleaseVersion('0.0.1+build-with-hyphen'), false);
+});
+
+test('selects Windows bundles that can represent the release version', () => {
+	for (const version of ['0.0.1', '0.0.1-4', '0.0.1+4', '255.255.65535+65535']) {
+		assert.equal(isWindowsMsiCompatibleVersion(version), true);
+	}
+	for (const version of ['0.0.1-dev.0', '0.0.1+build.9', '256.0.0', '0.256.0', '0.0.65536']) {
+		assert.equal(isWindowsMsiCompatibleVersion(version), false);
+	}
+
+	assert.deepEqual(resolveReleaseMetadata('0.0.1-dev.0'), {
+		version: '0.0.1-dev.0',
+		tag: 'v0.0.1-dev.0',
+		prerelease: true,
+		windowsBundles: 'nsis'
+	});
+	assert.deepEqual(resolveReleaseMetadata('0.0.1'), {
+		version: '0.0.1',
+		tag: 'v0.0.1',
+		prerelease: false,
+		windowsBundles: 'msi,nsis'
+	});
+	assert.equal(
+		formatGitHubReleaseMetadata('0.0.1-dev.0'),
+		['version=0.0.1-dev.0', 'tag=v0.0.1-dev.0', 'prerelease=true', 'windows_bundles=nsis'].join('\n')
+	);
 });
 
 test('rejects ambiguous or invalid release versions', () => {

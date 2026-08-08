@@ -194,6 +194,11 @@ Linux installers, generates `SHA256SUMS.txt`, and publishes a GitHub Release.
 Prerelease versions such as `0.0.1-dev.0` are published as GitHub pre-releases
 and never replace the stable R2 `latest` channel.
 
+Windows versions that cannot be represented by WiX/MSI, including named
+prereleases such as `0.0.1-dev.0`, are packaged as NSIS installers only.
+MSI and NSIS are both built when the SemVer value satisfies WiX's numeric
+version limits.
+
 Platform signing and Cloudflare R2 deployment are optional. When their
 repository secrets are absent, development pre-releases still publish
 unsigned GitHub installation packages and state that limitation in the
