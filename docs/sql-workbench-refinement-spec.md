@@ -11,7 +11,7 @@ The primary user is a developer or data operator who needs to create a data sour
 The refinement slices are implemented on `refine-windows-icon-connectors` as of 2026-08-07:
 
 - The new-data-source flow opens a native modal editor with All / Embedded / Server categories, search, connector icons, SQLite Stable, MySQL Preview, and disabled PostgreSQL Planned states.
-- SQLite and MySQL use the existing service contracts for Test, MySQL Preview Validate, Save, Connect, and transient secret handling. Driver UI reports bundled/planned truthfully; native package download remains gated until an install manifest and trust boundary exist.
+- SQLite and MySQL use the existing service contracts for Test, MySQL Preview Validate, Save, Connect, and transient secret handling. A signed, pinned-host native boundary can cache verified MySQL/PostgreSQL JDBC JARs; cached packages are not loaded and do not change runtime maturity.
 - Data Sources provides searchable saved/open profiles with status-safe targets and Connect, Edit, Test, New Query, Refresh, Disconnect, and confirmed Delete actions. The existing Connectors activity remains as a catalogue shortcut and opens the same modal flow.
 - SQL execution and results support current / selection / all execution, cancellation, structured errors, empty and NULL states, scrolling, result snapshots, multi-statement result activation, responsive toolbar wrapping, and keyboard navigation for result history.
 
@@ -35,11 +35,11 @@ Product terms are fixed for this work:
 
 ## Runtime Scope
 
-| Connector | Current delivery | Runtime maturity | User action |
-| --- | --- | --- | --- |
-| SQLite | Bundled | Stable | Create, test, save, connect |
-| MySQL | Bundled | Preview | Create, test, validate, save, connect |
-| PostgreSQL | Planned | Planned | Visible but disabled |
+| Connector  | Current delivery | Runtime maturity | User action                           |
+| ---------- | ---------------- | ---------------- | ------------------------------------- |
+| SQLite     | Bundled          | Stable           | Create, test, save, connect           |
+| MySQL      | Bundled          | Preview          | Create, test, validate, save, connect |
+| PostgreSQL | Planned          | Planned          | Visible but disabled                  |
 
 Dynamic JDBC/ODBC/custom driver loading, PostgreSQL runtime enablement, SSH tunnels, proxy settings, and persistent passwords are not part of this goal unless their native security and loading contracts are separately approved.
 
@@ -83,7 +83,7 @@ this._register(
 );
 ```
 
-Connector availability is derived from the runtime catalog. UI labels must not upgrade a connector's maturity or imply that a missing driver can already be downloaded.
+Connector availability is derived from the runtime catalog. UI labels must not upgrade a connector's maturity or imply that a cached JDBC package enables a runtime driver.
 
 ## Testing Strategy
 
@@ -109,6 +109,8 @@ Connector availability is derived from the runtime catalog. UI labels must not u
 - Removing upstream Debug, SCM, Extensions, or Terminal subsystems.
 - Persisting secrets or adding remote/team connection storage.
 
+The Phase 08 exception is limited to the built-in Ed25519-signed package manifest, pinned HTTPS hosts, exact size/SHA-256 verification, and an app-data cache. Dynamic loading, arbitrary repositories, and runtime maturity changes still require a separately accepted design.
+
 ### Never
 
 - Call Tauri directly from a view.
@@ -132,4 +134,4 @@ Connector availability is derived from the runtime catalog. UI labels must not u
 
 ## Open Questions
 
-No blocking product choice is required for the first modal slice. Dynamic driver distribution remains intentionally gated on a future native package-manifest and trust design.
+No blocking product choice is required for the implemented modal and curated package-cache slices. Dynamic driver loading and marketplace distribution remain gated on separately accepted runtime and trust designs.

@@ -1,3 +1,4 @@
+use super::sql_lexer::{first_sql_keyword, statement_keyword_after_with};
 use super::types::{
     SqlCellValue, SqlColumn, SqlConnectionInput, SqlDatabase, SqlQueryResult, SqlResultColumn,
     SqlSslMode, SqlTable, SqlTableType, MAX_QUERY_ROW_LIMIT,
@@ -255,23 +256,13 @@ fn pooled(pool: &Pool) -> Result<PooledConn, String> {
 }
 
 fn is_mysql_select_like(sql: &str) -> bool {
-    matches!(
-        first_sql_keyword(sql).as_deref(),
-        Some("select" | "show" | "describe" | "desc" | "explain" | "with")
-    )
-}
-
-fn first_sql_keyword(sql: &str) -> Option<String> {
-    let trimmed = sql.trim_start();
-    let keyword = trimmed
-        .split(|ch: char| !ch.is_ascii_alphabetic() && ch != '_')
-        .next()?
-        .to_ascii_lowercase();
-
-    if keyword.is_empty() {
-        None
-    } else {
-        Some(keyword)
+    match first_sql_keyword(sql).as_deref() {
+        Some("select" | "show" | "describe" | "desc" | "explain" | "values") => true,
+        Some("with") => matches!(
+            statement_keyword_after_with(sql).as_deref(),
+            Some("select" | "values")
+        ),
+        _ => false,
     }
 }
 
@@ -344,7 +335,23 @@ mod tests {
     fn mysql_select_like_detects_show() {
         assert!(is_mysql_select_like("SHOW DATABASES"));
         assert!(is_mysql_select_like("describe users"));
+        assert!(is_mysql_select_like("-- comment\nSELECT 1"));
+        assert!(is_mysql_select_like("# comment\nSELECT 1"));
+        assert!(is_mysql_select_like(
+            "WITH cte AS (SELECT 1) SELECT * FROM cte"
+        ));
+        assert!(!is_mysql_select_like(
+            "WITH cte AS (SELECT 1) UPDATE users SET id = 2"
+        ));
         assert!(!is_mysql_select_like("insert into users values (1)"));
+    }
+
+    #[test]
+    fn mysql_select_like_detects_values_result_sets() {
+        assert!(is_mysql_select_like("VALUES ROW(1), ROW(2)"));
+        assert!(is_mysql_select_like(
+            "WITH cte AS (SELECT 1) VALUES ROW((SELECT * FROM cte))"
+        ));
     }
 
     #[test]

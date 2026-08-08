@@ -9,7 +9,10 @@ import {
 	SqlRuntimeDriverId,
 	SqlRuntimeStatus
 } from '../../../services/sql/common/sqlDriverCatalog.js';
-import { runSqlConnectionFormOperation } from '../common/sqlConnectionFormOperation.js';
+import {
+	formatSqlConnectionOperationError,
+	runSqlConnectionFormOperation
+} from '../common/sqlConnectionFormOperation.js';
 import { createDefaultSqlConnectionFormState } from '../common/sqlConnectionFormModel.js';
 
 class RecordingCatalog implements ISqlDriverCatalogService {
@@ -187,4 +190,11 @@ test('guarded form operation forwards operation rejection and clears once', asyn
 	assert.equal(cleanupCount, 1);
 	assert.equal(errors.length, 1);
 	assert.match(String(errors[0]), /operation failed/);
+});
+
+test('connection form error formatting preserves structured error codes', () => {
+	assert.equal(
+		formatSqlConnectionOperationError({ code: 'connection_failed', message: 'Authentication rejected' }),
+		'connection_failed: Authentication rejected'
+	);
 });

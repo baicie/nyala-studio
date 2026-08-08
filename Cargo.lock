@@ -7080,6 +7080,7 @@ dependencies = [
  "dashmap",
  "dirs 5.0.1",
  "dunce",
+ "ed25519-dalek 2.2.0",
  "flate2",
  "glob",
  "globset",

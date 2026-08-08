@@ -55,6 +55,7 @@ base64 = "0.22"
 
 # Crypto
 sha2 = "0.10"
+ed25519-dalek = "2"
 md5 = "0.7"
 uuid = { version = "1", features = ["v4"] }
 rand = "0.8"

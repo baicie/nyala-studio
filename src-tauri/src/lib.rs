@@ -691,10 +691,12 @@ pub fn run() {
             // Nyala database bridge
             commands::sql_test_connection,
             commands::sql_open_connection,
+            commands::sql_replace_connection,
             commands::sql_close_connection,
             commands::sql_list_connections,
             commands::sql_list_databases,
             commands::sql_save_connection,
+            commands::sql_save_and_open_connection,
             commands::sql_list_saved_connections,
             commands::sql_remove_saved_connection,
             commands::sql_restore_saved_connections,
@@ -704,6 +706,8 @@ pub fn run() {
             commands::sql_cancel_query,
             commands::sql_list_driver_runtime_status,
             commands::sql_assert_driver_runtime_status,
+            commands::sql_list_driver_packages,
+            commands::sql_download_driver,
             // Phase 08 - MVP Packaging
             commands::sql_bootstrap_demo,
             commands::sql_validate_mysql_preview,

@@ -15,6 +15,7 @@ import {
 	SqlConnectionDialogRequest
 } from './sqlConnectionDialog.js';
 import { getSqlDriverDescriptor } from './sqlDrivers.js';
+import { SqlConnectionKind } from './sqlTypes.js';
 
 export const SQL_CONNECTION_EDITOR_INPUT_TYPE_ID = 'workbench.input.sqlConnectionEditor';
 export const SQL_CONNECTION_EDITOR_PANE_ID = 'workbench.editor.sqlConnection';
@@ -39,10 +40,13 @@ export class SqlConnectionEditorInput extends EditorInput {
 
 	readonly request: SqlConnectionDialogRequest;
 	readonly resource = SQL_CONNECTION_EDITOR_RESOURCE;
+	private currentKind: SqlConnectionKind;
 
 	constructor(request: SqlConnectionDialogRequest) {
 		super();
 		this.request = normalizeSqlConnectionDialogRequest(request);
+		this.currentKind =
+			this.request.mode === SqlConnectionDialogMode.New ? this.request.initialKind : this.request.saved.kind;
 	}
 
 	override get typeId(): string {
@@ -77,9 +81,16 @@ export class SqlConnectionEditorInput extends EditorInput {
 	}
 
 	override getDescription(_verbosity?: Verbosity): string | undefined {
-		const kind =
-			this.request.mode === SqlConnectionDialogMode.New ? this.request.initialKind : this.request.saved.kind;
-		return getSqlDriverDescriptor(kind).label;
+		return getSqlDriverDescriptor(this.currentKind).label;
+	}
+
+	setConnectorKind(kind: SqlConnectionKind): void {
+		if (this.currentKind === kind) {
+			return;
+		}
+
+		this.currentKind = kind;
+		this._onDidChangeLabel.fire();
 	}
 
 	/** Connection drafts must not be resurrected from workspace history. */

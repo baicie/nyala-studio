@@ -7,6 +7,8 @@ import {
 	createDefaultSqlConnectionFormState,
 	createSafeSqlConnectionFormDraft,
 	createSqlConnectionFormPreview,
+	createSqlConnectionFormStateForConnector,
+	createSqlConnectionFormStateForReset,
 	createSqlConnectionFormStateFromSavedConnection,
 	createSqlConnectionInputFromFormState,
 	getSqlConnectionFormFieldRequirements,
@@ -15,6 +17,7 @@ import {
 	maskSqlConnectionInput,
 	normalizeSqlConnectionFormState,
 	setSqliteConnectionMode,
+	shouldPersistSqlConnectionForm,
 	SQL_CONNECTION_PREVIEW_KINDS,
 	SqliteConnectionMode
 } from '../common/sqlConnectionFormModel.js';
@@ -60,7 +63,7 @@ test('createDefaultSqlConnectionFormState creates SQLite defaults', () => {
 		name: undefined,
 		sqliteMode: SqliteConnectionMode.File,
 		databasePath: '',
-		readOnly: false,
+		readOnly: true,
 		createIfMissing: false,
 		saveConnection: false,
 		autoConnect: false
@@ -73,7 +76,7 @@ test('createDefaultSqlConnectionFormState creates explicit SQLite memory default
 		name: undefined,
 		sqliteMode: SqliteConnectionMode.Memory,
 		databasePath: ':memory:',
-		readOnly: false,
+		readOnly: true,
 		createIfMissing: false,
 		saveConnection: false,
 		autoConnect: false
@@ -90,7 +93,7 @@ test('createDefaultSqlConnectionFormState creates PostgreSQL planned defaults', 
 		username: undefined,
 		password: undefined,
 		sslMode: SqlSslMode.Prefer,
-		readOnly: false,
+		readOnly: true,
 		createIfMissing: false,
 		saveConnection: false,
 		autoConnect: false
@@ -107,11 +110,39 @@ test('createDefaultSqlConnectionFormState creates MySQL defaults', () => {
 		username: undefined,
 		password: undefined,
 		sslMode: SqlSslMode.Prefer,
-		readOnly: false,
+		readOnly: true,
 		createIfMissing: false,
 		saveConnection: false,
 		autoConnect: false
 	});
+});
+
+test('connector switching keeps the saved profile id and persistence intent', () => {
+	const state = createSqlConnectionFormStateForConnector(SqlConnectionKind.MySql, 'saved-connection');
+
+	assert.equal(state.id, 'saved-connection');
+	assert.equal(state.kind, SqlConnectionKind.MySql);
+	assert.equal(state.saveConnection, true);
+	assert.equal(state.database, 'mysql');
+});
+
+test('resetting a saved form restores its safe saved profile instead of creating a new one', () => {
+	const saved: SqlSavedConnection = {
+		id: 'saved-connection',
+		name: 'Saved SQLite',
+		kind: SqlConnectionKind.Sqlite,
+		databasePath: '/tmp/saved.db',
+		readOnly: true,
+		createIfMissing: false,
+		autoConnect: false
+	};
+
+	const state = createSqlConnectionFormStateForReset(SqlConnectionKind.MySql, saved);
+
+	assert.equal(state.id, saved.id);
+	assert.equal(state.kind, saved.kind);
+	assert.equal(state.databasePath, saved.databasePath);
+	assert.equal(state.saveConnection, true);
 });
 
 test('normalizeSqlConnectionFormState normalizes SQLite fields', () => {
@@ -231,7 +262,7 @@ test('normalizeSqlConnectionFormState disables save and autoConnect for PostgreS
 		username: 'user',
 		password: ' secret ',
 		sslMode: SqlSslMode.Require,
-		readOnly: false,
+		readOnly: true,
 		createIfMissing: false,
 		saveConnection: false,
 		autoConnect: false
@@ -271,6 +302,16 @@ test('normalizeSqlConnectionFormState preserves a trimmed connection id in runti
 	assert.equal(createSqlConnectionInputFromFormState(state).id, 'saved-connection');
 });
 
+test('normalizeSqlConnectionFormState preserves an explicit network write mode', () => {
+	const state = normalizeSqlConnectionFormState({
+		kind: SqlConnectionKind.MySql,
+		readOnly: false
+	});
+
+	assert.equal(state.readOnly, false);
+	assert.equal(createSqlConnectionInputFromFormState(state).readOnly, false);
+});
+
 test('createSqlConnectionInputFromFormState creates PostgreSQL planned input', () => {
 	assert.deepEqual(
 		createSqlConnectionInputFromFormState({
@@ -292,7 +333,7 @@ test('createSqlConnectionInputFromFormState creates PostgreSQL planned input', (
 			username: 'user',
 			password: 'secret',
 			sslMode: SqlSslMode.Require,
-			readOnly: false,
+			readOnly: true,
 			createIfMissing: false
 		}
 	);
@@ -376,7 +417,7 @@ test('saved MySQL connection becomes a password-free reconnect draft', () => {
 		database: 'app',
 		username: 'root',
 		sslMode: SqlSslMode.Require,
-		readOnly: false,
+		readOnly: true,
 		createIfMissing: false,
 		autoConnect: true
 	});
@@ -390,7 +431,7 @@ test('saved MySQL connection becomes a password-free reconnect draft', () => {
 		database: 'app',
 		username: 'root',
 		sslMode: SqlSslMode.Require,
-		readOnly: false,
+		readOnly: true,
 		createIfMissing: false,
 		saveConnection: true,
 		autoConnect: false
@@ -467,6 +508,27 @@ test('canSaveSqlConnectionForm returns true only for persistable SQLite', () => 
 			kind: SqlConnectionKind.Sqlite,
 			databasePath: ':memory:',
 			saveConnection: true
+		}),
+		false
+	);
+});
+
+test('existing data source remains persisted when its save checkbox is cleared', () => {
+	assert.equal(
+		shouldPersistSqlConnectionForm({
+			id: 'saved-sqlite',
+			kind: SqlConnectionKind.Sqlite,
+			databasePath: '/tmp/app.db',
+			saveConnection: false
+		}),
+		true
+	);
+
+	assert.equal(
+		shouldPersistSqlConnectionForm({
+			kind: SqlConnectionKind.Sqlite,
+			databasePath: '/tmp/app.db',
+			saveConnection: false
 		}),
 		false
 	);

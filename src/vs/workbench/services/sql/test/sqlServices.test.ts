@@ -208,6 +208,72 @@ test('SqlConnectionService.openConnection invokes sql_open_connection', async ()
 	assert.equal(executor.lastCall().command, 'sql_open_connection');
 });
 
+test('SqlConnectionService.replaceConnection preserves a runtime password', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	executor.responses.set('sql_replace_connection', {
+		id: 'mysql-local',
+		name: 'MySQL',
+		kind: SqlConnectionKind.MySql,
+		host: 'localhost',
+		port: 3306,
+		database: 'app',
+		username: 'root',
+		readOnly: false
+	});
+
+	const service = new SqlConnectionService(executor);
+	await service.replaceConnection({
+		id: 'mysql-local',
+		kind: SqlConnectionKind.MySql,
+		host: 'localhost',
+		port: 3306,
+		database: 'app',
+		username: 'root',
+		password: 'secret'
+	});
+
+	assert.equal(executor.lastCall().command, 'sql_replace_connection');
+	assert.equal((executor.lastCall().args.input as { password?: string }).password, 'secret');
+});
+
+test('SqlConnectionService.saveAndOpenConnection sends transient secret separately from persistence flows', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	executor.responses.set('sql_save_and_open_connection', {
+		id: 'mysql-local',
+		name: 'MySQL',
+		kind: SqlConnectionKind.MySql,
+		host: 'localhost',
+		port: 3306,
+		database: 'app',
+		username: 'root',
+		readOnly: false
+	});
+
+	const service = new SqlConnectionService(executor);
+	await service.saveAndOpenConnection(
+		{
+			id: 'mysql-local',
+			kind: SqlConnectionKind.MySql,
+			host: 'localhost',
+			port: 3306,
+			database: 'app',
+			username: 'root',
+			password: 'secret'
+		},
+		false,
+		true
+	);
+
+	const lastCall = executor.lastCall();
+	assert.equal(lastCall.command, 'sql_save_and_open_connection');
+	assert.equal(lastCall.args.autoConnect, false);
+	assert.equal(lastCall.args.persist, true);
+	assert.equal((lastCall.args.input as { password?: string }).password, 'secret');
+	assert.equal((lastCall.args.input as { id?: string }).id, 'mysql-local');
+	assert.equal((lastCall.args.input as { sslMode?: SqlSslMode }).sslMode, SqlSslMode.Prefer);
+	assert.equal((lastCall.args.input as { name?: string }).name, undefined);
+});
+
 test('SqlConnectionService.closeConnection invokes sql_close_connection with allowVoid option', async () => {
 	const executor = new FakeSqlCommandExecutor();
 	const service = new SqlConnectionService(executor);

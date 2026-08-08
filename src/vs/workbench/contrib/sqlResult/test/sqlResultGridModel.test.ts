@@ -8,6 +8,7 @@ import {
 	clampColumnWidth,
 	copyAllRows,
 	copySelectedCell,
+	copySelectedColumn,
 	copySelectedRow,
 	copySqlResultGrid,
 	escapeCsvCell,
@@ -247,6 +248,30 @@ test('copySelectedRow returns empty string for negative row', () => {
 	assert.equal(copySelectedRow(grid, { rowIndex: -1, columnIndex: 0 }, SqlResultCopyFormat.Tsv, true), '');
 });
 
+test('copySelectedColumn copies the selected column as TSV with header', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(
+		copySelectedColumn(grid, { rowIndex: 0, columnIndex: 1 }, SqlResultCopyFormat.Tsv, true),
+		'name\nAlice\nNULL'
+	);
+});
+
+test('copySelectedColumn copies the selected column as CSV without header', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(
+		copySelectedColumn(grid, { rowIndex: 0, columnIndex: 2 }, SqlResultCopyFormat.Csv, false),
+		'"hello, ""world"""\n[blob 3 bytes]'
+	);
+});
+
+test('copySelectedColumn returns empty string without a valid selection', () => {
+	const grid = buildSqlResultGrid(sampleResult);
+
+	assert.equal(copySelectedColumn(grid, { rowIndex: 0, columnIndex: 99 }, SqlResultCopyFormat.Tsv), '');
+});
+
 test('copyAllRows copies all rows as CSV', () => {
 	const grid = buildSqlResultGrid(sampleResult);
 
@@ -256,7 +281,7 @@ test('copyAllRows copies all rows as CSV', () => {
 	);
 });
 
-test('copySqlResultGrid supports cell row and all modes', () => {
+test('copySqlResultGrid supports cell row column and all modes', () => {
 	const grid = buildSqlResultGrid(sampleResult);
 
 	assert.equal(
@@ -275,6 +300,15 @@ test('copySqlResultGrid supports cell row and all modes', () => {
 			selection: { rowIndex: 0, columnIndex: 0 }
 		}),
 		'id\tname\tnote\n1\tAlice\thello, "world"'
+	);
+
+	assert.equal(
+		copySqlResultGrid(grid, {
+			mode: SqlResultCopyMode.Column,
+			format: SqlResultCopyFormat.Tsv,
+			selection: { rowIndex: 0, columnIndex: 0 }
+		}),
+		'id\n1\n2'
 	);
 
 	assert.equal(

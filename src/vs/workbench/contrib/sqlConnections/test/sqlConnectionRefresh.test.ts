@@ -6,10 +6,21 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+	indexSqlRestoreSavedConnectionErrors,
 	refreshAndRequireSqlConnection,
 	restoreSavedConnectionsForRefresh,
 	SqlConnectionRefreshOptions
 } from '../common/sqlConnectionRefresh.js';
+
+test('indexSqlRestoreSavedConnectionErrors keeps per-connection restore failures', () => {
+	const indexed = indexSqlRestoreSavedConnectionErrors([
+		{ connectionId: 'mysql-prod', name: 'Production MySQL', error: 'password rejected' },
+		{ connectionId: 'broken-sqlite', name: 'Broken SQLite', error: 'file is missing' }
+	]);
+
+	assert.equal(indexed['mysql-prod'], 'password rejected');
+	assert.equal(indexed['broken-sqlite'], 'file is missing');
+});
 
 test('restoreSavedConnectionsForRefresh keeps retry enabled after a recoverable failure', async () => {
 	const failure = new Error('restore failed');

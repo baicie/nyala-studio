@@ -51,6 +51,7 @@ export interface SqlResultCellAddress {
 export const enum SqlResultCopyMode {
 	Cell = 'cell',
 	Row = 'row',
+	Column = 'column',
 	All = 'all'
 }
 
@@ -161,6 +162,9 @@ export function copySqlResultGrid(grid: SqlResultGrid, options: SqlResultCopyOpt
 		case SqlResultCopyMode.Row:
 			return copySelectedRow(grid, options.selection, options.format, includeHeader);
 
+		case SqlResultCopyMode.Column:
+			return copySelectedColumn(grid, options.selection, options.format, includeHeader);
+
 		case SqlResultCopyMode.All:
 			return copyAllRows(grid, options.format, includeHeader);
 
@@ -192,6 +196,29 @@ export function copySelectedRow(
 	}
 
 	return serializeRows(grid, [selection.rowIndex], format, includeHeader);
+}
+
+export function copySelectedColumn(
+	grid: SqlResultGrid,
+	selection: SqlResultCellAddress | undefined,
+	format: SqlResultCopyFormat,
+	includeHeader = true
+): string {
+	if (!selection || !getGridCell(grid, selection)) {
+		return '';
+	}
+
+	const column = grid.columns[selection.columnIndex];
+	const rows: string[][] = [];
+	if (includeHeader) {
+		rows.push([column.name]);
+	}
+
+	for (const row of grid.rows) {
+		rows.push([row.cells[selection.columnIndex]?.text ?? '']);
+	}
+
+	return serializeTable(rows, format);
 }
 
 export function copyAllRows(grid: SqlResultGrid, format: SqlResultCopyFormat, includeHeader = true): string {

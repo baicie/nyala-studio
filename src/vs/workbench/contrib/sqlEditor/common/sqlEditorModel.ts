@@ -161,13 +161,15 @@ export function splitSqlStatements(sql: string): SqlStatementRange[] {
 export function getSqlEditorStatusLabel(options: {
 	readonly connectionId?: string;
 	readonly connectionName?: string;
+	readonly readOnly?: boolean;
 	readonly dirty?: boolean;
 	readonly running?: boolean;
 }): string {
 	const connection = options.connectionName ?? options.connectionId ?? 'No connection';
 	const state = options.running ? 'Running' : options.dirty ? 'Draft saved' : 'Ready';
+	const mode = options.readOnly === undefined ? undefined : options.readOnly ? 'Read-only' : 'Write mode';
 
-	return `${state} · ${connection}`;
+	return [state, connection, mode].filter(Boolean).join(' · ');
 }
 
 export function getSqlEditorToolbarState(options: {
@@ -198,6 +200,8 @@ function findStatementBoundaries(sql: string): number[] {
 
 	let inSingleQuote = false;
 	let inDoubleQuote = false;
+	let inBacktickIdentifier = false;
+	let inBracketIdentifier = false;
 	let inLineComment = false;
 	let inBlockComment = false;
 
@@ -221,6 +225,11 @@ function findStatementBoundaries(sql: string): number[] {
 		}
 
 		if (inSingleQuote) {
+			if (char === '\\') {
+				index++;
+				continue;
+			}
+
 			if (char === "'" && next === "'") {
 				index++;
 				continue;
@@ -234,6 +243,11 @@ function findStatementBoundaries(sql: string): number[] {
 		}
 
 		if (inDoubleQuote) {
+			if (char === '\\') {
+				index++;
+				continue;
+			}
+
 			if (char === '"' && next === '"') {
 				index++;
 				continue;
@@ -246,9 +260,37 @@ function findStatementBoundaries(sql: string): number[] {
 			continue;
 		}
 
-		if (char === '-' && next === '-') {
+		if (inBacktickIdentifier) {
+			if (char === '`' && next === '`') {
+				index++;
+				continue;
+			}
+
+			if (char === '`') {
+				inBacktickIdentifier = false;
+			}
+
+			continue;
+		}
+
+		if (inBracketIdentifier) {
+			if (char === ']' && next === ']') {
+				index++;
+				continue;
+			}
+
+			if (char === ']') {
+				inBracketIdentifier = false;
+			}
+
+			continue;
+		}
+
+		if (char === '#' || (char === '-' && next === '-')) {
 			inLineComment = true;
-			index++;
+			if (char === '-') {
+				index++;
+			}
 			continue;
 		}
 
@@ -265,6 +307,16 @@ function findStatementBoundaries(sql: string): number[] {
 
 		if (char === '"') {
 			inDoubleQuote = true;
+			continue;
+		}
+
+		if (char === '`') {
+			inBacktickIdentifier = true;
+			continue;
+		}
+
+		if (char === '[') {
+			inBracketIdentifier = true;
 			continue;
 		}
 

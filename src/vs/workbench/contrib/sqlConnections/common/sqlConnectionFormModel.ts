@@ -77,7 +77,7 @@ export function createDefaultSqlConnectionFormState(
 				name: undefined,
 				sqliteMode,
 				databasePath: sqliteMode === SqliteConnectionMode.Memory ? ':memory:' : '',
-				readOnly: false,
+				readOnly: true,
 				createIfMissing: false,
 				saveConnection: false,
 				autoConnect: false
@@ -115,7 +115,7 @@ export function normalizeSqlConnectionFormState(input: Partial<SqlConnectionForm
 			name: normalizeOptionalString(input.name),
 			sqliteMode,
 			databasePath,
-			readOnly: input.readOnly === true,
+			readOnly: input.readOnly !== false,
 			createIfMissing: sqliteMode === SqliteConnectionMode.File && input.createIfMissing === true,
 			saveConnection,
 			autoConnect: saveConnection && input.autoConnect === true
@@ -140,7 +140,7 @@ export function normalizeSqlConnectionFormState(input: Partial<SqlConnectionForm
 		username: normalizeOptionalString(input.username),
 		password: normalizePassword(input.password),
 		sslMode: normalizeSslMode(input.sslMode),
-		readOnly: false,
+		readOnly: input.readOnly !== false,
 		createIfMissing: false,
 		saveConnection,
 		/**
@@ -224,6 +224,23 @@ export function createSqlConnectionFormStateFromSavedConnection(saved: SqlSavedC
 	});
 }
 
+export function createSqlConnectionFormStateForConnector(
+	kind: SqlConnectionKind,
+	existingConnectionId?: string
+): SqlConnectionFormState {
+	return normalizeSqlConnectionFormState({
+		...createDefaultSqlConnectionFormState(kind),
+		...(existingConnectionId ? { id: existingConnectionId, saveConnection: true } : {})
+	});
+}
+
+export function createSqlConnectionFormStateForReset(
+	kind: SqlConnectionKind,
+	saved?: SqlSavedConnection
+): SqlConnectionFormState {
+	return saved ? createSqlConnectionFormStateFromSavedConnection(saved) : createDefaultSqlConnectionFormState(kind);
+}
+
 export function createSqlConnectionInputFromFormState(state: Partial<SqlConnectionFormState>): SqlConnectionInput {
 	const normalized = normalizeSqlConnectionFormState(state);
 
@@ -248,7 +265,7 @@ export function createSqlConnectionInputFromFormState(state: Partial<SqlConnecti
 		username: normalized.username,
 		password: normalized.password,
 		sslMode: normalized.sslMode,
-		readOnly: false,
+		readOnly: normalized.readOnly,
 		createIfMissing: false
 	};
 }
@@ -350,6 +367,16 @@ export function canSaveSqlConnectionForm(state: Partial<SqlConnectionFormState>)
 	return createSqlConnectionFormPreview(state).canSave;
 }
 
+/**
+ * Editing a saved profile must update that profile rather than silently
+ * turning it into an unsaved runtime connection. New forms still honor the
+ * explicit save checkbox.
+ */
+export function shouldPersistSqlConnectionForm(state: Partial<SqlConnectionFormState>): boolean {
+	const normalized = normalizeSqlConnectionFormState(state);
+	return Boolean(normalized.id) || createSqlConnectionFormPreview(normalized).canSave;
+}
+
 export function getSqlConnectionFormStatus(state: Partial<SqlConnectionFormState>): string {
 	const preview = createSqlConnectionFormPreview(state);
 	return `${preview.summary} · ${preview.message}`;
@@ -369,7 +396,7 @@ function createNetworkDefaults(
 		username: undefined,
 		password: undefined,
 		sslMode: SqlSslMode.Prefer,
-		readOnly: false,
+		readOnly: true,
 		createIfMissing: false,
 		saveConnection: false,
 		autoConnect: false

@@ -660,3 +660,20 @@ Launch app
 不要追求 100% VS Code 插件兼容。
 要追求 SQL 插件体验比 VS Code 更好、更安全、更贴近数据库工作流。
 ```
+
+## 18. 数据库连接器边界
+
+本文中的 Workbench / Node / WASM 插件系统不负责加载 JDBC 驱动。
+数据库连接器是独立的可执行包类型：它运行在受 Tauri 监管的 Java
+sidecar 中，不能贡献 WebView、Workbench command 或任意前端代码。
+
+连接器市场、下载、签名、原子安装、回滚和作者模板的后续设计见：
+
+- `docs/adr/0001-jdbc-sidecar-and-connector-boundary.md`
+- `docs/adr/0002-signed-connector-marketplace.md`
+- `docs/connectors/connector-package-spec.md`
+- `docs/connectors/authoring-guide.md`
+
+两个体系可以在未来共享 catalogue UI，但必须保留各自的安装服务、运行时、
+权限和信任策略。安装 JDBC JAR 也不会自动改变 driver runtime status；
+SQLite stable、MySQL preview、PostgreSQL planned 仍由 Rust runtime status 表决定。

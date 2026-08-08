@@ -53,6 +53,20 @@ export class SqlConnectionService implements ISqlConnectionService {
 		}
 	}
 
+	async replaceConnection(input: SqlConnectionInput): Promise<SqlConnection> {
+		const normalized = normalizeSqlConnectionInput(input, {
+			preserveSecrets: true
+		});
+
+		try {
+			return await this.executor.execute<SqlConnection>('sql_replace_connection', {
+				input: normalized
+			});
+		} catch (error) {
+			throw toSqlServiceError('sql_replace_connection', error);
+		}
+	}
+
 	async closeConnection(connectionId: string): Promise<void> {
 		const normalizedConnectionId = normalizeConnectionId(connectionId);
 
@@ -89,6 +103,26 @@ export class SqlConnectionService implements ISqlConnectionService {
 			});
 		} catch (error) {
 			throw toSqlServiceError('sql_save_connection', error);
+		}
+	}
+
+	async saveAndOpenConnection(
+		input: SqlConnectionInput,
+		autoConnect: boolean,
+		persist: boolean
+	): Promise<SqlConnection> {
+		const normalized = normalizeSqlConnectionInput(input, {
+			preserveSecrets: true
+		});
+
+		try {
+			return await this.executor.execute<SqlConnection>('sql_save_and_open_connection', {
+				input: normalized,
+				autoConnect,
+				persist
+			});
+		} catch (error) {
+			throw toSqlServiceError('sql_save_and_open_connection', error);
 		}
 	}
 

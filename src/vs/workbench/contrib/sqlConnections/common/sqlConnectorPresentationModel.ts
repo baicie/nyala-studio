@@ -32,6 +32,7 @@ export interface SqlConnectorPresentation {
 	readonly brandIcon: SqlConnectorBrandIcon;
 	readonly category: Exclude<SqlConnectorCategory, SqlConnectorCategory.All>;
 	readonly delivery: SqlConnectorDelivery;
+	readonly driverPackageId?: string;
 	readonly description: string;
 	readonly keywords: readonly string[];
 }
@@ -62,6 +63,7 @@ export const SQL_CONNECTOR_PRESENTATIONS: readonly SqlConnectorPresentation[] = 
 		brandIcon: 'sqlite',
 		category: SqlConnectorCategory.Embedded,
 		delivery: SqlConnectorDelivery.Bundled,
+		driverPackageId: undefined,
 		description: 'Connect to a local SQLite database file.',
 		keywords: ['local', 'file', 'memory', 'embedded']
 	},
@@ -72,6 +74,7 @@ export const SQL_CONNECTOR_PRESENTATIONS: readonly SqlConnectorPresentation[] = 
 		brandIcon: 'mysql',
 		category: SqlConnectorCategory.Server,
 		delivery: SqlConnectorDelivery.Bundled,
+		driverPackageId: 'mysql-jdbc',
 		description: 'Connect to a MySQL server.',
 		keywords: ['maria', 'network', 'server']
 	},
@@ -82,20 +85,15 @@ export const SQL_CONNECTOR_PRESENTATIONS: readonly SqlConnectorPresentation[] = 
 		brandIcon: 'postgresql',
 		category: SqlConnectorCategory.Server,
 		delivery: SqlConnectorDelivery.Planned,
+		driverPackageId: 'postgresql-jdbc',
 		description: 'Connect to a PostgreSQL server.',
 		keywords: ['postgres', 'pg', 'network', 'server']
 	}
 ];
 
-export function filterSqlConnectorPresentations(
-	query: SqlConnectorPresentationQuery = {}
-): SqlConnectorPresentation[] {
+export function filterSqlConnectorPresentations(query: SqlConnectorPresentationQuery = {}): SqlConnectorPresentation[] {
 	const category = query.category ?? SqlConnectorCategory.All;
-	const terms = query.text
-		?.trim()
-		.toLocaleLowerCase()
-		.split(/\s+/)
-		.filter(Boolean);
+	const terms = query.text?.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
 
 	return SQL_CONNECTOR_PRESENTATIONS.filter(presentation => {
 		if (category !== SqlConnectorCategory.All && presentation.category !== category) {

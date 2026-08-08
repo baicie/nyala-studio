@@ -1,0 +1,49 @@
+{
+	"schemaVersion": 1,
+	"connectorId": "example.acmedb",
+	"profile": "integration",
+	"environment": {
+		"host": "NYALA_TEST_ACMEDB_HOST",
+		"port": "NYALA_TEST_ACMEDB_PORT",
+		"database": "NYALA_TEST_ACMEDB_DATABASE",
+		"username": "NYALA_TEST_ACMEDB_USERNAME",
+		"password": "NYALA_TEST_ACMEDB_PASSWORD"
+	},
+	"probes": [
+		{
+			"id": "select-one",
+			"operation": "query",
+			"sql": "SELECT 1 AS value",
+			"expect": {
+				"columnCount": 1,
+				"rowCount": 1,
+				"firstCell": "1"
+			}
+		},
+		{
+			"id": "metadata-tables",
+			"operation": "metadata.tables",
+			"expect": {
+				"structuredResult": true
+			}
+		},
+		{
+			"id": "invalid-sql",
+			"operation": "query",
+			"sql": "SELECT FROM",
+			"expect": {
+				"errorCode": "invalid_sql",
+				"sqlStatePresent": true
+			}
+		},
+		{
+			"id": "readonly-write",
+			"operation": "query",
+			"mode": "readOnly",
+			"sql": "CREATE TABLE nyala_must_not_exist (id INTEGER)",
+			"expect": {
+				"errorCode": "write_blocked"
+			}
+		}
+	]
+}

@@ -48,6 +48,22 @@ test('connection editor input is modal, singleton, and non-reopenable', () => {
 	input.dispose();
 });
 
+test('connection editor input updates its connector description when the picker changes', () => {
+	const input = new SqlConnectionEditorInput(createNewSqlConnectionDialogRequest(SqlConnectionKind.Sqlite));
+	let changes = 0;
+	const disposable = input.onDidChangeLabel(() => changes++);
+
+	input.setConnectorKind(SqlConnectionKind.MySql);
+
+	assert.equal(input.getDescription(), 'MySQL');
+	assert.equal(changes, 1);
+
+	input.setConnectorKind(SqlConnectionKind.MySql);
+	assert.equal(changes, 1);
+	disposable.dispose();
+	input.dispose();
+});
+
 test('saved input identity and state never include a runtime password', () => {
 	const unsafeSaved = {
 		...saved,

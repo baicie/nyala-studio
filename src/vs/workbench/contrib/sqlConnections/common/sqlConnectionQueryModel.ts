@@ -146,7 +146,7 @@ export function isSqlMutableTableNode(node: SqlConnectionTreeNode): boolean {
 }
 
 export function getSqlTableTypeFromNode(node: SqlConnectionTreeNode): SqlTableType {
-	return node.type === SqlConnectionTreeNodeType.View ? SqlTableType.View : SqlTableType.Table;
+	return node.tableType ?? (node.type === SqlConnectionTreeNodeType.View ? SqlTableType.View : SqlTableType.Table);
 }
 
 /**
@@ -182,7 +182,10 @@ function createTemplateDraft(
 	};
 }
 
-function createTemplateTarget(node: SqlConnectionTreeNode, options: SqlEditorDraftOptions = {}): SqlTableTemplateTarget {
+function createTemplateTarget(
+	node: SqlConnectionTreeNode,
+	options: SqlEditorDraftOptions = {}
+): SqlTableTemplateTarget {
 	if (!isSqlTableLikeNode(node)) {
 		throw new Error(`Cannot create SQL template from node type: ${node.type}`);
 	}

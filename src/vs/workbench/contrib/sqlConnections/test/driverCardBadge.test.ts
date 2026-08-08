@@ -6,6 +6,7 @@ import {
 	buildSqlDriverStatusPlaceholder,
 	renderSqlDriverStatusBadge
 } from '../browser/driverCardBadge.js';
+import { buildSqlDriverPackageStatusBadge } from '../browser/driverPackageBadge.js';
 import {
 	ISqlDriverCatalogService,
 	SqlRuntimeDriverId,
@@ -125,4 +126,29 @@ test('renderSqlDriverStatusBadge escapes special characters', () => {
 	assert.doesNotMatch(html, /<preview/);
 	assert.match(html, /&lt;preview/);
 	assert.match(html, /&amp; stable/);
+});
+
+test('driver package badges distinguish loading, downloadable, and installed states', () => {
+	const packageEntry = {
+		id: 'mysql-jdbc',
+		driverId: SqlRuntimeDriverId.MySql,
+		displayName: 'MySQL Connector/J',
+		version: '9.3.0',
+		fileName: 'mysql-connector-j-9.3.0.jar',
+		sizeBytes: 100,
+		installed: false
+	};
+
+	const loading = buildSqlDriverPackageStatusBadge(undefined, { loaded: false, unavailable: false });
+	const available = buildSqlDriverPackageStatusBadge(packageEntry, { loaded: true, unavailable: false });
+	const installed = buildSqlDriverPackageStatusBadge(
+		{ ...packageEntry, installed: true },
+		{ loaded: true, unavailable: false }
+	);
+
+	assert.equal(loading.canDownload, false);
+	assert.equal(available.canDownload, true);
+	assert.match(available.text, /9\.3\.0/);
+	assert.equal(installed.installed, true);
+	assert.equal(installed.canDownload, false);
 });

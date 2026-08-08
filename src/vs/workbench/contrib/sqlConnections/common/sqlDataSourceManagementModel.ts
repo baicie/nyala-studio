@@ -11,7 +11,8 @@ import {
 
 export const enum SqlDataSourceManagementState {
 	Saved = 'saved',
-	Connected = 'connected'
+	Connected = 'connected',
+	Error = 'error'
 }
 
 export const enum SqlDataSourceManagementAction {
@@ -21,6 +22,7 @@ export const enum SqlDataSourceManagementAction {
 	Refresh = 'refresh',
 	Edit = 'edit',
 	Test = 'test',
+	Reconnect = 'reconnect',
 	Disconnect = 'disconnect',
 	Delete = 'delete'
 }
@@ -32,6 +34,7 @@ export interface SqlDataSourceManagementItem {
 	readonly driverLabel: string;
 	readonly target: string;
 	readonly state: SqlDataSourceManagementState;
+	readonly error?: string;
 	readonly isSaved: boolean;
 	readonly saved?: SqlSavedConnection;
 	readonly connection?: SqlConnection;
@@ -39,7 +42,8 @@ export interface SqlDataSourceManagementItem {
 
 export function buildSqlDataSourceManagementItems(
 	savedConnections: readonly SqlSavedConnection[],
-	connections: readonly SqlConnection[]
+	connections: readonly SqlConnection[],
+	errorsByConnectionId: Readonly<Record<string, string>> = {}
 ): SqlDataSourceManagementItem[] {
 	const connectionById = new Map(connections.map(connection => [connection.id, connection]));
 	const items: SqlDataSourceManagementItem[] = [];
@@ -51,7 +55,7 @@ export function buildSqlDataSourceManagementItems(
 		}
 
 		const connection = connectionById.get(saved.id);
-		items.push(createManagementItem(saved, connection));
+		items.push(createManagementItem(saved, connection, errorsByConnectionId[saved.id]));
 		includedIds.add(saved.id);
 	}
 
@@ -60,7 +64,7 @@ export function buildSqlDataSourceManagementItems(
 			continue;
 		}
 
-		items.push(createManagementItem(undefined, connection));
+		items.push(createManagementItem(undefined, connection, errorsByConnectionId[connection.id]));
 		includedIds.add(connection.id);
 	}
 
@@ -74,20 +78,35 @@ export function matchesSqlDataSourceManagementItem(item: SqlDataSourceManagement
 		return true;
 	}
 
-	const searchableText = [item.name, item.driverLabel, item.target, item.state].join(' ').toLocaleLowerCase();
+	const searchableText = [item.name, item.driverLabel, item.target, item.state, item.error ?? '']
+		.join(' ')
+		.toLocaleLowerCase();
 	return terms.every(term => searchableText.includes(term));
 }
 
 export function getSqlDataSourceManagementActions(
 	item: SqlDataSourceManagementItem
 ): readonly SqlDataSourceManagementAction[] {
-	if (item.state === SqlDataSourceManagementState.Connected) {
+	if (item.state === SqlDataSourceManagementState.Error && !item.connection) {
+		return item.isSaved
+			? [
+					SqlDataSourceManagementAction.Reconnect,
+					SqlDataSourceManagementAction.Edit,
+					SqlDataSourceManagementAction.Test,
+					SqlDataSourceManagementAction.Delete
+				]
+			: [];
+	}
+
+	if (item.state === SqlDataSourceManagementState.Connected || item.state === SqlDataSourceManagementState.Error) {
 		return item.isSaved
 			? [
 					SqlDataSourceManagementAction.Reveal,
 					SqlDataSourceManagementAction.OpenQuery,
 					SqlDataSourceManagementAction.Refresh,
 					SqlDataSourceManagementAction.Edit,
+					SqlDataSourceManagementAction.Test,
+					SqlDataSourceManagementAction.Reconnect,
 					SqlDataSourceManagementAction.Disconnect,
 					SqlDataSourceManagementAction.Delete
 				]
@@ -120,13 +139,15 @@ export function createSqlDataSourceRemovalRequest(
 
 	return {
 		connectionId: item.id,
-		closeIfOpen: item.state === SqlDataSourceManagementState.Connected
+		closeIfOpen:
+			item.state === SqlDataSourceManagementState.Connected || item.state === SqlDataSourceManagementState.Error
 	};
 }
 
 function createManagementItem(
 	saved: SqlSavedConnection | undefined,
-	connection: SqlConnection | undefined
+	connection: SqlConnection | undefined,
+	error: string | undefined
 ): SqlDataSourceManagementItem {
 	const source = saved ?? connection;
 	if (!source) {
@@ -139,7 +160,12 @@ function createManagementItem(
 		kind: source.kind,
 		driverLabel: getDriverLabel(source.kind),
 		target: getSafeTarget(saved ?? connection),
-		state: connection ? SqlDataSourceManagementState.Connected : SqlDataSourceManagementState.Saved,
+		state: error
+			? SqlDataSourceManagementState.Error
+			: connection
+				? SqlDataSourceManagementState.Connected
+				: SqlDataSourceManagementState.Saved,
+		error,
 		isSaved: Boolean(saved),
 		saved,
 		connection

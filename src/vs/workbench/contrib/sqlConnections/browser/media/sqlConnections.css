@@ -258,12 +258,18 @@
 	box-sizing: border-box;
 	min-width: 0;
 	display: grid;
-	grid-template-columns: 30px minmax(0, 1fr) 26px;
+	grid-template-columns: 30px minmax(0, 1fr) auto;
 	align-items: start;
 	gap: 8px;
 	padding: 9px 7px;
 	border: 1px solid var(--vscode-editorGroup-border);
 	background: var(--vscode-sideBar-background);
+}
+
+.sql-connector-manager-actions {
+	display: flex;
+	align-items: flex-start;
+	gap: 2px;
 }
 
 .sql-connector-manager-copy {
@@ -293,6 +299,11 @@
 }
 
 .sql-connector-manager-runtime {
+	margin-top: 2px;
+}
+
+.sql-connector-manager-package {
+	display: block;
 	margin-top: 2px;
 }
 
@@ -400,6 +411,7 @@
 }
 
 .sql-connections-form[hidden],
+.sql-connections-icon-button[hidden],
 .sql-connections-driver-fields.hidden,
 .sql-connections-file-fields.hidden,
 .sql-connections-button.hidden,

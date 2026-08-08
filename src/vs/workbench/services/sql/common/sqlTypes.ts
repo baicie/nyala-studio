@@ -7,6 +7,8 @@
  * - PostgreSQL protocol fields are reserved, but runtime support is planned.
  *--------------------------------------------------------------------------------------------*/
 
+import { SqlRuntimeDriverId } from './sqlDriverCatalog.js';
+
 export const enum SqlConnectionKind {
 	Sqlite = 'sqlite',
 	PostgreSql = 'postgresql',
@@ -93,7 +95,23 @@ export interface SqlConnection {
 export interface SqlConnectionTestResult {
 	ok: boolean;
 	connection?: SqlConnection;
-	error?: string;
+	error?: SqlCommandError;
+}
+
+export interface SqlCommandError {
+	readonly code: string;
+	readonly message: string;
+	readonly detail?: string;
+}
+
+export interface SqlDriverPackage {
+	readonly id: string;
+	readonly driverId: SqlRuntimeDriverId;
+	readonly displayName: string;
+	readonly version: string;
+	readonly fileName: string;
+	readonly sizeBytes: number;
+	readonly installed: boolean;
 }
 
 export interface SqlDatabase {

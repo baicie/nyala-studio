@@ -28,22 +28,29 @@ import { IEditorOpenContext } from '../../../common/editor.js';
 import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
 import { ISqlConnectionService } from '../../../services/sql/common/sqlConnection.js';
 import { ISqlDriverCatalogService } from '../../../services/sql/common/sqlDriverCatalog.js';
+import { ISqlDriverPackageService } from '../../../services/sql/common/sqlDriverPackages.js';
 import { getSqlConnectorRuntimeDriverId } from '../../../services/sql/common/sqlConnectorRuntimeGuard.js';
 import { SqlConnectionKind, SqlSslMode } from '../../../services/sql/common/sqlTypes.js';
 import {
 	createDefaultSqlConnectionFormState,
 	createSafeSqlConnectionInputFromFormState,
 	createSqlConnectionFormPreview,
+	createSqlConnectionFormStateForConnector,
+	createSqlConnectionFormStateForReset,
 	createSqlConnectionFormStateFromSavedConnection,
 	createSqlConnectionInputFromFormState,
 	getSqlConnectionFormFieldRequirements,
 	getSqliteConnectionMode,
 	setSqliteConnectionMode,
+	shouldPersistSqlConnectionForm,
 	SqlConnectionFormState,
 	SqliteConnectionMode
 } from '../common/sqlConnectionFormModel.js';
 import { setSqlConnectionFormTextControlsBusy } from '../common/sqlConnectionFormBusyState.js';
-import { runSqlConnectionFormOperation } from '../common/sqlConnectionFormOperation.js';
+import {
+	formatSqlConnectionOperationError,
+	runSqlConnectionFormOperation
+} from '../common/sqlConnectionFormOperation.js';
 import {
 	filterSqlConnectorPresentations,
 	getSqlConnectorPresentation,
@@ -53,10 +60,10 @@ import {
 	SqlConnectorPresentation
 } from '../common/sqlConnectorPresentationModel.js';
 import { SqlConnectionEditorInput } from '../../../services/sql/common/sqlConnectionEditorInput.js';
-import { openAndSaveMysqlConnection } from '../common/sqlConnectionSubmission.js';
 import { SQL_CONNECTIONS_REFRESH_COMMAND_ID } from '../common/sqlConnections.js';
 import { applySqlConnectionFormAccessibility } from './sqlConnectionFormAccessibility.js';
 import { buildSqlDriverStatusBadge, buildSqlDriverStatusPlaceholder, SqlDriverStatusBadge } from './driverCardBadge.js';
+import { buildSqlDriverPackageStatusBadge } from './driverPackageBadge.js';
 import { MysqlPreviewValidationController } from './mysqlValidationView.js';
 
 const SQL_CONNECTION_EDITOR_STATUS_ID = 'sql-connection-editor-status';
@@ -110,6 +117,7 @@ export class SqlConnectionEditorPane extends EditorPane {
 	private connectButton!: HTMLButtonElement;
 	private resetButton!: HTMLButtonElement;
 	private refreshButton!: HTMLButtonElement;
+	private driverPackageButton!: HTMLButtonElement;
 	private cancelButton!: HTMLButtonElement;
 	private driverPreviewElement!: HTMLElement;
 	private messageElement!: HTMLElement;
@@ -121,6 +129,10 @@ export class SqlConnectionEditorPane extends EditorPane {
 	private isFormBusy = false;
 	private connectorCatalogLoad: Promise<void> | undefined;
 	private connectorCatalogUnavailable = false;
+	private driverPackagesLoad: Promise<void> | undefined;
+	private driverPackagesLoaded = false;
+	private driverPackagesUnavailable = false;
+	private isDriverPackageBusy = false;
 
 	constructor(
 		group: IEditorGroup,
@@ -133,7 +145,8 @@ export class SqlConnectionEditorPane extends EditorPane {
 		@INotificationService private readonly notificationService: INotificationService,
 		@ICommandService private readonly commandService: ICommandService,
 		@ISqlConnectionService private readonly sqlConnectionService: ISqlConnectionService,
-		@ISqlDriverCatalogService private readonly sqlDriverCatalogService: ISqlDriverCatalogService
+		@ISqlDriverCatalogService private readonly sqlDriverCatalogService: ISqlDriverCatalogService,
+		@ISqlDriverPackageService private readonly sqlDriverPackageService: ISqlDriverPackageService
 	) {
 		super(SqlConnectionEditorPane.ID, group, telemetryService, themeService, storageService);
 		this.mysqlValidationController = this._register(
@@ -155,9 +168,17 @@ export class SqlConnectionEditorPane extends EditorPane {
 				this.refreshDriverPreview();
 			})
 		);
+		this._register(
+			this.sqlDriverPackageService.onChange(() => {
+				this.driverPackagesLoaded = true;
+				this.driverPackagesUnavailable = false;
+				this.renderConnectorCatalog();
+				this.refreshDriverPreview();
+			})
+		);
 
-		this.ensureConnectorCatalogLoaded().catch(() => {
-			this.showInfo('Connector availability could not be loaded. Refresh to retry.');
+		Promise.all([this.ensureConnectorCatalogLoaded(), this.ensureDriverPackagesLoaded()]).catch(() => {
+			this.showInfo('Connector or driver package status could not be loaded. Refresh to retry.');
 		});
 	}
 
@@ -294,6 +315,7 @@ export class SqlConnectionEditorPane extends EditorPane {
 		const headerActions = append(header, $('.sql-connections-form-header-actions'));
 		this.resetButton = this.appendIconButton(headerActions, 'discard', 'Reset data source form');
 		this.refreshButton = this.appendIconButton(headerActions, 'refresh', 'Refresh connector availability');
+		this.driverPackageButton = this.appendIconButton(headerActions, 'cloud-download', 'Download connector driver');
 
 		this.form = append(
 			settingsPane,
@@ -421,11 +443,6 @@ export class SqlConnectionEditorPane extends EditorPane {
 				'Preview validation creates and removes a temporary table on the target database.'
 			)
 		);
-		this.validateButton = append(
-			advancedBody,
-			$('button.sql-connections-button', { type: 'button', title: 'Run MySQL Preview validation' }, 'Validate')
-		) as HTMLButtonElement;
-
 		const footer = append(this.form, $('.sql-connectors-footer'));
 		this.driverPreviewElement = append(
 			footer,
@@ -449,6 +466,14 @@ export class SqlConnectionEditorPane extends EditorPane {
 			actions,
 			$('button.sql-connections-button', { type: 'button' }, 'Test')
 		) as HTMLButtonElement;
+		this.validateButton = append(
+			actions,
+			$(
+				'button.sql-connections-button',
+				{ type: 'button', title: 'Run MySQL Preview validation', hidden: true },
+				'Validate'
+			)
+		) as HTMLButtonElement;
 		this.connectButton = append(
 			actions,
 			$('button.sql-connections-button.primary', { type: 'submit' }, 'Connect')
@@ -468,13 +493,24 @@ export class SqlConnectionEditorPane extends EditorPane {
 		this._register(
 			addDisposableListener(this.resetButton, EventType.CLICK, () => {
 				this.touchedFormInputs.clear();
-				this.applyFormState(createDefaultSqlConnectionFormState(this.currentFormKind));
+				const request = this.input instanceof SqlConnectionEditorInput ? this.input.request : undefined;
+				this.applyFormState(
+					createSqlConnectionFormStateForReset(
+						this.currentFormKind,
+						request?.mode === 'saved' ? request.saved : undefined
+					)
+				);
 				this.refreshDriverPreview();
 			})
 		);
 		this._register(
 			addDisposableListener(this.refreshButton, EventType.CLICK, () => {
 				this.refreshConnectorCatalog().catch(error => this.showError(error));
+			})
+		);
+		this._register(
+			addDisposableListener(this.driverPackageButton, EventType.CLICK, () => {
+				this.downloadCurrentDriverPackage().catch(error => this.showError(error));
 			})
 		);
 		this._register(
@@ -565,6 +601,7 @@ export class SqlConnectionEditorPane extends EditorPane {
 
 		for (const presentation of presentations) {
 			const badge = this.getConnectorBadge(presentation);
+			const packageBadge = this.getDriverPackageBadge(presentation);
 			this.connectorAvailability.set(presentation.kind, badge);
 			const selected = presentation.kind === this.currentFormKind;
 			const button = append(
@@ -576,6 +613,7 @@ export class SqlConnectionEditorPane extends EditorPane {
 					title: badge.runnable ? presentation.description : badge.title
 				})
 			) as HTMLButtonElement;
+			button.disabled = !badge.runnable;
 			button.classList.toggle('selected', selected);
 			button.classList.toggle('disabled', !badge.runnable);
 			append(
@@ -592,6 +630,12 @@ export class SqlConnectionEditorPane extends EditorPane {
 			status.setAttribute('aria-label', badge.ariaLabel);
 			status.title = badge.title;
 			append(title, $('span.sql-connector-delivery-badge', undefined, deliveryLabel(presentation.delivery)));
+			if (packageBadge) {
+				const packageStatus = append(title, $('span'));
+				packageStatus.className = packageBadge.className;
+				packageStatus.textContent = `Driver ${packageBadge.text}`;
+				packageStatus.title = packageBadge.title;
+			}
 			append(
 				copy,
 				$('.sql-connector-option-description', undefined, badge.runnable ? presentation.description : badge.title)
@@ -622,6 +666,52 @@ export class SqlConnectionEditorPane extends EditorPane {
 			return buildSqlDriverStatusBadge(this.sqlDriverCatalogService, getSqlConnectorRuntimeDriverId(presentation.kind));
 		} catch {
 			return buildSqlDriverStatusPlaceholder(presentation.label, this.connectorCatalogUnavailable);
+		}
+	}
+
+	private getDriverPackageBadge(presentation: SqlConnectorPresentation) {
+		if (!presentation.driverPackageId) {
+			return undefined;
+		}
+
+		return buildSqlDriverPackageStatusBadge(
+			this.sqlDriverPackageService.findForDriver(getSqlConnectorRuntimeDriverId(presentation.kind)),
+			{
+				loaded: this.driverPackagesLoaded,
+				unavailable: this.driverPackagesUnavailable
+			}
+		);
+	}
+
+	private refreshDriverPackageAction(presentation: SqlConnectorPresentation): void {
+		if (!this.driverPackageButton) {
+			return;
+		}
+
+		const badge = this.getDriverPackageBadge(presentation);
+		const canDownload = Boolean(presentation.driverPackageId && badge?.canDownload);
+		this.driverPackageButton.hidden = !canDownload;
+		this.driverPackageButton.disabled = !canDownload || this.isDriverPackageBusy;
+		this.driverPackageButton.title = badge?.title ?? 'No downloadable driver package';
+		this.driverPackageButton.setAttribute('aria-label', badge?.title ?? 'No downloadable driver package');
+	}
+
+	private async downloadCurrentDriverPackage(): Promise<void> {
+		const presentation = getSqlConnectorPresentation(this.currentFormKind);
+		if (!presentation.driverPackageId || this.isDriverPackageBusy) {
+			return;
+		}
+
+		this.isDriverPackageBusy = true;
+		this.refreshDriverPackageAction(presentation);
+		this.showInfo(`Downloading ${presentation.label} driver package...`);
+		try {
+			const packageEntry = await this.sqlDriverPackageService.download(presentation.driverPackageId);
+			this.showInfo(`${packageEntry.displayName} ${packageEntry.version} downloaded. Runtime support is unchanged.`);
+		} finally {
+			this.isDriverPackageBusy = false;
+			this.renderConnectorCatalog();
+			this.refreshDriverPreview();
 		}
 	}
 
@@ -674,7 +764,10 @@ export class SqlConnectionEditorPane extends EditorPane {
 		}
 
 		this.touchedFormInputs.clear();
-		this.applyFormState(createDefaultSqlConnectionFormState(kind));
+		if (this.input instanceof SqlConnectionEditorInput) {
+			this.input.setConnectorKind(kind);
+		}
+		this.applyFormState(createSqlConnectionFormStateForConnector(kind, this.currentFormConnectionId));
 		this.renderConnectorCatalog();
 		this.refreshDriverPreview();
 		this.nameInput.focus();
@@ -700,8 +793,10 @@ export class SqlConnectionEditorPane extends EditorPane {
 		const isMysql = preview.kind === SqlConnectionKind.MySql;
 		const isPostgres = preview.kind === SqlConnectionKind.PostgreSql;
 		const isMemory = isSqlite && getSqliteConnectionMode(formState) === SqliteConnectionMode.Memory;
+		const isEditingSavedConnection = Boolean(formState.id);
 
 		this.refreshConnectorHeader();
+		this.refreshDriverPackageAction(presentation);
 		this.sqliteFieldsElement.classList.toggle('hidden', !isSqlite);
 		this.networkFieldsElement.classList.toggle('hidden', isSqlite);
 		this.sqliteFileFieldsElement.classList.toggle('hidden', isMemory);
@@ -710,15 +805,12 @@ export class SqlConnectionEditorPane extends EditorPane {
 		this.sqliteFileModeButton.setAttribute('aria-pressed', String(isSqlite && !isMemory));
 		this.sqliteMemoryModeButton.setAttribute('aria-pressed', String(isMemory));
 		this.nameInput.placeholder = isMysql ? 'Local MySQL' : 'Local SQLite';
-		this.readOnlyOptionElement.classList.toggle('hidden', !isSqlite);
+		this.readOnlyOptionElement.classList.toggle('hidden', isPostgres);
 		this.createIfMissingOptionElement.classList.toggle('hidden', !isSqlite || isMemory);
 		this.saveConnectionOptionElement.classList.toggle('hidden', isPostgres || isMemory);
 		this.autoConnectOptionElement.classList.toggle('hidden', !isSqlite || isMemory);
 		this.advancedElement.hidden = !isMysql;
 
-		if (!isSqlite || isMemory) {
-			this.readOnlyInput.checked = false;
-		}
 		if (!isSqlite || isMemory) {
 			this.createIfMissingInput.checked = false;
 			this.autoConnectInput.checked = false;
@@ -742,16 +834,17 @@ export class SqlConnectionEditorPane extends EditorPane {
 		);
 		this.sslModeSelect.setEnabled(!this.isFormBusy && !isSqlite);
 		this.sqliteFileModeButton.disabled = this.isFormBusy || !isSqlite;
-		this.sqliteMemoryModeButton.disabled = this.isFormBusy || !isSqlite;
-		this.readOnlyInput.disabled = this.isFormBusy || !isSqlite;
+		this.sqliteMemoryModeButton.disabled = this.isFormBusy || !isSqlite || isEditingSavedConnection;
+		this.readOnlyInput.disabled = this.isFormBusy || isPostgres;
 		this.createIfMissingInput.disabled = this.isFormBusy || !isSqlite || isMemory;
 		this.browseDatabaseButton.disabled = this.isFormBusy || !isSqlite || isMemory;
-		this.saveConnectionInput.disabled = this.isFormBusy || isPostgres || isMemory;
+		this.saveConnectionInput.disabled = this.isFormBusy || isPostgres || isMemory || isEditingSavedConnection;
 		this.autoConnectInput.disabled = this.isFormBusy || !isSqlite || isMemory || !this.saveConnectionInput.checked;
 		this.resetButton.disabled = this.isFormBusy;
 		this.refreshButton.disabled = this.isFormBusy;
 		this.cancelButton.disabled = this.isFormBusy;
 		this.testButton.disabled = this.isFormBusy || !availability.runnable || !preview.canConnect || isPostgres;
+		this.validateButton.hidden = !isMysql;
 		this.validateButton.disabled = this.isFormBusy || !availability.runnable || !preview.canConnect || !isMysql;
 		this.connectButton.disabled = this.isFormBusy || !availability.runnable || !preview.canConnect || isPostgres;
 
@@ -796,24 +889,14 @@ export class SqlConnectionEditorPane extends EditorPane {
 			this.showInfo(
 				preview.kind === SqlConnectionKind.MySql ? 'Opening MySQL connection...' : 'Opening SQLite connection...'
 			);
-			const rawInput = createSqlConnectionInputFromFormState(formState);
-			const safeInput = createSafeSqlConnectionInputFromFormState(formState);
-			const input = preview.kind === SqlConnectionKind.MySql ? rawInput : safeInput;
+			const input = createSqlConnectionInputFromFormState(formState);
 			let connectionId: string;
 			let connectionName: string;
 
-			if (preview.canSave && preview.kind === SqlConnectionKind.MySql) {
-				const connection = await openAndSaveMysqlConnection(this.sqlConnectionService, rawInput, safeInput);
+			if (shouldPersistSqlConnectionForm(formState)) {
+				const connection = await this.sqlConnectionService.saveAndOpenConnection(input, formState.autoConnect, true);
 				connectionId = connection.id;
 				connectionName = connection.name;
-			} else if (preview.canSave) {
-				const saved = await this.sqlConnectionService.saveConnection({
-					input,
-					autoConnect: formState.autoConnect,
-					openNow: true
-				});
-				connectionId = saved.id;
-				connectionName = saved.name;
 			} else {
 				const connection = await this.sqlConnectionService.openConnection(input);
 				connectionId = connection.id;
@@ -843,7 +926,7 @@ export class SqlConnectionEditorPane extends EditorPane {
 					: createSafeSqlConnectionInputFromFormState(formState);
 			const result = await this.sqlConnectionService.testConnection(input);
 			if (!result.ok) {
-				throw new Error(result.error || 'Connection test failed.');
+				throw result.error ?? new Error('Connection test failed.');
 			}
 			this.showInfo('Connection test passed.');
 		});
@@ -868,7 +951,7 @@ export class SqlConnectionEditorPane extends EditorPane {
 			);
 			if (!outcome.ok) {
 				const detail = outcome.message || 'MySQL Preview validation failed.';
-				throw new Error(outcome.code ? `${outcome.code}: ${detail}` : detail);
+				throw outcome.code ? { code: outcome.code, message: detail } : new Error(detail);
 			}
 			const warning = outcome.warnings.length > 0 ? ` ${outcome.warnings.join(' ')}` : '';
 			this.showInfo(`MySQL Preview validation passed.${warning}`);
@@ -933,10 +1016,10 @@ export class SqlConnectionEditorPane extends EditorPane {
 	}
 
 	private async refreshConnectorCatalog(): Promise<void> {
-		await this.ensureConnectorCatalogLoaded(true);
+		await Promise.all([this.ensureConnectorCatalogLoaded(true), this.ensureDriverPackagesLoaded(true)]);
 		this.renderConnectorCatalog();
 		this.refreshDriverPreview();
-		this.showInfo('Connector availability refreshed.');
+		this.showInfo('Connector and driver package status refreshed.');
 	}
 
 	private ensureConnectorCatalogLoaded(forceRefresh = false): Promise<void> {
@@ -962,6 +1045,35 @@ export class SqlConnectionEditorPane extends EditorPane {
 				this.refreshDriverPreview();
 			});
 		this.connectorCatalogLoad = load;
+		return load;
+	}
+
+	private ensureDriverPackagesLoaded(forceRefresh = false): Promise<void> {
+		if (this.driverPackagesLoad) {
+			return this.driverPackagesLoad;
+		}
+
+		const request = forceRefresh
+			? this.sqlDriverPackageService.refreshPackages()
+			: this.sqlDriverPackageService.getPackages();
+		const load = request
+			.then(() => {
+				this.driverPackagesLoaded = true;
+				this.driverPackagesUnavailable = false;
+			})
+			.catch(error => {
+				this.driverPackagesLoaded = true;
+				this.driverPackagesUnavailable = true;
+				throw error;
+			})
+			.finally(() => {
+				if (this.driverPackagesLoad === load) {
+					this.driverPackagesLoad = undefined;
+				}
+				this.renderConnectorCatalog();
+				this.refreshDriverPreview();
+			});
+		this.driverPackagesLoad = load;
 		return load;
 	}
 
@@ -997,13 +1109,7 @@ export class SqlConnectionEditorPane extends EditorPane {
 		if (!this.messageElement) {
 			return;
 		}
-		const structuredMessage = (error as { message?: unknown } | undefined)?.message;
-		const message =
-			error instanceof Error
-				? error.message
-				: typeof structuredMessage === 'string'
-					? structuredMessage
-					: String(error);
+		const message = formatSqlConnectionOperationError(error);
 		this.messageElement.classList.add('error');
 		this.messageElement.setAttribute('role', 'alert');
 		this.messageElement.setAttribute('aria-live', 'assertive');

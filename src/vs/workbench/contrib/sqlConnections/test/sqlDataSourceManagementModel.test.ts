@@ -65,6 +65,8 @@ test('management items merge an open session into its saved profile', () => {
 		SqlDataSourceManagementAction.OpenQuery,
 		SqlDataSourceManagementAction.Refresh,
 		SqlDataSourceManagementAction.Edit,
+		SqlDataSourceManagementAction.Test,
+		SqlDataSourceManagementAction.Reconnect,
 		SqlDataSourceManagementAction.Disconnect,
 		SqlDataSourceManagementAction.Delete
 	]);
@@ -72,6 +74,52 @@ test('management items merge an open session into its saved profile', () => {
 		connectionId: savedMysql.id,
 		closeIfOpen: true
 	});
+});
+
+test('management items expose metadata errors without losing reconnect actions', () => {
+	const [item] = buildSqlDataSourceManagementItems(
+		[savedMysql],
+		[
+			{
+				id: savedMysql.id,
+				name: savedMysql.name,
+				kind: savedMysql.kind,
+				host: savedMysql.host,
+				port: savedMysql.port,
+				database: savedMysql.database,
+				username: savedMysql.username,
+				sslMode: savedMysql.sslMode,
+				readOnly: savedMysql.readOnly
+			}
+		],
+		{ [savedMysql.id]: 'metadata probe failed' }
+	);
+
+	assert.equal(item.state, SqlDataSourceManagementState.Error);
+	assert.equal(item.error, 'metadata probe failed');
+	assert.deepEqual(getSqlDataSourceManagementActions(item), [
+		SqlDataSourceManagementAction.Reveal,
+		SqlDataSourceManagementAction.OpenQuery,
+		SqlDataSourceManagementAction.Refresh,
+		SqlDataSourceManagementAction.Edit,
+		SqlDataSourceManagementAction.Test,
+		SqlDataSourceManagementAction.Reconnect,
+		SqlDataSourceManagementAction.Disconnect,
+		SqlDataSourceManagementAction.Delete
+	]);
+});
+
+test('saved-only restore errors are visible and keep reconnect actions', () => {
+	const [item] = buildSqlDataSourceManagementItems([savedMysql], [], { [savedMysql.id]: 'password rejected' });
+
+	assert.equal(item.state, SqlDataSourceManagementState.Error);
+	assert.equal(item.error, 'password rejected');
+	assert.deepEqual(getSqlDataSourceManagementActions(item), [
+		SqlDataSourceManagementAction.Reconnect,
+		SqlDataSourceManagementAction.Edit,
+		SqlDataSourceManagementAction.Test,
+		SqlDataSourceManagementAction.Delete
+	]);
 });
 
 test('management items retain saved-only and open-only sources without duplicates', () => {

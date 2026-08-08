@@ -26,3 +26,16 @@ export async function runSqlConnectionFormOperation(options: SqlConnectionFormOp
 		options.clearSecret();
 	}
 }
+
+export function formatSqlConnectionOperationError(error: unknown): string {
+	const structured = error as { readonly code?: unknown; readonly message?: unknown } | undefined;
+	const message =
+		error instanceof Error
+			? error.message
+			: typeof structured?.message === 'string'
+				? structured.message
+				: String(error);
+	const code = typeof structured?.code === 'string' ? structured.code.trim() : '';
+
+	return code && !message.startsWith(`${code}:`) ? `${code}: ${message}` : message;
+}

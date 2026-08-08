@@ -1,7 +1,8 @@
 use super::state::SqlConnectionStore;
 use super::types::{
-    SqlConnection, SqlConnectionInput, SqlConnectionTestResult, SqlRemoveSavedConnectionRequest,
-    SqlRestoreSavedConnectionsResult, SqlSaveConnectionRequest, SqlSavedConnection,
+    SqlCommandError, SqlConnection, SqlConnectionInput, SqlConnectionTestResult,
+    SqlRemoveSavedConnectionRequest, SqlRestoreSavedConnectionsResult, SqlSaveConnectionRequest,
+    SqlSavedConnection,
 };
 use std::sync::Arc;
 use tauri::State;
@@ -11,12 +12,17 @@ use tauri::State;
 pub async fn sql_test_connection(
     state: State<'_, Arc<SqlConnectionStore>>,
     input: SqlConnectionInput,
-) -> Result<SqlConnectionTestResult, String> {
+) -> Result<SqlConnectionTestResult, SqlCommandError> {
     let store = state.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || store.test_connection(input))
         .await
-        .map_err(|err| format!("sql_test_connection task failed: {err}"))
+        .map_err(|err| {
+            SqlCommandError::new(
+                "internal",
+                format!("sql_test_connection task failed: {err}"),
+            )
+        })
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -24,12 +30,37 @@ pub async fn sql_test_connection(
 pub async fn sql_open_connection(
     state: State<'_, Arc<SqlConnectionStore>>,
     input: SqlConnectionInput,
-) -> Result<SqlConnection, String> {
+) -> Result<SqlConnection, SqlCommandError> {
     let store = state.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || store.open_connection(input))
         .await
-        .map_err(|err| format!("sql_open_connection task failed: {err}"))?
+        .map_err(|err| {
+            SqlCommandError::new(
+                "internal",
+                format!("sql_open_connection task failed: {err}"),
+            )
+        })?
+        .map_err(|err| SqlCommandError::new("connection_failed", err))
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub async fn sql_replace_connection(
+    state: State<'_, Arc<SqlConnectionStore>>,
+    input: SqlConnectionInput,
+) -> Result<SqlConnection, SqlCommandError> {
+    let store = state.inner().clone();
+
+    tauri::async_runtime::spawn_blocking(move || store.replace_connection(input))
+        .await
+        .map_err(|err| {
+            SqlCommandError::new(
+                "internal",
+                format!("sql_replace_connection task failed: {err}"),
+            )
+        })?
+        .map_err(|err| SqlCommandError::new("connection_failed", err))
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -67,6 +98,29 @@ pub async fn sql_save_connection(
     tauri::async_runtime::spawn_blocking(move || store.save_connection(request))
         .await
         .map_err(|err| format!("sql_save_connection task failed: {err}"))?
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub async fn sql_save_and_open_connection(
+    state: State<'_, Arc<SqlConnectionStore>>,
+    input: SqlConnectionInput,
+    auto_connect: bool,
+    persist: bool,
+) -> Result<SqlConnection, SqlCommandError> {
+    let store = state.inner().clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        store.save_and_open_connection(input, auto_connect, persist)
+    })
+    .await
+    .map_err(|err| {
+        SqlCommandError::new(
+            "internal",
+            format!("sql_save_and_open_connection task failed: {err}"),
+        )
+    })?
+    .map_err(|err| SqlCommandError::new("connection_failed", err))
 }
 
 #[tauri::command]

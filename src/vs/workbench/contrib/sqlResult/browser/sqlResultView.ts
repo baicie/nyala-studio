@@ -58,6 +58,7 @@ export class SqlResultView extends ViewPane {
 	private historyElement!: HTMLElement;
 	private copyCellButton!: HTMLButtonElement;
 	private copyRowButton!: HTMLButtonElement;
+	private copyColumnButton!: HTMLButtonElement;
 	private copyCsvButton!: HTMLButtonElement;
 	private copyTsvButton!: HTMLButtonElement;
 	private clearButton!: HTMLButtonElement;
@@ -116,6 +117,11 @@ export class SqlResultView extends ViewPane {
 			$('button.sql-result-button', { type: 'button', title: 'Copy selected row as TSV' }, 'Copy Row')
 		) as HTMLButtonElement;
 
+		this.copyColumnButton = append(
+			this.toolbarElement,
+			$('button.sql-result-button', { type: 'button', title: 'Copy selected column as TSV' }, 'Copy Column')
+		) as HTMLButtonElement;
+
 		this.copyCsvButton = append(
 			this.toolbarElement,
 			$('button.sql-result-button', { type: 'button', title: 'Copy all rows as CSV' }, 'Copy CSV')
@@ -146,6 +152,14 @@ export class SqlResultView extends ViewPane {
 		this._register(
 			addDisposableListener(this.copyRowButton, EventType.CLICK, () => {
 				this.copySelection(SqlResultCopyMode.Row, SqlResultCopyFormat.Tsv).catch(error =>
+					this.setStatus(toCopyErrorMessage(error))
+				);
+			})
+		);
+
+		this._register(
+			addDisposableListener(this.copyColumnButton, EventType.CLICK, () => {
+				this.copySelection(SqlResultCopyMode.Column, SqlResultCopyFormat.Tsv).catch(error =>
 					this.setStatus(toCopyErrorMessage(error))
 				);
 			})
@@ -491,6 +505,7 @@ export class SqlResultView extends ViewPane {
 
 		this.copyCellButton.disabled = !hasSelection;
 		this.copyRowButton.disabled = !hasSelection;
+		this.copyColumnButton.disabled = !hasSelection;
 		this.copyCsvButton.disabled = !hasGrid;
 		this.copyTsvButton.disabled = !hasGrid;
 	}
@@ -523,6 +538,9 @@ export class SqlResultView extends ViewPane {
 
 			case SqlResultCopyMode.Row:
 				return `Copied selected row as ${format.toUpperCase()}.`;
+
+			case SqlResultCopyMode.Column:
+				return `Copied selected column as ${format.toUpperCase()}.`;
 
 			case SqlResultCopyMode.All:
 				return `Copied result as ${format.toUpperCase()}.`;

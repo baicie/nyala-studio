@@ -26,6 +26,7 @@ import { ISqlConnectionService } from '../../../services/sql/common/sqlConnectio
 import { ISqlConnectionDialogService } from '../../../services/sql/common/sqlConnectionDialog.js';
 import { isTauri } from '../../../../sidex-bridge.js';
 import { ISqlDriverCatalogService } from '../../../services/sql/common/sqlDriverCatalog.js';
+import { ISqlDriverPackageService } from '../../../services/sql/common/sqlDriverPackages.js';
 import { ISqlMetadataService } from '../../../services/sql/common/sqlMetadata.js';
 import { getSqlConnectorRuntimeDriverId } from '../../../services/sql/common/sqlConnectorRuntimeGuard.js';
 import { getDialectForConnectionKind, SqlDialect } from '../../../services/sql/common/sqlDialect.js';
@@ -35,7 +36,8 @@ import {
 	SqlConnectionKind,
 	SqlDatabase,
 	SqlSavedConnection,
-	SqlTable
+	SqlTable,
+	SqlTableType
 } from '../../../services/sql/common/sqlTypes.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
 import {
@@ -70,7 +72,9 @@ import {
 	createSafeSqlConnectionInputFromFormState,
 	createSqlConnectionFormStateFromSavedConnection
 } from '../common/sqlConnectionFormModel.js';
+import { formatSqlConnectionOperationError } from '../common/sqlConnectionFormOperation.js';
 import {
+	indexSqlRestoreSavedConnectionErrors,
 	refreshAndRequireSqlConnection,
 	restoreSavedConnectionsForRefresh,
 	SqlConnectionRefreshOptions
@@ -91,6 +95,7 @@ import {
 	SqlDataSourceManagementState
 } from '../common/sqlDataSourceManagementModel.js';
 import { buildSqlDriverStatusBadge, buildSqlDriverStatusPlaceholder, SqlDriverStatusBadge } from './driverCardBadge.js';
+import { buildSqlDriverPackageStatusBadge, SqlDriverPackageStatusBadge } from './driverPackageBadge.js';
 
 interface SqlConnectionTreeSnapshotState {
 	connections: SqlConnection[];
@@ -120,6 +125,10 @@ export class SqlConnectionsView extends ViewPane {
 	private connectorCountElement!: HTMLElement;
 	private connectorCatalogLoad: Promise<void> | undefined;
 	private connectorCatalogUnavailable = false;
+	private driverPackagesLoad: Promise<void> | undefined;
+	private driverPackagesLoaded = false;
+	private driverPackagesUnavailable = false;
+	private readonly downloadingDriverPackages = new Set<string>();
 	private readonly treeRowsByNodeId = new Map<string, HTMLElement>();
 	private readonly busyDataSourceIds = new Set<string>();
 
@@ -135,6 +144,7 @@ export class SqlConnectionsView extends ViewPane {
 	};
 
 	private savedConnections: SqlSavedConnection[] = [];
+	private savedConnectionRestoreErrors: Record<string, string> = Object.create(null);
 	private didRestoreSavedConnections = false;
 	private readonly isConnectorView: boolean;
 
@@ -152,6 +162,7 @@ export class SqlConnectionsView extends ViewPane {
 		@ISqlConnectionService private readonly sqlConnectionService: ISqlConnectionService,
 		@ISqlMetadataService private readonly sqlMetadataService: ISqlMetadataService,
 		@ISqlDriverCatalogService private readonly sqlDriverCatalogService: ISqlDriverCatalogService,
+		@ISqlDriverPackageService private readonly sqlDriverPackageService: ISqlDriverPackageService,
 		@ICommandService private readonly commandService: ICommandService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IDialogService private readonly dialogService: IDialogService,
@@ -219,10 +230,17 @@ export class SqlConnectionsView extends ViewPane {
 				this.renderConnectorManagement();
 			})
 		);
+		this._register(
+			this.sqlDriverPackageService.onChange(() => {
+				this.driverPackagesLoaded = true;
+				this.driverPackagesUnavailable = false;
+				this.renderConnectorManagement();
+			})
+		);
 
 		this.renderConnectorManagement();
-		this.ensureConnectorCatalogLoaded().catch(() => {
-			this.showInfo('Connector status is unavailable. Refresh to retry.');
+		Promise.all([this.ensureConnectorCatalogLoaded(), this.ensureDriverPackagesLoaded()]).catch(() => {
+			this.showInfo('Connector or driver package status is unavailable. Refresh to retry.');
 		});
 	}
 
@@ -309,7 +327,10 @@ export class SqlConnectionsView extends ViewPane {
 		try {
 			this.didRestoreSavedConnections = await restoreSavedConnectionsForRefresh(
 				this.didRestoreSavedConnections,
-				() => this.sqlConnectionService.restoreSavedConnections(),
+				async () => {
+					const result = await this.sqlConnectionService.restoreSavedConnections();
+					this.savedConnectionRestoreErrors = indexSqlRestoreSavedConnectionErrors(result.errors);
+				},
 				error => this.showError(error),
 				options
 			);
@@ -323,7 +344,7 @@ export class SqlConnectionsView extends ViewPane {
 			this.state.databasesByConnectionId = Object.create(null);
 			this.state.tablesByConnectionId = Object.create(null);
 			this.state.columnsByTableId = Object.create(null);
-			this.state.errorsByConnectionId = Object.create(null);
+			this.state.errorsByConnectionId = Object.assign(Object.create(null), this.savedConnectionRestoreErrors);
 			this.state.errorsByTableId = Object.create(null);
 			this.savedConnections = saved;
 
@@ -386,6 +407,7 @@ export class SqlConnectionsView extends ViewPane {
 
 		for (const presentation of presentations) {
 			const badge = this.createConnectorBadge(presentation.kind);
+			const packageBadge = this.createDriverPackageBadge(presentation.kind);
 			const card = append(this.connectorListElement, $('article.sql-connector-manager-card'));
 			const icon = append(
 				card,
@@ -404,10 +426,17 @@ export class SqlConnectionsView extends ViewPane {
 			append(title, $('span.sql-connector-delivery-badge', undefined, deliveryLabel(presentation.delivery)));
 			append(copy, $('.sql-connector-manager-description', undefined, presentation.description));
 			append(copy, $('.sql-connector-manager-runtime', undefined, badge.title));
+			if (packageBadge) {
+				const packageStatus = append(copy, $('span.sql-connector-manager-package'));
+				packageStatus.className = packageBadge.className;
+				packageStatus.textContent = `Driver package: ${packageBadge.text}`;
+				packageStatus.title = packageBadge.title;
+			}
 
+			const actions = append(card, $('.sql-connector-manager-actions'));
 			if (badge.runnable) {
 				const addButton = append(
-					card,
+					actions,
 					$('button.sql-connector-manager-action', {
 						type: 'button',
 						title: `New ${presentation.label} data source`,
@@ -423,6 +452,25 @@ export class SqlConnectionsView extends ViewPane {
 					})
 				);
 			}
+			if (packageBadge?.canDownload && presentation.driverPackageId) {
+				const downloadButton = append(
+					actions,
+					$('button.sql-connector-manager-action', {
+						type: 'button',
+						title: `Download ${packageBadge.text.replace(/^Download /, '')}`,
+						'aria-label': `Download ${presentation.label} driver package`,
+						disabled: this.downloadingDriverPackages.has(presentation.driverPackageId) ? 'true' : undefined
+					})
+				) as HTMLButtonElement;
+				append(downloadButton, $('.codicon.codicon-cloud-download', { 'aria-hidden': 'true' }));
+				this.connectorRenderDisposables.add(
+					addDisposableListener(downloadButton, EventType.CLICK, () => {
+						this.downloadDriverPackage(presentation.driverPackageId!, presentation.label).catch(error =>
+							this.showError(error)
+						);
+					})
+				);
+			}
 		}
 	}
 
@@ -435,10 +483,25 @@ export class SqlConnectionsView extends ViewPane {
 		}
 	}
 
+	private createDriverPackageBadge(kind: SqlConnectionKind): SqlDriverPackageStatusBadge | undefined {
+		const presentation = getSqlConnectorPresentation(kind);
+		if (!presentation.driverPackageId) {
+			return undefined;
+		}
+
+		return buildSqlDriverPackageStatusBadge(
+			this.sqlDriverPackageService.findForDriver(getSqlConnectorRuntimeDriverId(kind)),
+			{
+				loaded: this.driverPackagesLoaded,
+				unavailable: this.driverPackagesUnavailable
+			}
+		);
+	}
+
 	private async refreshConnectorCatalog(): Promise<void> {
-		await this.ensureConnectorCatalogLoaded(true);
+		await Promise.all([this.ensureConnectorCatalogLoaded(true), this.ensureDriverPackagesLoaded(true)]);
 		this.renderConnectorManagement();
-		this.showInfo('Connector availability refreshed.');
+		this.showInfo('Connector and driver package status refreshed.');
 	}
 
 	private ensureConnectorCatalogLoaded(forceRefresh = false): Promise<void> {
@@ -465,6 +528,51 @@ export class SqlConnectionsView extends ViewPane {
 			});
 		this.connectorCatalogLoad = load;
 		return load;
+	}
+
+	private ensureDriverPackagesLoaded(forceRefresh = false): Promise<void> {
+		if (this.driverPackagesLoad) {
+			return this.driverPackagesLoad;
+		}
+
+		const request = forceRefresh
+			? this.sqlDriverPackageService.refreshPackages()
+			: this.sqlDriverPackageService.getPackages();
+		const load = request
+			.then(() => {
+				this.driverPackagesLoaded = true;
+				this.driverPackagesUnavailable = false;
+			})
+			.catch(error => {
+				this.driverPackagesLoaded = true;
+				this.driverPackagesUnavailable = true;
+				throw error;
+			})
+			.finally(() => {
+				if (this.driverPackagesLoad === load) {
+					this.driverPackagesLoad = undefined;
+				}
+				this.renderConnectorManagement();
+			});
+		this.driverPackagesLoad = load;
+		return load;
+	}
+
+	private async downloadDriverPackage(packageId: string, connectorLabel: string): Promise<void> {
+		if (this.downloadingDriverPackages.has(packageId)) {
+			return;
+		}
+
+		this.downloadingDriverPackages.add(packageId);
+		this.renderConnectorManagement();
+		this.showInfo(`Downloading ${connectorLabel} driver package...`);
+		try {
+			const packageEntry = await this.sqlDriverPackageService.download(packageId);
+			this.showInfo(`${packageEntry.displayName} ${packageEntry.version} downloaded. Runtime support is unchanged.`);
+		} finally {
+			this.downloadingDriverPackages.delete(packageId);
+			this.renderConnectorManagement();
+		}
 	}
 
 	private async loadConnectionMetadata(connection: SqlConnection): Promise<void> {
@@ -586,6 +694,15 @@ export class SqlConnectionsView extends ViewPane {
 
 		const actions = append(row, $('.sql-connection-node-actions'));
 
+		if (node.type === SqlConnectionTreeNodeType.Error && node.connectionId) {
+			this.appendActionButton(actions, 'Refresh', 'Retry metadata load', event => {
+				event.preventDefault();
+				event.stopPropagation();
+				this.refreshErrorNode(node).catch(error => this.showError(error));
+			});
+			return;
+		}
+
 		if (node.type === SqlConnectionTreeNodeType.Connection && node.connectionId) {
 			this.appendActionButton(actions, 'SQL', 'Open SQL query', event => {
 				event.preventDefault();
@@ -698,9 +815,11 @@ export class SqlConnectionsView extends ViewPane {
 
 		this.dataSourceRenderDisposables.clear();
 		clearNode(this.dataSourceListElement);
-		const items = buildSqlDataSourceManagementItems(this.savedConnections, this.state.connections).filter(item =>
-			matchesSqlDataSourceManagementItem(item, this.dataSourceSearchInput.value)
-		);
+		const items = buildSqlDataSourceManagementItems(
+			this.savedConnections,
+			this.state.connections,
+			this.state.errorsByConnectionId
+		).filter(item => matchesSqlDataSourceManagementItem(item, this.dataSourceSearchInput.value));
 		const connectedCount = items.filter(item => item.state === SqlDataSourceManagementState.Connected).length;
 		this.dataSourceCountElement.textContent = `${items.length} data sources · ${connectedCount} connected`;
 
@@ -748,6 +867,9 @@ export class SqlConnectionsView extends ViewPane {
 		const target = append(copy, $('.sql-data-source-card-target'));
 		target.textContent = `${item.driverLabel} · ${item.target || 'Local data source'}`;
 		target.title = target.textContent;
+		if (item.error) {
+			append(copy, $('.sql-data-source-card-error', undefined, item.error));
+		}
 
 		const actions = append(card, $('.sql-data-source-card-actions'));
 		for (const action of getSqlDataSourceManagementActions(item)) {
@@ -815,6 +937,11 @@ export class SqlConnectionsView extends ViewPane {
 				case SqlDataSourceManagementAction.Test:
 					if (item.saved) {
 						await this.testSavedDataSource(item.saved);
+					}
+					break;
+				case SqlDataSourceManagementAction.Reconnect:
+					if (item.saved) {
+						await this.reconnectSavedDataSource(item.saved);
 					}
 					break;
 				case SqlDataSourceManagementAction.Disconnect:
@@ -890,6 +1017,22 @@ export class SqlConnectionsView extends ViewPane {
 		this.collapsedNodes.delete(getConnectionNodeId(connectionId));
 		this.renderTree();
 		this.showInfo(`Refreshed ${connection.name}.`);
+	}
+
+	private async refreshErrorNode(node: SqlConnectionTreeNode): Promise<void> {
+		if (!node.connectionId) {
+			throw new Error('Cannot refresh an error node without a connection id.');
+		}
+
+		if (node.tableName) {
+			await this.refreshTable({
+				...node,
+				type: node.tableType === SqlTableType.View ? SqlConnectionTreeNodeType.View : SqlConnectionTreeNodeType.Table
+			});
+			return;
+		}
+
+		await this.refreshConnection(node.connectionId);
 	}
 
 	private async refreshTable(node: SqlConnectionTreeNode): Promise<void> {
@@ -1010,9 +1153,18 @@ export class SqlConnectionsView extends ViewPane {
 		const input = createSafeSqlConnectionInputFromFormState(createSqlConnectionFormStateFromSavedConnection(saved));
 		const result = await this.sqlConnectionService.testConnection(input);
 		if (!result.ok) {
-			throw new Error(result.error || 'Connection test failed.');
+			throw result.error ?? new Error('Connection test failed.');
 		}
 		this.showInfo(`Connection test passed for ${saved.name}.`);
+	}
+
+	private async reconnectSavedDataSource(saved: SqlSavedConnection): Promise<void> {
+		this.showInfo(`Reconnecting ${saved.name}...`);
+		if (this.state.connections.some(connection => connection.id === saved.id)) {
+			await this.sqlConnectionService.closeConnection(saved.id);
+		}
+		await this.refresh();
+		await this.openSavedConnection(saved);
 	}
 
 	private async removeDataSource(item: SqlDataSourceManagementItem): Promise<void> {
@@ -1025,7 +1177,7 @@ export class SqlConnectionsView extends ViewPane {
 			type: 'warning',
 			message: `Delete data source '${item.name}'?`,
 			detail:
-				item.state === SqlDataSourceManagementState.Connected
+				item.state === SqlDataSourceManagementState.Connected || item.state === SqlDataSourceManagementState.Error
 					? 'The saved profile will be removed and its active connection will be closed.'
 					: 'The saved profile will be removed from Nyala Studio.',
 			primaryButton: 'Delete',
@@ -1079,13 +1231,7 @@ export class SqlConnectionsView extends ViewPane {
 			return;
 		}
 
-		const structuredMessage = (error as { message?: unknown } | undefined)?.message;
-		const message =
-			error instanceof Error
-				? error.message
-				: typeof structuredMessage === 'string'
-					? structuredMessage
-					: String(error);
+		const message = formatSqlConnectionOperationError(error);
 		this.messageElement.classList.add('error');
 		this.messageElement.setAttribute('role', 'alert');
 		this.messageElement.setAttribute('aria-live', 'assertive');
@@ -1095,7 +1241,11 @@ export class SqlConnectionsView extends ViewPane {
 }
 
 function isActionableNode(node: SqlConnectionTreeNode): boolean {
-	return node.type === SqlConnectionTreeNodeType.Connection || isSqlTableLikeNode(node);
+	return (
+		node.type === SqlConnectionTreeNodeType.Connection ||
+		(node.type === SqlConnectionTreeNodeType.Error && Boolean(node.connectionId)) ||
+		isSqlTableLikeNode(node)
+	);
 }
 
 function tableFromNode(node: SqlConnectionTreeNode): Pick<SqlTable, 'schema' | 'name' | 'tableType'> {
@@ -1129,7 +1279,14 @@ function getNodeIcon(node: SqlConnectionTreeNode): string {
 }
 
 function dataSourceStateLabel(state: SqlDataSourceManagementState): string {
-	return state === SqlDataSourceManagementState.Connected ? 'Connected' : 'Saved';
+	switch (state) {
+		case SqlDataSourceManagementState.Connected:
+			return 'Connected';
+		case SqlDataSourceManagementState.Error:
+			return 'Error';
+		case SqlDataSourceManagementState.Saved:
+			return 'Saved';
+	}
 }
 
 function getDataSourceActionPresentation(action: SqlDataSourceManagementAction): {
@@ -1150,6 +1307,8 @@ function getDataSourceActionPresentation(action: SqlDataSourceManagementAction):
 			return { icon: 'edit', title: 'Edit data source' };
 		case SqlDataSourceManagementAction.Test:
 			return { icon: 'beaker', title: 'Test connection' };
+		case SqlDataSourceManagementAction.Reconnect:
+			return { icon: 'sync', title: 'Reconnect' };
 		case SqlDataSourceManagementAction.Disconnect:
 			return { icon: 'debug-disconnect', title: 'Disconnect' };
 		case SqlDataSourceManagementAction.Delete:

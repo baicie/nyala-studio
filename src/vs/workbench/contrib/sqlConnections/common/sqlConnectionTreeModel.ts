@@ -2,10 +2,7 @@
  * SQL Studio Next - SQL connection tree model.
  *--------------------------------------------------------------------------------------------*/
 
-import {
-	getSqlDriverDescriptor,
-	SqlDriverAvailability
-} from '../../../services/sql/common/sqlDrivers.js';
+import { getSqlDriverDescriptor, SqlDriverAvailability } from '../../../services/sql/common/sqlDrivers.js';
 import {
 	SqlColumn,
 	SqlConnection,
@@ -36,6 +33,7 @@ export interface SqlConnectionTreeNode {
 	schema?: string;
 	tableName?: string;
 	columnName?: string;
+	tableType?: SqlTableType;
 	children?: SqlConnectionTreeNode[];
 }
 
@@ -65,10 +63,7 @@ export function buildSqlConnectionTree(snapshot: SqlConnectionTreeSnapshot): Sql
 	return connections.map(connection => buildConnectionNode(connection, snapshot));
 }
 
-export function getTableNodeId(
-	connectionId: string,
-	table: Pick<SqlTable, 'schema' | 'name' | 'tableType'>
-): string {
+export function getTableNodeId(connectionId: string, table: Pick<SqlTable, 'schema' | 'name' | 'tableType'>): string {
 	return [
 		'sql',
 		'connection',
@@ -176,20 +171,13 @@ export function describeSqlConnection(
 	return flags.join(' · ');
 }
 
-function buildConnectionNode(
-	connection: SqlConnection,
-	snapshot: SqlConnectionTreeSnapshot
-): SqlConnectionTreeNode {
+function buildConnectionNode(connection: SqlConnection, snapshot: SqlConnectionTreeSnapshot): SqlConnectionTreeNode {
 	const children: SqlConnectionTreeNode[] = [];
 	const connectionError = snapshot.errorsByConnectionId?.[connection.id];
 	const tables = snapshot.tablesByConnectionId?.[connection.id] ?? [];
 	const columnsByTableId = snapshot.columnsByTableId ?? {};
 	const errorsByTableId = snapshot.errorsByTableId ?? {};
-	const databases = resolveDatabases(
-		connection,
-		snapshot.databasesByConnectionId?.[connection.id],
-		tables
-	);
+	const databases = resolveDatabases(connection, snapshot.databasesByConnectionId?.[connection.id], tables);
 
 	if (connectionError) {
 		children.push({
@@ -219,9 +207,7 @@ function buildConnectionNode(
 		}
 
 		for (const database of databases) {
-			children.push(
-				buildDatabaseNode(connection, database, tables, columnsByTableId, errorsByTableId)
-			);
+			children.push(buildDatabaseNode(connection, database, tables, columnsByTableId, errorsByTableId));
 		}
 	} else {
 		const tableNodes = buildTableNodes(connection.id, tables, SqlTableType.Table, columnsByTableId, errorsByTableId);
@@ -365,7 +351,8 @@ function buildTableNodes(
 					connectionId,
 					databaseName: table.schema ?? 'main',
 					schema: table.schema,
-					tableName: table.name
+					tableName: table.name,
+					tableType
 				});
 			}
 
@@ -385,15 +372,14 @@ function buildTableNodes(
 
 			return {
 				id: tableNodeId,
-				type: table.tableType === SqlTableType.View
-					? SqlConnectionTreeNodeType.View
-					: SqlConnectionTreeNodeType.Table,
+				type: table.tableType === SqlTableType.View ? SqlConnectionTreeNodeType.View : SqlConnectionTreeNodeType.Table,
 				label: table.name,
 				description: table.schema,
 				connectionId,
 				databaseName: table.schema ?? 'main',
 				schema: table.schema,
 				tableName: table.name,
+				tableType: table.tableType,
 				children
 			};
 		});
@@ -457,9 +443,7 @@ function normalizeDatabases(
 		names.add(connection.database.trim());
 	}
 
-	return [...names]
-		.sort((a, b) => a.localeCompare(b))
-		.map(name => ({ name }));
+	return [...names].sort((a, b) => a.localeCompare(b)).map(name => ({ name }));
 }
 
 /**

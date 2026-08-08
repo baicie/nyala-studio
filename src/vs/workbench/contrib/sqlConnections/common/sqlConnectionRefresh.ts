@@ -2,8 +2,24 @@
  * Nyala Studio - SQL connection refresh orchestration.
  *--------------------------------------------------------------------------------------------*/
 
+import type { SqlRestoreSavedConnectionError } from '../../../services/sql/common/sqlTypes.js';
+
 export interface SqlConnectionRefreshOptions {
 	readonly throwOnError?: boolean;
+}
+
+export function indexSqlRestoreSavedConnectionErrors(
+	errors: readonly SqlRestoreSavedConnectionError[]
+): Record<string, string> {
+	const indexed: Record<string, string> = Object.create(null);
+
+	for (const error of errors) {
+		if (error.connectionId && error.error) {
+			indexed[error.connectionId] = error.error;
+		}
+	}
+
+	return indexed;
 }
 
 export async function restoreSavedConnectionsForRefresh(

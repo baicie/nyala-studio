@@ -592,6 +592,7 @@ export class SqlEditorPane extends EditorPane {
 			getSqlEditorStatusLabel({
 				connectionId: this.getSelectedConnectionId(),
 				connectionName: this.getSelectedConnectionName(),
+				readOnly: this.getSelectedConnection()?.readOnly,
 				dirty: this.dirty,
 				running: this.running
 			})

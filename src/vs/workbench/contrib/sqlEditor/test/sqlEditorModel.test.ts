@@ -112,11 +112,56 @@ test('findSqlStatementAtOffset ignores semicolon inside double quote', () => {
 	assert.equal(statement.sql, 'SELECT ";" AS value');
 });
 
+test('splitSqlStatements ignores semicolon inside MySQL backtick identifier', () => {
+	const sql = 'SELECT `a;b` FROM records;\nSELECT 2;';
+
+	assert.deepEqual(
+		splitSqlStatements(sql).map(statement => statement.sql),
+		['SELECT `a;b` FROM records', 'SELECT 2']
+	);
+});
+
+test('splitSqlStatements ignores semicolon inside SQLite bracket identifier', () => {
+	const sql = 'SELECT [a;b] FROM records;\nSELECT 2;';
+
+	assert.deepEqual(
+		splitSqlStatements(sql).map(statement => statement.sql),
+		['SELECT [a;b] FROM records', 'SELECT 2']
+	);
+});
+
+test('splitSqlStatements ignores semicolon after backslash-escaped single quote', () => {
+	const sql = String.raw`SELECT 'a\';b' AS value;
+SELECT 2;`;
+
+	assert.deepEqual(
+		splitSqlStatements(sql).map(statement => statement.sql),
+		[String.raw`SELECT 'a\';b' AS value`, 'SELECT 2']
+	);
+});
+
+test('splitSqlStatements ignores semicolon after backslash-escaped double quote', () => {
+	const sql = String.raw`SELECT "a\";b" AS value;
+SELECT 2;`;
+
+	assert.deepEqual(
+		splitSqlStatements(sql).map(statement => statement.sql),
+		[String.raw`SELECT "a\";b" AS value`, 'SELECT 2']
+	);
+});
+
 test('findSqlStatementAtOffset ignores semicolon inside line comment', () => {
 	const sql = 'SELECT 1 -- ; comment\n;\nSELECT 2;';
 	const statement = findSqlStatementAtOffset(sql, 5);
 
 	assert.equal(statement.sql, 'SELECT 1 -- ; comment');
+});
+
+test('findSqlStatementAtOffset ignores semicolon inside MySQL hash comment', () => {
+	const sql = 'SELECT 1 # ; comment\n;\nSELECT 2;';
+	const statement = findSqlStatementAtOffset(sql, 5);
+
+	assert.equal(statement.sql, 'SELECT 1 # ; comment');
 });
 
 test('findSqlStatementAtOffset ignores semicolon inside block comment', () => {
@@ -140,10 +185,21 @@ test('getSqlEditorStatusLabel renders connection status', () => {
 		getSqlEditorStatusLabel({
 			connectionId: 'local',
 			connectionName: 'Local SQLite',
+			readOnly: true,
 			dirty: false,
 			running: false
 		}),
-		'Ready · Local SQLite'
+		'Ready · Local SQLite · Read-only'
+	);
+
+	assert.equal(
+		getSqlEditorStatusLabel({
+			connectionId: 'local',
+			readOnly: false,
+			dirty: false,
+			running: false
+		}),
+		'Ready · local · Write mode'
 	);
 
 	assert.equal(
