@@ -748,6 +748,11 @@
 	transition: opacity 80ms ease-out;
 }
 
+.sql-connection-node.type-table > .sql-connection-node-actions,
+.sql-connection-node.type-view > .sql-connection-node-actions {
+	display: none;
+}
+
 .sql-connection-node:hover .sql-connection-node-actions,
 .sql-connection-node:focus-within .sql-connection-node-actions {
 	opacity: 1;

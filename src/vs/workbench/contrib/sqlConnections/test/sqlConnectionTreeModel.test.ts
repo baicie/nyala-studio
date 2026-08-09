@@ -10,8 +10,10 @@ import {
 	getConnectionColumnsKeyPrefix,
 	getConnectionNodeId,
 	getDatabaseNodeId,
+	getSqlConnectionTreeInlineActions,
 	getSqlConnectionDriverBadge,
 	getTableNodeId,
+	SqlConnectionTreeInlineAction,
 	SqlConnectionTreeNodeType
 } from '../common/sqlConnectionTreeModel.js';
 import { SqlDriverAvailability } from '../../../services/sql/common/sqlDrivers.js';
@@ -147,6 +149,45 @@ test('buildSqlConnectionTree renders connection metadata error', () => {
 	assert.equal(error.type, SqlConnectionTreeNodeType.Error);
 	assert.equal(error.label, 'Failed to load metadata');
 	assert.equal(error.description, 'database is locked');
+});
+
+test('table and view nodes omit inline actions so their labels retain row width', () => {
+	for (const type of [SqlConnectionTreeNodeType.Table, SqlConnectionTreeNodeType.View]) {
+		assert.deepEqual(
+			getSqlConnectionTreeInlineActions({
+				type,
+				connectionId: 'local'
+			}),
+			[]
+		);
+	}
+});
+
+test('connection and error nodes retain their compact inline actions', () => {
+	assert.deepEqual(
+		getSqlConnectionTreeInlineActions({
+			type: SqlConnectionTreeNodeType.Connection,
+			connectionId: 'local'
+		}),
+		[
+			SqlConnectionTreeInlineAction.OpenQuery,
+			SqlConnectionTreeInlineAction.RefreshConnection,
+			SqlConnectionTreeInlineAction.CloseConnection
+		]
+	);
+	assert.deepEqual(
+		getSqlConnectionTreeInlineActions({
+			type: SqlConnectionTreeNodeType.Error,
+			connectionId: 'local'
+		}),
+		[SqlConnectionTreeInlineAction.RetryMetadata]
+	);
+	assert.deepEqual(
+		getSqlConnectionTreeInlineActions({
+			type: SqlConnectionTreeNodeType.Error
+		}),
+		[]
+	);
 });
 
 test('getTableNodeId and getColumnNodeId escape special characters', () => {

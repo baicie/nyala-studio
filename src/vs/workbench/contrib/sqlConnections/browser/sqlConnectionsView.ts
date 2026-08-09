@@ -48,6 +48,8 @@ import {
 	getColumnsKey,
 	getConnectionColumnsKeyPrefix,
 	getConnectionNodeId,
+	getSqlConnectionTreeInlineActions,
+	SqlConnectionTreeInlineAction,
 	SqlConnectionTreeNode,
 	SqlConnectionTreeNodeType
 } from '../common/sqlConnectionTreeModel.js';
@@ -716,95 +718,49 @@ export class SqlConnectionsView extends ViewPane {
 	}
 
 	private renderNodeActions(row: HTMLElement, node: SqlConnectionTreeNode): void {
-		if (!isActionableNode(node)) {
+		const inlineActions = getSqlConnectionTreeInlineActions(node);
+		if (inlineActions.length === 0) {
 			return;
 		}
 
 		const actions = append(row, $('.sql-connection-node-actions'));
-
-		if (node.type === SqlConnectionTreeNodeType.Error && node.connectionId) {
-			this.appendActionButton(actions, 'Refresh', 'Retry metadata load', event => {
-				event.preventDefault();
-				event.stopPropagation();
-				this.refreshErrorNode(node).catch(error => this.showError(error));
-			});
-			return;
-		}
-
-		if (node.type === SqlConnectionTreeNodeType.Connection && node.connectionId) {
-			this.appendActionButton(actions, 'SQL', 'Open SQL query', event => {
-				event.preventDefault();
-				event.stopPropagation();
-				this.openQueryForNode(node).catch(error => this.showError(error));
-			});
-
-			this.appendActionButton(actions, 'Refresh', 'Refresh connection metadata', event => {
-				event.preventDefault();
-				event.stopPropagation();
-				this.refreshConnection(node.connectionId!).catch(error => this.showError(error));
-			});
-
-			this.appendActionButton(
-				actions,
-				'\u00d7',
-				'Close connection',
-				event => {
-					event.preventDefault();
-					event.stopPropagation();
-					this.closeConnection(node.connectionId!).catch(error => this.showError(error));
-				},
-				'danger'
-			);
-
-			return;
-		}
-
-		if (isSqlTableLikeNode(node)) {
-			const draftOptions = this.getDraftOptionsForNode(node);
-
-			this.appendActionButton(actions, 'SELECT', 'Generate SELECT query', event => {
-				event.preventDefault();
-				event.stopPropagation();
-				this.openDraft(createSelectDraftFromTreeNode(node, draftOptions)).catch(error => this.showError(error));
-			});
-
-			this.appendActionButton(actions, 'COUNT', 'Generate COUNT query', event => {
-				event.preventDefault();
-				event.stopPropagation();
-				this.openDraft(createCountDraftFromTreeNode(node, draftOptions)).catch(error => this.showError(error));
-			});
-
-			if (isSqlMutableTableNode(node)) {
-				this.appendActionButton(actions, 'INSERT', 'Generate INSERT template', event => {
-					event.preventDefault();
-					event.stopPropagation();
-					this.openDraft(createInsertDraftFromTreeNode(node, draftOptions)).catch(error => this.showError(error));
-				});
-
-				this.appendActionButton(actions, 'UPDATE', 'Generate UPDATE template', event => {
-					event.preventDefault();
-					event.stopPropagation();
-					this.openDraft(createUpdateDraftFromTreeNode(node, draftOptions)).catch(error => this.showError(error));
-				});
+		for (const inlineAction of inlineActions) {
+			switch (inlineAction) {
+				case SqlConnectionTreeInlineAction.OpenQuery:
+					this.appendActionButton(actions, 'SQL', 'Open SQL query', event => {
+						event.preventDefault();
+						event.stopPropagation();
+						this.openQueryForNode(node).catch(error => this.showError(error));
+					});
+					break;
+				case SqlConnectionTreeInlineAction.RefreshConnection:
+					this.appendActionButton(actions, 'Refresh', 'Refresh connection metadata', event => {
+						event.preventDefault();
+						event.stopPropagation();
+						this.refreshConnection(node.connectionId!).catch(error => this.showError(error));
+					});
+					break;
+				case SqlConnectionTreeInlineAction.CloseConnection:
+					this.appendActionButton(
+						actions,
+						'\u00d7',
+						'Close connection',
+						event => {
+							event.preventDefault();
+							event.stopPropagation();
+							this.closeConnection(node.connectionId!).catch(error => this.showError(error));
+						},
+						'danger'
+					);
+					break;
+				case SqlConnectionTreeInlineAction.RetryMetadata:
+					this.appendActionButton(actions, 'Refresh', 'Retry metadata load', event => {
+						event.preventDefault();
+						event.stopPropagation();
+						this.refreshErrorNode(node).catch(error => this.showError(error));
+					});
+					break;
 			}
-
-			this.appendActionButton(actions, 'Copy Name', 'Copy table name', event => {
-				event.preventDefault();
-				event.stopPropagation();
-				this.copyTableName(node).catch(error => this.showError(error));
-			});
-
-			this.appendActionButton(actions, 'Copy Full', 'Copy qualified name', event => {
-				event.preventDefault();
-				event.stopPropagation();
-				this.copyQualifiedName(node).catch(error => this.showError(error));
-			});
-
-			this.appendActionButton(actions, 'Refresh', 'Refresh columns', event => {
-				event.preventDefault();
-				event.stopPropagation();
-				this.refreshTable(node).catch(error => this.showError(error));
-			});
 		}
 	}
 
@@ -1511,14 +1467,6 @@ export class SqlConnectionsView extends ViewPane {
 		this.messageElement.textContent = message;
 		this.notificationService.error(message);
 	}
-}
-
-function isActionableNode(node: SqlConnectionTreeNode): boolean {
-	return (
-		node.type === SqlConnectionTreeNodeType.Connection ||
-		(node.type === SqlConnectionTreeNodeType.Error && Boolean(node.connectionId)) ||
-		isSqlTableLikeNode(node)
-	);
 }
 
 function canShowTreeNodeContextMenu(node: SqlConnectionTreeNode): boolean {
