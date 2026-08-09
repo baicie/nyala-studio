@@ -23,6 +23,13 @@ export const enum SqlConnectionTreeNodeType {
 	Column = 'column'
 }
 
+export const enum SqlConnectionTreeInlineAction {
+	OpenQuery = 'openQuery',
+	RefreshConnection = 'refreshConnection',
+	CloseConnection = 'closeConnection',
+	RetryMetadata = 'retryMetadata'
+}
+
 export interface SqlConnectionTreeNode {
 	id: string;
 	type: SqlConnectionTreeNodeType;
@@ -44,6 +51,31 @@ export interface SqlConnectionTreeSnapshot {
 	columnsByTableId?: Record<string, SqlColumn[]>;
 	errorsByConnectionId?: Record<string, string>;
 	errorsByTableId?: Record<string, string>;
+}
+
+const NO_INLINE_ACTIONS: readonly SqlConnectionTreeInlineAction[] = [];
+const CONNECTION_INLINE_ACTIONS: readonly SqlConnectionTreeInlineAction[] = [
+	SqlConnectionTreeInlineAction.OpenQuery,
+	SqlConnectionTreeInlineAction.RefreshConnection,
+	SqlConnectionTreeInlineAction.CloseConnection
+];
+const ERROR_INLINE_ACTIONS: readonly SqlConnectionTreeInlineAction[] = [SqlConnectionTreeInlineAction.RetryMetadata];
+
+export function getSqlConnectionTreeInlineActions(
+	node: Pick<SqlConnectionTreeNode, 'type' | 'connectionId'>
+): readonly SqlConnectionTreeInlineAction[] {
+	if (!node.connectionId) {
+		return NO_INLINE_ACTIONS;
+	}
+
+	switch (node.type) {
+		case SqlConnectionTreeNodeType.Connection:
+			return CONNECTION_INLINE_ACTIONS;
+		case SqlConnectionTreeNodeType.Error:
+			return ERROR_INLINE_ACTIONS;
+		default:
+			return NO_INLINE_ACTIONS;
+	}
 }
 
 export function buildSqlConnectionTree(snapshot: SqlConnectionTreeSnapshot): SqlConnectionTreeNode[] {
