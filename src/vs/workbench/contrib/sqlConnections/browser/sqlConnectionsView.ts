@@ -6,9 +6,12 @@ import './media/sqlConnections.css';
 import './media/driverCardBadge.css';
 import './media/sqlConnectorBrand.css';
 
-import { $, addDisposableListener, append, clearNode, EventType } from '../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, clearNode, EventType, getWindow } from '../../../../base/browser/dom.js';
+import { StandardMouseEvent } from '../../../../base/browser/mouseEvent.js';
+import { Action, IAction, Separator } from '../../../../base/common/actions.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
+import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
@@ -89,6 +92,7 @@ import {
 	buildSqlDataSourceManagementItems,
 	createSqlDataSourceRemovalRequest,
 	getSqlDataSourceManagementActions,
+	groupSqlDataSourceManagementActions,
 	matchesSqlDataSourceManagementItem,
 	SqlDataSourceManagementAction,
 	SqlDataSourceManagementItem,
@@ -164,6 +168,7 @@ export class SqlConnectionsView extends ViewPane {
 		@ISqlDriverCatalogService private readonly sqlDriverCatalogService: ISqlDriverCatalogService,
 		@ISqlDriverPackageService private readonly sqlDriverPackageService: ISqlDriverPackageService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IClipboardService private readonly clipboardService: IClipboardService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@ISqlConnectionDialogService private readonly sqlConnectionDialogService: ISqlConnectionDialogService
@@ -633,7 +638,14 @@ export class SqlConnectionsView extends ViewPane {
 
 	private renderNode(node: SqlConnectionTreeNode, depth: number): HTMLElement {
 		const wrapper = $('.sql-connection-node-wrapper');
-		const row = append(wrapper, $('.sql-connection-node', { role: 'treeitem' }));
+		const row = append(
+			wrapper,
+			$('.sql-connection-node', {
+				role: 'treeitem',
+				tabIndex: 0,
+				'aria-haspopup': canShowTreeNodeContextMenu(node) ? 'menu' : undefined
+			})
+		);
 		this.treeRowsByNodeId.set(node.id, row);
 
 		row.style.paddingLeft = `${8 + depth * 14}px`;
@@ -641,6 +653,22 @@ export class SqlConnectionsView extends ViewPane {
 
 		const hasChildren = Boolean(node.children?.length);
 		const isNodeExpanded = this.isNodeExpanded(node);
+		if (canShowTreeNodeContextMenu(node)) {
+			this.treeRenderDisposables.add(
+				addDisposableListener(row, EventType.CONTEXT_MENU, event => {
+					this.showTreeNodeContextMenu(node, row, event);
+				})
+			);
+			this.treeRenderDisposables.add(
+				addDisposableListener(row, EventType.KEY_DOWN, event => {
+					if (isContextMenuKeyboardEvent(event)) {
+						event.preventDefault();
+						event.stopPropagation();
+						this.showTreeNodeContextMenu(node, row);
+					}
+				})
+			);
+		}
 
 		const twisty = append(
 			row,
@@ -848,10 +876,26 @@ export class SqlConnectionsView extends ViewPane {
 			this.dataSourceListElement,
 			$('article.sql-data-source-card', {
 				role: 'listitem',
+				tabIndex: 0,
+				'aria-haspopup': 'menu',
 				'aria-label': `${item.name}, ${item.driverLabel}, ${item.state}`
 			})
 		);
 		card.classList.toggle('busy', this.busyDataSourceIds.has(item.id));
+		this.dataSourceRenderDisposables.add(
+			addDisposableListener(card, EventType.CONTEXT_MENU, event => {
+				this.showDataSourceContextMenu(item, card, event);
+			})
+		);
+		this.dataSourceRenderDisposables.add(
+			addDisposableListener(card, EventType.KEY_DOWN, event => {
+				if (isContextMenuKeyboardEvent(event)) {
+					event.preventDefault();
+					event.stopPropagation();
+					this.showDataSourceContextMenu(item, card);
+				}
+			})
+		);
 
 		const summary = append(card, $('.sql-data-source-card-summary'));
 		const icon = append(
@@ -899,6 +943,235 @@ export class SqlConnectionsView extends ViewPane {
 				event.preventDefault();
 				event.stopPropagation();
 				this.runDataSourceAction(item, action).catch(error => this.showError(error));
+			})
+		);
+	}
+
+	private showDataSourceContextMenu(item: SqlDataSourceManagementItem, card: HTMLElement, event?: MouseEvent): void {
+		event?.preventDefault();
+		event?.stopPropagation();
+		card.focus();
+
+		const disposables = new DisposableStore();
+		const actions = this.createDataSourceContextMenuActions(disposables, item);
+		if (actions.length === 0) {
+			disposables.dispose();
+			return;
+		}
+
+		const anchor = event ? new StandardMouseEvent(getWindow(card), event) : card;
+		this.contextMenuService.showContextMenu({
+			getAnchor: () => anchor,
+			getActions: () => actions,
+			onHide: () => disposables.dispose()
+		});
+	}
+
+	private createDataSourceContextMenuActions(
+		disposables: DisposableStore,
+		item: SqlDataSourceManagementItem,
+		excludedActions: readonly SqlDataSourceManagementAction[] = []
+	): IAction[] {
+		const excluded = new Set(excludedActions);
+		return Separator.join(
+			...groupSqlDataSourceManagementActions(item).map(group =>
+				group.actions
+					.filter(action => !excluded.has(action))
+					.map(action => {
+						const presentation = getDataSourceActionPresentation(action);
+						return this.createContextMenuAction(
+							disposables,
+							`sql.dataSources.context.${action}`,
+							presentation.title,
+							presentation.icon,
+							() => this.runDataSourceAction(item, action),
+							!this.busyDataSourceIds.has(item.id)
+						);
+					})
+			)
+		);
+	}
+
+	private showTreeNodeContextMenu(node: SqlConnectionTreeNode, row: HTMLElement, event?: MouseEvent): void {
+		event?.preventDefault();
+		event?.stopPropagation();
+		row.focus();
+
+		const disposables = new DisposableStore();
+		const navigationActions: IAction[] = [];
+		const queryActions: IAction[] = [];
+		const copyActions: IAction[] = [];
+		const manageActions: IAction[] = [];
+
+		if (node.children?.length) {
+			const expanded = this.isNodeExpanded(node);
+			navigationActions.push(
+				this.createContextMenuAction(
+					disposables,
+					'sql.navigator.context.toggle',
+					expanded ? 'Collapse' : 'Expand',
+					expanded ? 'chevron-down' : 'chevron-right',
+					() => this.toggleNode(node.id)
+				)
+			);
+		}
+
+		switch (node.type) {
+			case SqlConnectionTreeNodeType.Connection: {
+				const item = buildSqlDataSourceManagementItems(
+					this.savedConnections,
+					this.state.connections,
+					this.state.errorsByConnectionId
+				).find(candidate => candidate.id === node.connectionId);
+				if (item) {
+					manageActions.push(
+						...this.createDataSourceContextMenuActions(disposables, item, [SqlDataSourceManagementAction.Reveal])
+					);
+				}
+				break;
+			}
+			case SqlConnectionTreeNodeType.Database:
+			case SqlConnectionTreeNodeType.Group:
+			case SqlConnectionTreeNodeType.Empty:
+				if (node.connectionId) {
+					queryActions.push(
+						this.createContextMenuAction(
+							disposables,
+							'sql.navigator.context.openQuery',
+							'New SQL query',
+							'file-code',
+							() =>
+								this.openDraft(
+									createConnectionQueryDraft(node.connectionId!, this.getConnectionName(node.connectionId!))
+								)
+						),
+						this.createContextMenuAction(
+							disposables,
+							'sql.navigator.context.refreshConnection',
+							'Refresh metadata',
+							'refresh',
+							() => this.refreshConnection(node.connectionId!)
+						)
+					);
+				}
+				break;
+			case SqlConnectionTreeNodeType.Error:
+				queryActions.push(
+					this.createContextMenuAction(
+						disposables,
+						'sql.navigator.context.retry',
+						'Retry metadata load',
+						'refresh',
+						() => this.refreshErrorNode(node)
+					)
+				);
+				break;
+			case SqlConnectionTreeNodeType.Table:
+			case SqlConnectionTreeNodeType.View: {
+				const draftOptions = this.getDraftOptionsForNode(node);
+				queryActions.push(
+					this.createContextMenuAction(
+						disposables,
+						'sql.navigator.context.select',
+						'Generate SELECT query',
+						'run',
+						() => this.openDraft(createSelectDraftFromTreeNode(node, draftOptions))
+					),
+					this.createContextMenuAction(
+						disposables,
+						'sql.navigator.context.count',
+						'Generate COUNT query',
+						'symbol-number',
+						() => this.openDraft(createCountDraftFromTreeNode(node, draftOptions))
+					)
+				);
+				if (isSqlMutableTableNode(node)) {
+					queryActions.push(
+						this.createContextMenuAction(
+							disposables,
+							'sql.navigator.context.insert',
+							'Generate INSERT template',
+							'add',
+							() => this.openDraft(createInsertDraftFromTreeNode(node, draftOptions))
+						),
+						this.createContextMenuAction(
+							disposables,
+							'sql.navigator.context.update',
+							'Generate UPDATE template',
+							'edit',
+							() => this.openDraft(createUpdateDraftFromTreeNode(node, draftOptions))
+						)
+					);
+				}
+				copyActions.push(
+					this.createContextMenuAction(disposables, 'sql.navigator.context.copyName', 'Copy table name', 'copy', () =>
+						this.copyTableName(node)
+					),
+					this.createContextMenuAction(
+						disposables,
+						'sql.navigator.context.copyQualifiedName',
+						'Copy qualified name',
+						'copy',
+						() => this.copyQualifiedName(node)
+					)
+				);
+				manageActions.push(
+					this.createContextMenuAction(
+						disposables,
+						'sql.navigator.context.refreshTable',
+						'Refresh columns',
+						'refresh',
+						() => this.refreshTable(node)
+					)
+				);
+				break;
+			}
+			case SqlConnectionTreeNodeType.Column:
+				copyActions.push(
+					this.createContextMenuAction(
+						disposables,
+						'sql.navigator.context.copyColumnName',
+						'Copy column name',
+						'copy',
+						async () => {
+							const columnName = node.columnName ?? node.label;
+							await this.clipboardService.writeText(columnName);
+							this.showInfo(`Copied column name ${columnName}.`);
+						}
+					)
+				);
+				break;
+		}
+
+		const actions = Separator.join(navigationActions, queryActions, copyActions, manageActions);
+		if (actions.length === 0) {
+			disposables.dispose();
+			return;
+		}
+
+		const anchor = event ? new StandardMouseEvent(getWindow(row), event) : row;
+		this.contextMenuService.showContextMenu({
+			getAnchor: () => anchor,
+			getActions: () => actions,
+			onHide: () => disposables.dispose()
+		});
+	}
+
+	private createContextMenuAction(
+		disposables: DisposableStore,
+		id: string,
+		label: string,
+		icon: string,
+		run: () => void | Promise<void>,
+		enabled = true
+	): Action {
+		return disposables.add(
+			new Action(id, label, `codicon codicon-${icon}`, enabled, async () => {
+				try {
+					await run();
+				} catch (error) {
+					this.showError(error);
+				}
 			})
 		);
 	}
@@ -1082,13 +1355,13 @@ export class SqlConnectionsView extends ViewPane {
 
 	private async copyTableName(node: SqlConnectionTreeNode): Promise<void> {
 		const text = createCopyTableNameTextFromTreeNode(node);
-		await writeClipboardText(text);
+		await this.clipboardService.writeText(text);
 		this.showInfo(`Copied table name ${text}.`);
 	}
 
 	private async copyQualifiedName(node: SqlConnectionTreeNode): Promise<void> {
 		const text = createCopyQualifiedNameTextFromTreeNode(node);
-		await writeClipboardText(text);
+		await this.clipboardService.writeText(text);
 		this.showInfo(`Copied ${text}.`);
 	}
 
@@ -1248,6 +1521,14 @@ function isActionableNode(node: SqlConnectionTreeNode): boolean {
 	);
 }
 
+function canShowTreeNodeContextMenu(node: SqlConnectionTreeNode): boolean {
+	return Boolean(node.connectionId) || Boolean(node.children?.length);
+}
+
+function isContextMenuKeyboardEvent(event: KeyboardEvent): boolean {
+	return event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10');
+}
+
 function tableFromNode(node: SqlConnectionTreeNode): Pick<SqlTable, 'schema' | 'name' | 'tableType'> {
 	return {
 		schema: node.schema,
@@ -1318,15 +1599,6 @@ function getDataSourceActionPresentation(action: SqlDataSourceManagementAction):
 
 function deliveryLabel(delivery: SqlConnectorDelivery): string {
 	return delivery === SqlConnectorDelivery.Bundled ? 'Bundled' : 'Planned';
-}
-
-async function writeClipboardText(text: string): Promise<void> {
-	if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-		await navigator.clipboard.writeText(text);
-		return;
-	}
-
-	throw new Error('Clipboard API is not available.');
 }
 
 function deleteKeysWithPrefix<T>(record: Record<string, T>, prefix: string): void {

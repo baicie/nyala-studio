@@ -40,6 +40,11 @@ export interface SqlDataSourceManagementItem {
 	readonly connection?: SqlConnection;
 }
 
+export interface SqlDataSourceManagementActionGroup {
+	readonly id: 'primary' | 'manage' | 'destructive';
+	readonly actions: readonly SqlDataSourceManagementAction[];
+}
+
 export function buildSqlDataSourceManagementItems(
 	savedConnections: readonly SqlSavedConnection[],
 	connections: readonly SqlConnection[],
@@ -128,6 +133,40 @@ export function getSqlDataSourceManagementActions(
 		SqlDataSourceManagementAction.Test,
 		SqlDataSourceManagementAction.Delete
 	];
+}
+
+export function groupSqlDataSourceManagementActions(
+	item: SqlDataSourceManagementItem
+): SqlDataSourceManagementActionGroup[] {
+	const availableActions = new Set(getSqlDataSourceManagementActions(item));
+	const groups: readonly SqlDataSourceManagementActionGroup[] = [
+		{
+			id: 'primary',
+			actions: [
+				SqlDataSourceManagementAction.Connect,
+				SqlDataSourceManagementAction.Reveal,
+				SqlDataSourceManagementAction.OpenQuery,
+				SqlDataSourceManagementAction.Refresh
+			]
+		},
+		{
+			id: 'manage',
+			actions: [
+				SqlDataSourceManagementAction.Edit,
+				SqlDataSourceManagementAction.Test,
+				SqlDataSourceManagementAction.Reconnect,
+				SqlDataSourceManagementAction.Disconnect
+			]
+		},
+		{ id: 'destructive', actions: [SqlDataSourceManagementAction.Delete] }
+	];
+
+	return groups
+		.map(group => ({
+			id: group.id,
+			actions: group.actions.filter(action => availableActions.has(action))
+		}))
+		.filter(group => group.actions.length > 0);
 }
 
 export function createSqlDataSourceRemovalRequest(
