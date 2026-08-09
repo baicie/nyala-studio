@@ -102,27 +102,35 @@ export class SqlEditorPane extends EditorPane {
 			})
 		);
 
+		const connectionGroup = append(this.toolbar, $('.sql-editor-toolbar-group.connection'));
+		append(connectionGroup, $('.codicon.codicon-database.sql-editor-connection-icon', { 'aria-hidden': 'true' }));
 		this.connectionSelect = append(
-			this.toolbar,
+			connectionGroup,
 			$('select.sql-editor-connection-select', {
 				'aria-label': 'SQL connection'
 			})
 		) as HTMLSelectElement;
 
+		const executionGroup = append(this.toolbar, $('.sql-editor-toolbar-group.execution'));
 		this.runStatementButton = this.appendToolbarButton(
+			executionGroup,
 			Codicon.run,
 			'Run',
 			'Execute current statement (Ctrl/Cmd+Enter)',
 			true
 		);
 		this.runSelectionButton = this.appendToolbarButton(
+			executionGroup,
 			Codicon.selection,
 			'Selection',
 			'Execute selection (Shift+Enter)'
 		);
-		this.runAllButton = this.appendToolbarButton(Codicon.runAll, 'All', 'Execute all SQL');
-		this.cancelButton = this.appendToolbarButton(Codicon.stopCircle, 'Stop', 'Cancel running query');
-		this.formatButton = this.appendToolbarButton(Codicon.wand, 'Format', 'Format SQL');
+		this.runAllButton = this.appendToolbarButton(executionGroup, Codicon.runAll, 'All', 'Execute all SQL');
+		this.cancelButton = this.appendToolbarButton(executionGroup, Codicon.stopCircle, 'Stop', 'Cancel running query');
+		this.cancelButton.classList.add('stop');
+
+		const utilityGroup = append(this.toolbar, $('.sql-editor-toolbar-group.utility'));
+		this.formatButton = this.appendToolbarButton(utilityGroup, Codicon.wand, 'Format', 'Format SQL');
 
 		this.statusElement = append(this.toolbar, $('span.sql-editor-status', { role: 'status', 'aria-live': 'polite' }));
 		this.editorContainer = append(this.container, $('.sql-editor-container'));
@@ -638,9 +646,15 @@ export class SqlEditorPane extends EditorPane {
 		this.container?.setAttribute('aria-busy', String(this.running));
 	}
 
-	private appendToolbarButton(icon: ThemeIcon, label: string, title: string, primary = false): HTMLButtonElement {
+	private appendToolbarButton(
+		parent: HTMLElement,
+		icon: ThemeIcon,
+		label: string,
+		title: string,
+		primary = false
+	): HTMLButtonElement {
 		const button = append(
-			this.toolbar,
+			parent,
 			$(primary ? 'button.sql-editor-button.primary' : 'button.sql-editor-button', {
 				type: 'button',
 				title,
@@ -668,6 +682,7 @@ export class SqlEditorPane extends EditorPane {
 	private status(message: string): void {
 		if (this.statusElement) {
 			this.statusElement.textContent = message;
+			this.statusElement.title = message;
 		}
 	}
 
