@@ -6,6 +6,12 @@ use std::process::{Command, Stdio};
 
 use tauri::{AppHandle, Manager};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(any(windows, test))]
+pub(crate) const WINDOWS_CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ExtensionKind {
@@ -303,8 +309,22 @@ pub fn resolve_builtin_extensions_dir(app: &AppHandle) -> PathBuf {
         .join("extensions")
 }
 
+fn node_probe_command(binary: &str) -> Command {
+    let command = Command::new(binary);
+    #[cfg(windows)]
+    {
+        let mut command = command;
+        command.creation_flags(WINDOWS_CREATE_NO_WINDOW);
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        command
+    }
+}
+
 fn read_node_version(binary: &str) -> Option<String> {
-    Command::new(binary)
+    node_probe_command(binary)
         .arg("--version")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -316,7 +336,7 @@ fn read_node_version(binary: &str) -> Option<String> {
 }
 
 fn is_usable_node(binary: &str) -> bool {
-    Command::new(binary)
+    node_probe_command(binary)
         .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -756,9 +776,8 @@ pub async fn extension_platform_bootstrap(
         .map(|p| p.to_string_lossy().to_string())
         .collect();
 
-    let port = supervisor.ensure_started(&app, &init_data_json, &search_paths)?;
-
-    let node = resolve_node_runtime(&app)?;
+    let (port, node) = supervisor.ensure_started(&app, &init_data_json, &search_paths)?;
+    let runtime = node.to_info();
 
     let wasm_manifests: Vec<ExtensionManifest> = manifests
         .iter()
@@ -803,7 +822,7 @@ pub async fn extension_platform_bootstrap(
 
     Ok(serde_json::json!({
         "transport": { "kind": "websocket", "endpoint": format!("ws://127.0.0.1:{port}/") },
-        "runtime": { "path": node.path, "version": node.version, "source": "system", "bundled": false },
+        "runtime": runtime,
         "paths": {
             "serverScript": resolve_server_script(&app).to_string_lossy(),
             "builtinExtensionsDir": resolve_builtin_extensions_dir(&app).to_string_lossy(),
@@ -868,4 +887,30 @@ pub async fn extension_platform_init_data(app: AppHandle) -> Result<String, Stri
     let descriptions = build_extension_descriptions(&manifests);
     let init_data = build_init_data(&descriptions, &[]);
     serde_json::to_string(&init_data).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ResolvedNode, WINDOWS_CREATE_NO_WINDOW};
+
+    #[test]
+    fn node_probes_use_the_windows_create_no_window_flag() {
+        assert_eq!(WINDOWS_CREATE_NO_WINDOW, 0x0800_0000);
+    }
+
+    #[test]
+    fn resolved_node_info_preserves_the_started_runtime_source() {
+        let info = ResolvedNode {
+            path: "bundled/node.exe".to_string(),
+            version: Some("v22.0.0".to_string()),
+            source: "bundled",
+            bundled: true,
+        }
+        .to_info();
+
+        assert_eq!(info.path, "bundled/node.exe");
+        assert_eq!(info.version.as_deref(), Some("v22.0.0"));
+        assert_eq!(info.source, "bundled");
+        assert!(info.bundled);
+    }
 }

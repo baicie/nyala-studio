@@ -128,8 +128,15 @@ export class SuggestEnabledInput extends Widget {
 		this._onInputDidChange.fire(value);
 	}
 
-	focus(): void {
+	focus(selectAll = false): void {
 		this.inputElement.focus();
+		if (selectAll && this.inputElement.value) {
+			this.inputElement.select();
+		}
+	}
+
+	updateAriaLabel(label: string): void {
+		this.inputElement.setAttribute('aria-label', label);
 	}
 
 	layout(_dimension?: { width?: number; height?: number }): void {

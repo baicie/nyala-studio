@@ -9,6 +9,7 @@ import { SqlConnectionKind, SqlSavedConnection } from '../../../services/sql/com
 import {
 	buildSqlDataSourceManagementItems,
 	createSqlDataSourceRemovalRequest,
+	groupSqlDataSourceManagementActions,
 	getSqlDataSourceManagementActions,
 	matchesSqlDataSourceManagementItem,
 	SqlDataSourceManagementAction,
@@ -186,4 +187,56 @@ test('management model limits actions for an unsaved open source', () => {
 		SqlDataSourceManagementAction.Disconnect
 	]);
 	assert.equal(createSqlDataSourceRemovalRequest(item), undefined);
+});
+
+test('connected saved sources expose complete grouped context menu actions', () => {
+	const [item] = buildSqlDataSourceManagementItems(
+		[savedMysql],
+		[
+			{
+				id: savedMysql.id,
+				name: savedMysql.name,
+				kind: savedMysql.kind,
+				host: savedMysql.host,
+				port: savedMysql.port,
+				database: savedMysql.database,
+				username: savedMysql.username,
+				readOnly: savedMysql.readOnly
+			}
+		]
+	);
+
+	assert.deepEqual(groupSqlDataSourceManagementActions(item), [
+		{
+			id: 'primary',
+			actions: [
+				SqlDataSourceManagementAction.Reveal,
+				SqlDataSourceManagementAction.OpenQuery,
+				SqlDataSourceManagementAction.Refresh
+			]
+		},
+		{
+			id: 'manage',
+			actions: [
+				SqlDataSourceManagementAction.Edit,
+				SqlDataSourceManagementAction.Test,
+				SqlDataSourceManagementAction.Reconnect,
+				SqlDataSourceManagementAction.Disconnect
+			]
+		},
+		{ id: 'destructive', actions: [SqlDataSourceManagementAction.Delete] }
+	]);
+});
+
+test('saved sources keep connect edit test and delete in context menu groups', () => {
+	const [item] = buildSqlDataSourceManagementItems([savedSqlite], []);
+
+	assert.deepEqual(groupSqlDataSourceManagementActions(item), [
+		{ id: 'primary', actions: [SqlDataSourceManagementAction.Connect] },
+		{
+			id: 'manage',
+			actions: [SqlDataSourceManagementAction.Edit, SqlDataSourceManagementAction.Test]
+		},
+		{ id: 'destructive', actions: [SqlDataSourceManagementAction.Delete] }
+	]);
 });

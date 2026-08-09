@@ -2,6 +2,7 @@ use crate::commands::extension_platform::{
     build_extension_descriptions, build_init_data, extension_search_paths, global_storage_dir,
     resolve_builtin_extensions_dir, resolve_node_runtime, resolve_server_script, scan_extensions,
     user_extensions_dir, ExtensionHostInitData, ExtensionKind, ExtensionManifest, NodeRuntimeInfo,
+    ResolvedNode,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
@@ -14,6 +15,9 @@ use tauri::AppHandle;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+use crate::commands::extension_platform::WINDOWS_CREATE_NO_WINDOW;
 
 /// Strip the Windows `\\?\` prefix; Node's CJS resolver chokes on UNC paths.
 fn normalize_for_node(path: &Path) -> PathBuf {
@@ -30,6 +34,7 @@ fn normalize_for_node(path: &Path) -> PathBuf {
 struct ExtHostSession {
     child: Child,
     port: u16,
+    runtime: ResolvedNode,
     session_id: String,
     started_at: Instant,
     #[allow(dead_code)]
@@ -76,27 +81,29 @@ impl ExtensionPlatformSupervisor {
         app: &AppHandle,
         _init_data_json: &str,
         _extension_search_paths: &[String],
-    ) -> Result<u16, String> {
+    ) -> Result<(u16, ResolvedNode), String> {
         let mut guard = self.inner.lock().map_err(|e| e.to_string())?;
         if let Some(ref mut session) = guard.session {
             if session.child.try_wait().ok().flatten().is_none() {
-                return Ok(session.port);
+                return Ok((session.port, session.runtime.clone()));
             }
             guard.total_crashes += 1;
             guard.session = None;
         }
         let started = spawn_host_process(app, &[])?;
         let port = started.port;
+        let runtime = started.runtime.clone();
         guard.session = Some(ExtHostSession {
             child: started.child,
             port: started.port,
+            runtime: started.runtime,
             session_id: started.session_id,
             started_at: Instant::now(),
             init_data: started.init_data,
             manifests: started.manifests,
             restart_count: 1,
         });
-        Ok(port)
+        Ok((port, runtime))
     }
 
     pub fn stop(&self) -> Result<(), String> {
@@ -117,6 +124,7 @@ impl ExtensionPlatformSupervisor {
     ) -> Result<u16, String> {
         self.stop()?;
         self.ensure_started(app, init_data_json, extension_search_paths)
+            .map(|(port, _runtime)| port)
     }
 
     pub fn snapshot(&self) -> Result<ExtensionPlatformRuntimeState, String> {
@@ -208,6 +216,7 @@ struct PortMessage {
 
 struct StartedSession {
     port: u16,
+    runtime: ResolvedNode,
     session_id: String,
     init_data: ExtensionHostInitData,
     manifests: Vec<ExtensionManifest>,
@@ -229,6 +238,7 @@ fn spawn_host_process(
 
     Ok(StartedSession {
         port,
+        runtime: inputs.runtime,
         session_id: inputs.session_id,
         init_data: inputs.init_data,
         manifests: inputs.manifests,
@@ -237,7 +247,7 @@ fn spawn_host_process(
 }
 
 struct SessionInputs {
-    runtime_path: String,
+    runtime: ResolvedNode,
     server_js: PathBuf,
     user_ext_dir: PathBuf,
     builtin_ext_dir: PathBuf,
@@ -301,7 +311,7 @@ fn prepare_session_inputs(
         .map_err(|e| format!("failed to write init data file: {e}"))?;
 
     Ok(SessionInputs {
-        runtime_path: runtime.path,
+        runtime,
         server_js,
         user_ext_dir,
         builtin_ext_dir,
@@ -319,7 +329,7 @@ type StderrBuffer = Arc<Mutex<Vec<String>>>;
 fn spawn_child_process(
     inputs: &SessionInputs,
 ) -> Result<(Child, ChildStdout, StderrBuffer), String> {
-    let mut child_cmd = Command::new(&inputs.runtime_path);
+    let mut child_cmd = Command::new(&inputs.runtime.path);
     child_cmd
         .arg("--max-old-space-size=3072")
         .arg(&inputs.server_js)
@@ -336,7 +346,7 @@ fn spawn_child_process(
 
     #[cfg(windows)]
     {
-        child_cmd.creation_flags(0x0800_0000);
+        child_cmd.creation_flags(WINDOWS_CREATE_NO_WINDOW);
     }
 
     let mut child = child_cmd
@@ -436,6 +446,7 @@ fn ensure_session(guard: &mut SupervisorState, app: &AppHandle) -> Result<(), St
     guard.session = Some(ExtHostSession {
         child: started.child,
         port: started.port,
+        runtime: started.runtime,
         session_id: started.session_id,
         started_at: Instant::now(),
         init_data: started.init_data,

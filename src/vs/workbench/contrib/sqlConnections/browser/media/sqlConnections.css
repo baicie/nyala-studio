@@ -92,6 +92,12 @@
 	background: var(--vscode-sideBar-background);
 }
 
+.sql-data-source-card:focus-visible {
+	border-color: var(--vscode-focusBorder);
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -2px;
+}
+
 .sql-data-source-card.busy {
 	opacity: 0.72;
 }
@@ -691,6 +697,13 @@
 
 .sql-connection-node:hover {
 	background: var(--vscode-list-hoverBackground);
+}
+
+.sql-connection-node:focus-visible {
+	background: var(--vscode-list-focusBackground);
+	color: var(--vscode-list-focusForeground);
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
 }
 
 .sql-connection-node-twisty {
