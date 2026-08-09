@@ -15,6 +15,7 @@ import { CodeWindow } from '../../../../base/browser/window.js';
 import { Action } from '../../../../base/common/actions.js';
 import { CancelablePromise, createCancelablePromise, Delayer, raceTimeout } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
+import { Codicon } from '../../../../base/common/codicons.js';
 import { Color } from '../../../../base/common/color.js';
 import { fromNow } from '../../../../base/common/date.js';
 import { isCancellationError } from '../../../../base/common/errors.js';
@@ -118,6 +119,7 @@ import {
 	MODIFIED_SETTING_TAG,
 	POLICY_SETTING_TAG,
 	REQUIRE_TRUSTED_WORKSPACE_SETTING_TAG,
+	SETTINGS_EDITOR_COMMAND_CANCEL_SEARCH,
 	SETTINGS_EDITOR_COMMAND_CLEAR_SEARCH_RESULTS,
 	SETTINGS_EDITOR_COMMAND_SHOW_AI_RESULTS,
 	SETTINGS_EDITOR_COMMAND_SUGGEST_FILTERS,
@@ -277,9 +279,11 @@ export class SettingsEditor2 extends EditorPane {
 
 	private searchDelayer: Delayer<void>;
 	private searchInProgress: CancellationTokenSource | null = null;
+	private searchProgressRunner: IProgressRunner | null = null;
 	private aiSearchPromise: CancelablePromise<void> | null = null;
 
 	private showAiResultsAction: Action | null = null;
+	private cancelSearchAction: Action | null = null;
 
 	private searchInputDelayer: Delayer<void>;
 	private updatedConfigSchemaDelayer: Delayer<void>;
@@ -793,13 +797,18 @@ export class SettingsEditor2 extends EditorPane {
 		}
 	}
 
+	override dispose(): void {
+		this.cancelSearchInProgress(false);
+		super.dispose();
+	}
+
 	focusSearch(filter?: string, selectAll = true): void {
 		if (filter && this.searchWidget) {
 			this.searchWidget.setValue(filter);
 		}
 
 		// Do not select all if the user is already searching.
-		(this.searchWidget as any).focus(selectAll && !this.searchInputDelayer.isTriggered);
+		this.searchWidget.focus(selectAll && !this.searchInputDelayer.isTriggered);
 	}
 
 	clearSearchResults(): void {
@@ -828,7 +837,7 @@ export class SettingsEditor2 extends EditorPane {
 			label += `. ${this.lastSyncedLabel}`;
 		}
 
-		(this.searchWidget as any).updateAriaLabel(label);
+		this.searchWidget.updateAriaLabel(label);
 	}
 
 	/**
@@ -847,6 +856,15 @@ export class SettingsEditor2 extends EditorPane {
 				async () => this.clearSearchResults()
 			)
 		);
+		const cancelSearchAction = (this.cancelSearchAction = this._register(
+			new Action(
+				SETTINGS_EDITOR_COMMAND_CANCEL_SEARCH,
+				localize('cancelSettingsSearch', 'Stop Settings Search'),
+				ThemeIcon.asClassName(Codicon.stopCircle),
+				false,
+				() => this.cancelSearchInProgress(true)
+			)
+		));
 
 		const showAiResultActionClassNames = ['action-label', ThemeIcon.asClassName(preferencesAiResultsIcon)];
 		this.showAiResultsAction = this._register(
@@ -926,6 +944,7 @@ export class SettingsEditor2 extends EditorPane {
 			this.searchWidget.onInputDidChange(() => {
 				const searchVal = this.searchWidget.getValue();
 				clearInputAction.enabled = !!searchVal;
+				this.cancelSearchInProgress(false);
 				this.searchInputDelayer.trigger(() => this.onSearchInputChanged(true));
 			})
 		);
@@ -993,7 +1012,7 @@ export class SettingsEditor2 extends EditorPane {
 			})
 		);
 
-		const actionsToPush = [clearInputAction, filterAction];
+		const actionsToPush = [cancelSearchAction, clearInputAction, filterAction];
 		this.searchInputActionBar.push(actionsToPush, { label: false, icon: true });
 
 		this.disableAiSearchToggle();
@@ -1017,7 +1036,7 @@ export class SettingsEditor2 extends EditorPane {
 		if (this.searchResultModel && this.showAiResultsAction) {
 			this.searchResultModel.showAiResults = this.showAiResultsAction.checked ?? false;
 			this.renderResultCountMessages(false);
-			this.onDidFinishSearch(true, undefined);
+			this.onDidFinishSearch(true);
 		}
 	}
 
@@ -1696,7 +1715,16 @@ export class SettingsEditor2 extends EditorPane {
 		this.settingsOrderByTocIndex = this.createSettingsOrderByTocIndex(resolvedSettingsRoot);
 	}
 
-	private async onConfigUpdate(keys?: ReadonlySet<string>, forceRefresh = false, triggerSearch = false): Promise<void> {
+	private async onConfigUpdate(
+		keys?: ReadonlySet<string>,
+		forceRefresh = false,
+		triggerSearch = false,
+		token: CancellationToken = CancellationToken.None
+	): Promise<void> {
+		if (token.isCancellationRequested) {
+			return;
+		}
+
 		if (keys && this.settingsTreeModel) {
 			return this.updateElementsByKey(keys);
 		}
@@ -1734,6 +1762,9 @@ export class SettingsEditor2 extends EditorPane {
 		const additionalGroups: ISettingsGroup[] = [];
 		let setAdditionalGroups = false;
 		const toggleData = await getExperimentalExtensionToggleData(this.extensionGalleryService, this.productService);
+		if (token.isCancellationRequested) {
+			return;
+		}
 		if (
 			toggleData &&
 			groups.filter(g => g.extensionInfo).length &&
@@ -1742,6 +1773,9 @@ export class SettingsEditor2 extends EditorPane {
 			// Refresh installed extensions once per onConfigUpdate invocation for performance,
 			// instead of per extension. The installed list may still change while iterating.
 			await this.refreshInstalledExtensionsList();
+			if (token.isCancellationRequested) {
+				return;
+			}
 			for (const key in toggleData.settingsEditorRecommendedExtensions) {
 				const extension: IGalleryExtension = toggleData.recommendedExtensionsGalleryInfo[key];
 				if (!extension) {
@@ -1785,6 +1819,9 @@ export class SettingsEditor2 extends EditorPane {
 					// Likely a networking issue.
 					// Skip adding a button for this extension to the Settings editor.
 					continue;
+				}
+				if (token.isCancellationRequested) {
+					return;
 				}
 
 				if (manifest === null) {
@@ -1843,6 +1880,9 @@ export class SettingsEditor2 extends EditorPane {
 		resolvedSettingsRoot.children!.push(
 			await createTocTreeForExtensionSettings(this.extensionService, extensionSettingsGroups, filter)
 		);
+		if (token.isCancellationRequested) {
+			return;
+		}
 
 		resolvedSettingsRoot.children!.unshift(getCommonlyUsedData(groups));
 
@@ -2118,77 +2158,123 @@ export class SettingsEditor2 extends EditorPane {
 	}
 
 	private async triggerSearch(query: string, expandResults: boolean): Promise<void> {
+		this.cancelSearchInProgress(false);
+		const searchInProgress = new CancellationTokenSource();
+		this.searchInProgress = searchInProgress;
 		const progressRunner = this.editorProgressService.show(true, 800);
-		const showAdvanced = this.viewState.tagFilters?.has(ADVANCED_SETTING_TAG);
-		this.viewState.tagFilters = new Set<string>();
-		this.viewState.extensionFilters = new Set<string>();
-		this.viewState.featureFilters = new Set<string>();
-		this.viewState.idFilters = new Set<string>();
-		this.viewState.languageFilter = undefined;
-		if (query) {
-			const parsedQuery = parseQuery(query);
-			query = parsedQuery.query;
-			parsedQuery.tags.forEach(tag => this.viewState.tagFilters!.add(tag));
-			parsedQuery.extensionFilters.forEach(extensionId => this.viewState.extensionFilters!.add(extensionId));
-			parsedQuery.featureFilters.forEach(feature => this.viewState.featureFilters!.add(feature));
-			parsedQuery.idFilters.forEach(id => this.viewState.idFilters!.add(id));
-			this.viewState.languageFilter = parsedQuery.languageFilter;
+		this.searchProgressRunner = progressRunner;
+		if (this.cancelSearchAction) {
+			this.cancelSearchAction.enabled = true;
 		}
 
-		if (showAdvanced !== this.viewState.tagFilters?.has(ADVANCED_SETTING_TAG)) {
-			await this.onConfigUpdate();
-		}
-
-		this.settingsTargetsWidget.updateLanguageFilterIndicators(this.viewState.languageFilter);
-
-		if (query && query !== '@') {
-			query = this.parseSettingFromJSON(query) || query;
-			await this.triggerFilterPreferences(query, expandResults, progressRunner);
-			this.toggleTocBySearchBehaviorType();
-		} else {
-			if (
-				this.viewState.tagFilters.size ||
-				this.viewState.extensionFilters.size ||
-				this.viewState.featureFilters.size ||
-				this.viewState.idFilters.size ||
-				this.viewState.languageFilter
-			) {
-				this.searchResultModel = this.createFilterModel();
-			} else {
-				this.searchResultModel = null;
+		try {
+			const showAdvanced = this.viewState.tagFilters?.has(ADVANCED_SETTING_TAG);
+			this.viewState.tagFilters = new Set<string>();
+			this.viewState.extensionFilters = new Set<string>();
+			this.viewState.featureFilters = new Set<string>();
+			this.viewState.idFilters = new Set<string>();
+			this.viewState.languageFilter = undefined;
+			if (query) {
+				const parsedQuery = parseQuery(query);
+				query = parsedQuery.query;
+				parsedQuery.tags.forEach(tag => this.viewState.tagFilters!.add(tag));
+				parsedQuery.extensionFilters.forEach(extensionId => this.viewState.extensionFilters!.add(extensionId));
+				parsedQuery.featureFilters.forEach(feature => this.viewState.featureFilters!.add(feature));
+				parsedQuery.idFilters.forEach(id => this.viewState.idFilters!.add(id));
+				this.viewState.languageFilter = parsedQuery.languageFilter;
 			}
 
-			this.searchDelayer.cancel();
-			if (this.searchInProgress) {
-				this.searchInProgress.dispose(true);
+			if (showAdvanced !== this.viewState.tagFilters?.has(ADVANCED_SETTING_TAG)) {
+				await this.onConfigUpdate(undefined, false, false, searchInProgress.token);
+			}
+			if (searchInProgress.token.isCancellationRequested) {
+				return;
+			}
+
+			this.settingsTargetsWidget.updateLanguageFilterIndicators(this.viewState.languageFilter);
+
+			if (query && query !== '@') {
+				query = this.parseSettingFromJSON(query) || query;
+				await this.triggerFilterPreferences(query, expandResults, searchInProgress.token);
+				if (!searchInProgress.token.isCancellationRequested) {
+					this.toggleTocBySearchBehaviorType();
+				}
+			} else {
+				if (
+					this.viewState.tagFilters.size ||
+					this.viewState.extensionFilters.size ||
+					this.viewState.featureFilters.size ||
+					this.viewState.idFilters.size ||
+					this.viewState.languageFilter
+				) {
+					this.searchResultModel = this.createFilterModel();
+				} else {
+					this.searchResultModel = null;
+				}
+
+				if (expandResults) {
+					this.tocTree.setFocus([]);
+					this.viewState.categoryFilter = undefined;
+				}
+				this.tocTreeModel.currentSearchModel = this.searchResultModel;
+
+				if (this.searchResultModel) {
+					// Added a filter model
+					if (expandResults) {
+						this.tocTree.setSelection([]);
+						this.tocTree.expandAll();
+					}
+					this.refreshTOCTree();
+					this.renderResultCountMessages(false);
+					this.refreshTree();
+					this.toggleTocBySearchBehaviorType();
+				} else if (!this.tocTreeDisposed) {
+					// Leaving search mode
+					this.tocTree.collapseAll();
+					this.refreshTOCTree();
+					this.renderResultCountMessages(false);
+					this.refreshTree();
+					this.layoutSplitView(this.dimension);
+				}
+			}
+		} catch (error) {
+			if (!searchInProgress.token.isCancellationRequested && !isCancellationError(error)) {
+				throw error;
+			}
+		} finally {
+			if (this.searchInProgress === searchInProgress) {
+				searchInProgress.dispose();
 				this.searchInProgress = null;
 			}
+			this.finishSearchProgress(progressRunner);
+		}
+	}
 
-			if (expandResults) {
-				this.tocTree.setFocus([]);
-				this.viewState.categoryFilter = undefined;
-			}
-			this.tocTreeModel.currentSearchModel = this.searchResultModel;
+	private cancelSearchInProgress(announce: boolean): void {
+		const didCancel = Boolean(this.searchInProgress || this.searchProgressRunner || this.aiSearchPromise);
+		this.searchInProgress?.dispose(true);
+		this.searchInProgress = null;
+		this.aiSearchPromise?.cancel();
+		this.aiSearchPromise = null;
 
-			if (this.searchResultModel) {
-				// Added a filter model
-				if (expandResults) {
-					this.tocTree.setSelection([]);
-					this.tocTree.expandAll();
-				}
-				this.refreshTOCTree();
-				this.renderResultCountMessages(false);
-				this.refreshTree();
-				this.toggleTocBySearchBehaviorType();
-			} else if (!this.tocTreeDisposed) {
-				// Leaving search mode
-				this.tocTree.collapseAll();
-				this.refreshTOCTree();
-				this.renderResultCountMessages(false);
-				this.refreshTree();
-				this.layoutSplitView(this.dimension);
-			}
-			progressRunner.done();
+		if (this.searchProgressRunner) {
+			this.finishSearchProgress(this.searchProgressRunner);
+		}
+
+		if (announce && didCancel) {
+			aria.status(localize('settingsSearchStopped', 'Settings search stopped.'));
+		}
+	}
+
+	private finishSearchProgress(progressRunner: IProgressRunner): void {
+		if (this.searchProgressRunner !== progressRunner) {
+			return;
+		}
+
+		progressRunner.done();
+		this.searchProgressRunner = null;
+		if (this.cancelSearchAction) {
+			this.cancelSearchAction.enabled = false;
 		}
 	}
 
@@ -2233,21 +2319,15 @@ export class SettingsEditor2 extends EditorPane {
 	private async triggerFilterPreferences(
 		query: string,
 		expandResults: boolean,
-		progressRunner: IProgressRunner
+		token: CancellationToken
 	): Promise<void> {
-		if (this.searchInProgress) {
-			this.searchInProgress.dispose(true);
-			this.searchInProgress = null;
-		}
-
-		const searchInProgress = (this.searchInProgress = new CancellationTokenSource());
 		return this.searchDelayer.trigger(async () => {
-			if (searchInProgress.token.isCancellationRequested) {
+			if (token.isCancellationRequested) {
 				return;
 			}
 			this.disableAiSearchToggle();
-			const localResults = await this.doLocalSearch(query, searchInProgress.token);
-			if (!this.searchResultModel || searchInProgress.token.isCancellationRequested) {
+			const localResults = await this.doLocalSearch(query, token);
+			if (!this.searchResultModel || token.isCancellationRequested) {
 				return;
 			}
 			this.searchResultModel.showAiResults = false;
@@ -2256,13 +2336,13 @@ export class SettingsEditor2 extends EditorPane {
 				// The remote results might take a while and
 				// are always appended to the end anyway, so
 				// show some results now.
-				this.onDidFinishSearch(expandResults, undefined);
+				this.onDidFinishSearch(expandResults);
 			}
 
 			if (!localResults || !localResults.exactMatch) {
-				await this.doRemoteSearch(query, searchInProgress.token);
+				await this.doRemoteSearch(query, token);
 			}
-			if (searchInProgress.token.isCancellationRequested) {
+			if (token.isCancellationRequested) {
 				return;
 			}
 
@@ -2295,11 +2375,11 @@ export class SettingsEditor2 extends EditorPane {
 				});
 			}
 
-			this.onDidFinishSearch(expandResults, progressRunner);
+			this.onDidFinishSearch(expandResults);
 		});
 	}
 
-	private onDidFinishSearch(expandResults: boolean, progressRunner: IProgressRunner | undefined): void {
+	private onDidFinishSearch(expandResults: boolean): void {
 		this.tocTreeModel.currentSearchModel = this.searchResultModel;
 		if (expandResults) {
 			this.tocTree.setFocus([]);
@@ -2309,7 +2389,6 @@ export class SettingsEditor2 extends EditorPane {
 		}
 		this.refreshTOCTree();
 		this.renderTree(undefined, true);
-		progressRunner?.done();
 	}
 
 	private doLocalSearch(query: string, token: CancellationToken): Promise<ISearchResult | null> {
