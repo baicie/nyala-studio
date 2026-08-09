@@ -28,10 +28,7 @@ test('settings search exposes a stop action and always completes its progress ru
 });
 
 test('cancelled advanced-filter refreshes cannot commit stale settings trees', () => {
-	assert.match(
-		settingsEditorSource,
-		/onConfigUpdate\(undefined, false, false, searchInProgress\.token\)/
-	);
+	assert.match(settingsEditorSource, /onConfigUpdate\(undefined, false, false, searchInProgress\.token\)/);
 	assert.match(
 		settingsEditorSource,
 		/createTocTreeForExtensionSettings[\s\S]*token\.isCancellationRequested[\s\S]*setAdditionalGroups/
