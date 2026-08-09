@@ -72,26 +72,28 @@ test('result grid owns both scroll axes so sticky headers remain anchored', () =
 test('result toolbar keeps every action reachable in a narrow pane without horizontal scrolling', () => {
 	const toolbarRule = resultGridStyles.match(/\.sql-result-toolbar\s*\{(?<declarations>[^}]*)\}/s)?.groups
 		?.declarations;
+	const buttonRule = resultGridStyles.match(/\.sql-result-button\s*\{(?<declarations>[^}]*)\}/s)?.groups?.declarations;
 
 	assert.ok(toolbarRule);
-	assert.match(
-		toolbarRule,
-		/flex-wrap:\s*wrap/,
-		'result actions must wrap instead of overflowing behind the pane clipping boundary'
-	);
+	assert.match(toolbarRule, /flex-wrap:\s*nowrap/);
 	assert.doesNotMatch(toolbarRule, /overflow-x:\s*(?:auto|scroll)/);
+	assert.ok(buttonRule);
+	assert.match(buttonRule, /width:\s*26px/);
 });
 
-test('result history reserves one grid track for each rendered control', () => {
+test('result history renders compact horizontal result tabs', () => {
+	const historyListRule = resultGridStyles.match(/\.sql-result-history-list\s*\{(?<declarations>[^}]*)\}/s)?.groups
+		?.declarations;
 	const historyItemRule = resultGridStyles.match(/\.sql-result-history-item\s*\{(?<declarations>[^}]*)\}/s)?.groups
 		?.declarations;
 
+	assert.ok(historyListRule);
+	assert.match(historyListRule, /display:\s*flex/);
+	assert.match(historyListRule, /overflow-x:\s*auto/);
 	assert.ok(historyItemRule);
-	assert.match(
-		historyItemRule,
-		/grid-template-columns:\s*minmax\(64px, 76px\) minmax\(96px, 140px\) minmax\(0, 1fr\) 24px/
-	);
-	assert.match(resultGridStyles, /\.sql-result-history-heading\s*\{/);
+	assert.match(historyItemRule, /display:\s*flex/);
+	assert.match(historyItemRule, /max-width:\s*220px/);
+	assert.doesNotMatch(historyItemRule, /grid-template-columns/);
 });
 
 test('result history uses roving focus and supports listbox navigation keys', () => {
@@ -108,7 +110,7 @@ test('result history uses roving focus and supports listbox navigation keys', ()
 	if (!/'aria-selected':\s*String\(isActive\)/.test(renderPanelStateSource)) {
 		missingBehaviors.push('exactly the active option is exposed as selected');
 	}
-	for (const key of ['ArrowUp', 'ArrowDown', 'Home', 'End']) {
+	for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']) {
 		if (!renderPanelStateSource.includes(`'${key}'`) && !renderPanelStateSource.includes(`"${key}"`)) {
 			missingBehaviors.push(`handles ${key}`);
 		}
@@ -118,6 +120,12 @@ test('result history uses roving focus and supports listbox navigation keys', ()
 	}
 
 	assert.deepEqual(missingBehaviors, []);
+});
+
+test('result toolbar, tabs, and status expose their interaction semantics', () => {
+	assert.match(resultViewSource, /role: 'toolbar', 'aria-label': 'Result actions'/);
+	assert.match(resultViewSource, /'aria-orientation': 'horizontal'/);
+	assert.match(resultViewSource, /role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true'/);
 });
 
 test('buildSqlResultGrid keeps column and cell metadata', () => {

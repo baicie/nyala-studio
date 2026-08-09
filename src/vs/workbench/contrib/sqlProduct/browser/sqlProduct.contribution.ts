@@ -30,6 +30,7 @@ Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews(
 			order: 2,
 			canMoveView: false,
 			canToggleVisibility: true,
+			hideByDefault: true,
 			focusCommand: {
 				id: `${SQL_PRODUCT_PREFERENCES_VIEW_ID}.focus`
 			}
@@ -41,6 +42,7 @@ Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews(
 			order: 1,
 			canMoveView: false,
 			canToggleVisibility: true,
+			hideByDefault: true,
 			focusCommand: {
 				id: `${SQL_PRODUCT_WELCOME_VIEW_ID}.focus`
 			}
