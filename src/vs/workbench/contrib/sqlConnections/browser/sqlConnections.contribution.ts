@@ -6,8 +6,9 @@ import './media/sqlConnections.css';
 
 import { localize, localize2 } from '../../../../nls.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
-import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
+import { Action2, MenuId, MenuRegistry, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { Codicon } from '../../../../base/common/codicons.js';
+import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
@@ -63,9 +64,16 @@ class SqlAddConnectionAction extends Action2 {
 			title: localize2('sqlConnectionsAdd', 'Nyala: New Data Source'),
 			category: Categories.View,
 			f1: true,
-			menu: {
-				id: MenuId.CommandPalette
-			}
+			icon: Codicon.add,
+			menu: [
+				{ id: MenuId.CommandPalette },
+				{
+					id: MenuId.ViewTitle,
+					when: ContextKeyExpr.equals('view', SQL_CONNECTIONS_VIEW_ID),
+					group: 'navigation',
+					order: 1
+				}
+			]
 		});
 	}
 
@@ -95,9 +103,16 @@ class SqlRefreshConnectionsAction extends Action2 {
 			title: localize2('sqlConnectionsRefresh', 'Nyala: Refresh Connections'),
 			category: Categories.View,
 			f1: true,
-			menu: {
-				id: MenuId.CommandPalette
-			}
+			icon: Codicon.refresh,
+			menu: [
+				{ id: MenuId.CommandPalette },
+				{
+					id: MenuId.ViewTitle,
+					when: ContextKeyExpr.equals('view', SQL_CONNECTIONS_VIEW_ID),
+					group: 'navigation',
+					order: 2
+				}
+			]
 		});
 	}
 
@@ -204,6 +219,16 @@ export const SQL_CONNECTORS_VIEW_CONTAINER: ViewContainer = viewContainerRegistr
 );
 
 const viewsRegistry = Registry.as<IViewsRegistry>(Extensions.ViewsRegistry);
+
+MenuRegistry.appendMenuItem(MenuId.ViewTitle, {
+	command: {
+		id: SQL_CONNECTORS_FOCUS_COMMAND_ID,
+		title: localize2('sqlConnectionsManageConnectors', 'Manage Connectors')
+	},
+	when: ContextKeyExpr.equals('view', SQL_CONNECTIONS_VIEW_ID),
+	group: '2_manage',
+	order: 1
+});
 
 viewsRegistry.registerViews(
 	[

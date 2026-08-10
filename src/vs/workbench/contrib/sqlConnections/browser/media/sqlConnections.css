@@ -8,7 +8,7 @@
 	height: 100%;
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
+	gap: 6px;
 	padding: 6px 8px 8px;
 	overflow-x: hidden;
 	overflow-y: auto;
@@ -25,8 +25,7 @@
 	flex: 0 0 auto;
 	display: flex;
 	align-items: center;
-	gap: 2px;
-	padding-bottom: 4px;
+	padding-bottom: 6px;
 	border-bottom: 1px solid var(--vscode-editorGroup-border);
 }
 
@@ -68,8 +67,9 @@
 }
 
 .sql-data-source-section-title {
-	padding-top: 3px;
+	padding: 5px 2px 2px;
 	font-weight: 600;
+	letter-spacing: 0;
 	text-transform: uppercase;
 }
 
@@ -79,17 +79,24 @@
 	max-height: 42%;
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
+	gap: 1px;
 	overflow: auto;
 }
 
 .sql-data-source-card {
 	box-sizing: border-box;
 	min-width: 0;
-	padding: 7px;
-	border: 1px solid var(--vscode-editorGroup-border);
-	border-radius: 2px;
-	background: var(--vscode-sideBar-background);
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 26px;
+	align-items: center;
+	padding: 5px 4px;
+	border: 1px solid transparent;
+	border-radius: 3px;
+	background: transparent;
+}
+
+.sql-data-source-card:hover {
+	background: var(--vscode-list-hoverBackground);
 }
 
 .sql-data-source-card:focus-visible {
@@ -105,9 +112,14 @@
 .sql-data-source-card-summary {
 	min-width: 0;
 	display: grid;
-	grid-template-columns: 26px minmax(0, 1fr);
-	align-items: start;
-	gap: 7px;
+	grid-template-columns: 22px minmax(0, 1fr);
+	align-items: center;
+	gap: 6px;
+}
+
+.sql-data-source-card .sql-connector-brand {
+	width: 20px;
+	height: 20px;
 }
 
 .sql-data-source-card-copy {
@@ -135,19 +147,27 @@
 	height: 16px;
 	display: inline-flex;
 	align-items: center;
-	padding: 0 4px;
-	border: 1px solid var(--vscode-editorGroup-border);
+	gap: 4px;
+	padding: 0;
+	border: 0;
 	color: var(--vscode-descriptionForeground);
-	font-size: 9px;
+	font-size: 10px;
+}
+
+.sql-data-source-state::before {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
+	content: '';
 }
 
 .sql-data-source-state.connected {
-	border-color: var(--vscode-testing-iconPassed, #2e9e55);
 	color: var(--vscode-testing-iconPassed, #2e9e55);
 }
 
 .sql-data-source-card-target {
-	margin-top: 3px;
+	margin-top: 1px;
 	color: var(--vscode-descriptionForeground);
 	font-size: 10px;
 	overflow: hidden;
@@ -156,13 +176,9 @@
 }
 
 .sql-data-source-card-actions {
-	min-width: 0;
 	display: flex;
-	justify-content: flex-end;
-	flex-wrap: wrap;
-	gap: 2px;
-	margin-top: 5px;
-	padding-left: 33px;
+	align-items: center;
+	justify-content: center;
 }
 
 .sql-data-source-action {
@@ -200,7 +216,7 @@
 }
 
 .sql-data-source-empty {
-	padding: 12px 7px;
+	padding: 14px 7px;
 	color: var(--vscode-descriptionForeground);
 	font-size: 11px;
 	text-align: center;
@@ -400,6 +416,11 @@
 	color: var(--vscode-foreground);
 	background: transparent;
 	cursor: pointer;
+}
+
+.sql-connections-icon-button:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
 }
 
 .sql-connections-icon-button:disabled,
@@ -605,7 +626,8 @@
 
 .sql-connections-message {
 	flex: 0 0 auto;
-	min-height: 18px;
+	min-height: 16px;
+	padding: 0 2px;
 	font-size: 11px;
 	color: var(--vscode-descriptionForeground);
 	white-space: pre-wrap;
@@ -679,6 +701,8 @@
 	overflow: auto;
 	outline: none;
 	font-size: 12px;
+	border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+	padding-top: 3px;
 }
 
 .sql-connection-node-wrapper {
@@ -714,6 +738,9 @@
 	color: inherit;
 	background: transparent;
 	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 }
 
 .sql-connection-node-icon {
@@ -761,8 +788,8 @@
 .sql-connection-node-action {
 	box-sizing: border-box;
 	height: 20px;
-	min-width: 22px;
-	padding: 0 5px;
+	width: 22px;
+	padding: 0;
 	border: 0;
 	border-radius: 2px;
 	color: inherit;

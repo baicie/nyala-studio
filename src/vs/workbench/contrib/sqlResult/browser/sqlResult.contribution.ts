@@ -136,7 +136,8 @@ viewsRegistry.registerViews(
 			ctorDescriptor: new SyncDescriptor(SqlQueryHistoryView),
 			order: 1,
 			canMoveView: false,
-			canToggleVisibility: true
+			canToggleVisibility: true,
+			hideByDefault: true
 		}
 	],
 	SQL_RESULT_VIEW_CONTAINER

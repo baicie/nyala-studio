@@ -103,43 +103,27 @@ export class SqlResultView extends ViewPane {
 
 	protected override renderBody(container: HTMLElement): void {
 		this.container = append(container, $('.sql-result-view'));
-		this.toolbarElement = append(this.container, $('.sql-result-toolbar'));
+		this.historyElement = append(this.container, $('.sql-result-history'));
+		this.toolbarElement = append(
+			this.container,
+			$('.sql-result-toolbar', { role: 'toolbar', 'aria-label': 'Result actions' })
+		);
 
 		this.summaryElement = append(this.toolbarElement, $('span.sql-result-summary'));
+		const actions = append(this.toolbarElement, $('.sql-result-toolbar-actions'));
 
-		this.copyCellButton = append(
-			this.toolbarElement,
-			$('button.sql-result-button', { type: 'button', title: 'Copy selected cell' }, 'Copy Cell')
-		) as HTMLButtonElement;
-
-		this.copyRowButton = append(
-			this.toolbarElement,
-			$('button.sql-result-button', { type: 'button', title: 'Copy selected row as TSV' }, 'Copy Row')
-		) as HTMLButtonElement;
-
-		this.copyColumnButton = append(
-			this.toolbarElement,
-			$('button.sql-result-button', { type: 'button', title: 'Copy selected column as TSV' }, 'Copy Column')
-		) as HTMLButtonElement;
-
-		this.copyCsvButton = append(
-			this.toolbarElement,
-			$('button.sql-result-button', { type: 'button', title: 'Copy all rows as CSV' }, 'Copy CSV')
-		) as HTMLButtonElement;
-
-		this.copyTsvButton = append(
-			this.toolbarElement,
-			$('button.sql-result-button', { type: 'button', title: 'Copy all rows as TSV' }, 'Copy TSV')
-		) as HTMLButtonElement;
-
-		this.clearButton = append(
-			this.toolbarElement,
-			$('button.sql-result-button', { type: 'button', title: 'Clear result' }, 'Clear')
-		) as HTMLButtonElement;
+		this.copyCellButton = this.appendToolbarButton(actions, Codicon.copy, 'Copy selected cell');
+		this.copyRowButton = this.appendToolbarButton(actions, Codicon.listFlat, 'Copy selected row as TSV');
+		this.copyColumnButton = this.appendToolbarButton(actions, Codicon.symbolField, 'Copy selected column as TSV');
+		this.copyCsvButton = this.appendToolbarButton(actions, Codicon.file, 'Copy all rows as CSV');
+		this.copyTsvButton = this.appendToolbarButton(actions, Codicon.bracketDot, 'Copy all rows as TSV');
+		this.clearButton = this.appendToolbarButton(actions, Codicon.clearAll, 'Clear result');
 
 		this.contentElement = append(this.container, $('.sql-result-content', { tabIndex: 0 }));
-		this.historyElement = append(this.container, $('.sql-result-history'));
-		this.statusElement = append(this.container, $('.sql-result-statusbar'));
+		this.statusElement = append(
+			this.container,
+			$('.sql-result-statusbar', { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' })
+		);
 
 		this._register(
 			addDisposableListener(this.copyCellButton, EventType.CLICK, () => {
@@ -199,6 +183,16 @@ export class SqlResultView extends ViewPane {
 		this.renderPanelState(this.sqlResultService.panelState);
 	}
 
+	private appendToolbarButton(parent: HTMLElement, icon: ThemeIcon, label: string): HTMLButtonElement {
+		const button = append(
+			parent,
+			$('button.sql-result-button', { type: 'button', title: label, 'aria-label': label })
+		) as HTMLButtonElement;
+		const iconElement = append(button, $('.sql-result-button-icon', { 'aria-hidden': 'true' }));
+		iconElement.classList.add(...ThemeIcon.asClassNameArray(icon));
+		return button;
+	}
+
 	override focus(): void {
 		this.contentElement?.focus();
 		super.focus();
@@ -244,7 +238,10 @@ export class SqlResultView extends ViewPane {
 	}
 
 	private renderEmpty(): void {
-		append(this.contentElement, $('.sql-result-empty', undefined, 'Run a SQL query to see results here.'));
+		const wrapper = append(this.contentElement, $('.sql-result-state.empty'));
+		append(wrapper, $('.codicon.codicon-table.sql-result-state-icon', { 'aria-hidden': 'true' }));
+		append(wrapper, $('.sql-result-state-title', undefined, 'No query results'));
+		append(wrapper, $('.sql-result-state-description', undefined, 'Run a SQL query to populate this grid.'));
 	}
 
 	private renderPanelState(state: SqlResultPanelState): void {
@@ -258,11 +255,13 @@ export class SqlResultView extends ViewPane {
 			return;
 		}
 
-		append(this.historyElement, $('div.sql-result-history-heading', undefined, 'Results'));
-
 		const list = append(
 			this.historyElement,
-			$('ul.sql-result-history-list', { role: 'listbox', 'aria-label': 'Query results' })
+			$('ul.sql-result-history-list', {
+				role: 'listbox',
+				'aria-label': 'Query results',
+				'aria-orientation': 'horizontal'
+			})
 		);
 
 		for (const snapshot of state.snapshots) {
@@ -273,7 +272,8 @@ export class SqlResultView extends ViewPane {
 					'data-snapshot-id': snapshot.id,
 					role: 'option',
 					tabIndex: isActive ? 0 : -1,
-					'aria-selected': String(isActive)
+					'aria-selected': String(isActive),
+					title: snapshot.sqlPreview
 				})
 			);
 			this.historyItemElements.set(snapshot.id, item);
@@ -284,7 +284,6 @@ export class SqlResultView extends ViewPane {
 
 			append(item, $('span.sql-result-history-kind', undefined, snapshotKindLabel(snapshot.kind)));
 			append(item, $('span.sql-result-history-title', { title: snapshot.title }, snapshot.title));
-			append(item, $('span.sql-result-history-preview', { title: snapshot.sqlPreview }, snapshot.sqlPreview));
 
 			const removeButton = append(
 				item,
@@ -317,9 +316,11 @@ export class SqlResultView extends ViewPane {
 
 					let targetIndex: number | undefined;
 					switch (event.key) {
+						case 'ArrowLeft':
 						case 'ArrowUp':
 							targetIndex = Math.max(0, state.snapshots.indexOf(snapshot) - 1);
 							break;
+						case 'ArrowRight':
 						case 'ArrowDown':
 							targetIndex = Math.min(state.snapshots.length - 1, state.snapshots.indexOf(snapshot) + 1);
 							break;
@@ -351,13 +352,18 @@ export class SqlResultView extends ViewPane {
 	}
 
 	private renderRunning(state: Extract<SqlResultState, { kind: SqlResultStateKind.Running }>): void {
-		const wrapper = append(this.contentElement, $('.sql-result-message.running'));
-		append(wrapper, $('div', undefined, 'Running query...'));
+		const wrapper = append(this.contentElement, $('.sql-result-state.running'));
+		append(
+			wrapper,
+			$('.codicon.codicon-loading.codicon-modifier-spin.sql-result-state-icon', { 'aria-hidden': 'true' })
+		);
+		append(wrapper, $('.sql-result-state-title', undefined, 'Running query…'));
 		append(wrapper, $('pre.sql-result-sql', undefined, state.query.sql));
 	}
 
 	private renderError(state: Extract<SqlResultState, { kind: SqlResultStateKind.Error }>): void {
-		const wrapper = append(this.contentElement, $('.sql-result-message.error'));
+		const wrapper = append(this.contentElement, $('.sql-result-state.error'));
+		append(wrapper, $('.codicon.codicon-error.sql-result-state-icon', { 'aria-hidden': 'true' }));
 		if (state.errorCode) {
 			append(wrapper, $('div.sql-result-error-code', undefined, state.errorCode));
 		}
@@ -369,7 +375,8 @@ export class SqlResultView extends ViewPane {
 	}
 
 	private renderCancelled(state: Extract<SqlResultState, { kind: SqlResultStateKind.Cancelled }>): void {
-		const wrapper = append(this.contentElement, $('.sql-result-message.cancelled'));
+		const wrapper = append(this.contentElement, $('.sql-result-state.cancelled'));
+		append(wrapper, $('.codicon.codicon-circle-slash.sql-result-state-icon', { 'aria-hidden': 'true' }));
 		append(wrapper, $('div.sql-result-cancelled-title', undefined, state.message));
 		append(wrapper, $('pre.sql-result-sql', undefined, state.query.sql));
 	}
@@ -379,10 +386,10 @@ export class SqlResultView extends ViewPane {
 
 		if (result.columns.length === 0) {
 			const affectedRows = result.affectedRows ?? 0;
-			append(
-				this.contentElement,
-				$('.sql-result-empty', undefined, `${affectedRows} row(s) affected in ${result.elapsedMs}ms.`)
-			);
+			const wrapper = append(this.contentElement, $('.sql-result-state.success'));
+			append(wrapper, $('.codicon.codicon-pass-filled.sql-result-state-icon', { 'aria-hidden': 'true' }));
+			append(wrapper, $('.sql-result-state-title', undefined, `${affectedRows} row(s) affected`));
+			append(wrapper, $('.sql-result-state-description', undefined, `Completed in ${result.elapsedMs}ms.`));
 			this.setStatus(`${affectedRows} row(s) affected · ${result.elapsedMs}ms`);
 			return;
 		}
@@ -549,6 +556,7 @@ export class SqlResultView extends ViewPane {
 
 	private setStatus(message: string): void {
 		this.statusElement.textContent = message;
+		this.statusElement.title = message;
 	}
 }
 

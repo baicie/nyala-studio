@@ -93,7 +93,6 @@ import {
 import {
 	buildSqlDataSourceManagementItems,
 	createSqlDataSourceRemovalRequest,
-	getSqlDataSourceManagementActions,
 	groupSqlDataSourceManagementActions,
 	matchesSqlDataSourceManagementItem,
 	SqlDataSourceManagementAction,
@@ -263,21 +262,8 @@ export class SqlConnectionsView extends ViewPane {
 				'aria-label': 'Filter data sources'
 			})
 		) as HTMLInputElement;
-		const addDataSourceButton = this.appendIconButton(actions, 'add', 'New data source');
-		const refreshDataSourcesButton = this.appendIconButton(actions, 'refresh', 'Refresh data sources');
-
 		this._register(
 			addDisposableListener(this.dataSourceSearchInput, EventType.INPUT, () => this.renderDataSourceManagement())
-		);
-		this._register(
-			addDisposableListener(addDataSourceButton, EventType.CLICK, () => {
-				this.commandService.executeCommand(SQL_CONNECTIONS_ADD_COMMAND_ID).catch(error => this.showError(error));
-			})
-		);
-		this._register(
-			addDisposableListener(refreshDataSourcesButton, EventType.CLICK, () => {
-				this.refresh().catch(error => this.showError(error));
-			})
 		);
 
 		this.dataSourceCountElement = append(this.bodyContainer, $('.sql-data-source-summary'));
@@ -682,7 +668,12 @@ export class SqlConnectionsView extends ViewPane {
 			})
 		) as HTMLButtonElement;
 
-		twisty.textContent = hasChildren ? (isNodeExpanded ? '\u25be' : '\u25b8') : '';
+		if (hasChildren) {
+			append(
+				twisty,
+				$(`span.codicon.codicon-${isNodeExpanded ? 'chevron-down' : 'chevron-right'}`, { 'aria-hidden': 'true' })
+			);
+		}
 
 		if (hasChildren) {
 			this.treeRenderDisposables.add(
@@ -695,7 +686,7 @@ export class SqlConnectionsView extends ViewPane {
 		}
 
 		const icon = append(row, $('span.sql-connection-node-icon'));
-		icon.textContent = getNodeIcon(node);
+		icon.classList.add('codicon', `codicon-${getNodeIcon(node)}`);
 
 		const label = append(row, $('span.sql-connection-node-label'));
 		label.textContent = node.label;
@@ -727,14 +718,14 @@ export class SqlConnectionsView extends ViewPane {
 		for (const inlineAction of inlineActions) {
 			switch (inlineAction) {
 				case SqlConnectionTreeInlineAction.OpenQuery:
-					this.appendActionButton(actions, 'SQL', 'Open SQL query', event => {
+					this.appendActionButton(actions, 'file-code', 'Open SQL query', event => {
 						event.preventDefault();
 						event.stopPropagation();
 						this.openQueryForNode(node).catch(error => this.showError(error));
 					});
 					break;
 				case SqlConnectionTreeInlineAction.RefreshConnection:
-					this.appendActionButton(actions, 'Refresh', 'Refresh connection metadata', event => {
+					this.appendActionButton(actions, 'refresh', 'Refresh connection metadata', event => {
 						event.preventDefault();
 						event.stopPropagation();
 						this.refreshConnection(node.connectionId!).catch(error => this.showError(error));
@@ -743,7 +734,7 @@ export class SqlConnectionsView extends ViewPane {
 				case SqlConnectionTreeInlineAction.CloseConnection:
 					this.appendActionButton(
 						actions,
-						'\u00d7',
+						'close',
 						'Close connection',
 						event => {
 							event.preventDefault();
@@ -754,7 +745,7 @@ export class SqlConnectionsView extends ViewPane {
 					);
 					break;
 				case SqlConnectionTreeInlineAction.RetryMetadata:
-					this.appendActionButton(actions, 'Refresh', 'Retry metadata load', event => {
+					this.appendActionButton(actions, 'refresh', 'Retry metadata load', event => {
 						event.preventDefault();
 						event.stopPropagation();
 						this.refreshErrorNode(node).catch(error => this.showError(error));
@@ -766,22 +757,20 @@ export class SqlConnectionsView extends ViewPane {
 
 	private appendActionButton(
 		parent: HTMLElement,
-		label: string,
+		icon: string,
 		title: string,
 		listener: (event: MouseEvent) => void,
 		variant?: 'danger'
 	): HTMLButtonElement {
 		const button = append(
 			parent,
-			$(
-				'button.sql-connection-node-action',
-				{
-					type: 'button',
-					title
-				},
-				label
-			)
+			$('button.sql-connection-node-action', {
+				type: 'button',
+				title,
+				'aria-label': title
+			})
 		) as HTMLButtonElement;
+		append(button, $(`span.codicon.codicon-${icon}`, { 'aria-hidden': 'true' }));
 
 		if (variant) {
 			button.classList.add(variant);
@@ -872,33 +861,21 @@ export class SqlConnectionsView extends ViewPane {
 		}
 
 		const actions = append(card, $('.sql-data-source-card-actions'));
-		for (const action of getSqlDataSourceManagementActions(item)) {
-			this.appendDataSourceActionButton(actions, item, action);
-		}
-	}
-
-	private appendDataSourceActionButton(
-		parent: HTMLElement,
-		item: SqlDataSourceManagementItem,
-		action: SqlDataSourceManagementAction
-	): void {
-		const presentation = getDataSourceActionPresentation(action);
 		const button = append(
-			parent,
+			actions,
 			$('button.sql-data-source-action', {
 				type: 'button',
-				title: presentation.title,
-				'aria-label': `${presentation.title}: ${item.name}`
+				title: `More actions for ${item.name}`,
+				'aria-label': `More actions for ${item.name}`
 			})
 		) as HTMLButtonElement;
 		button.disabled = this.busyDataSourceIds.has(item.id);
-		button.classList.toggle('danger', presentation.danger === true);
-		append(button, $(`span.codicon.codicon-${presentation.icon}`, { 'aria-hidden': 'true' }));
+		append(button, $('.codicon.codicon-ellipsis', { 'aria-hidden': 'true' }));
 		this.dataSourceRenderDisposables.add(
 			addDisposableListener(button, EventType.CLICK, event => {
 				event.preventDefault();
 				event.stopPropagation();
-				this.runDataSourceAction(item, action).catch(error => this.showError(error));
+				this.showDataSourceContextMenu(item, card, event);
 			})
 		);
 	}
@@ -1488,22 +1465,22 @@ function tableFromNode(node: SqlConnectionTreeNode): Pick<SqlTable, 'schema' | '
 function getNodeIcon(node: SqlConnectionTreeNode): string {
 	switch (node.type) {
 		case SqlConnectionTreeNodeType.Connection:
-			return '\u25c9';
+			return 'database';
 		case SqlConnectionTreeNodeType.Database:
-			return '\u25b8';
+			return 'folder-library';
 		case SqlConnectionTreeNodeType.Group:
-			return '\u25a3';
+			return 'folder';
 		case SqlConnectionTreeNodeType.Table:
-			return '\u25a6';
+			return 'table';
 		case SqlConnectionTreeNodeType.View:
-			return '\u25eb';
+			return 'eye';
 		case SqlConnectionTreeNodeType.Column:
-			return '\u2022';
+			return 'symbol-field';
 		case SqlConnectionTreeNodeType.Error:
-			return '!';
+			return 'error';
 		case SqlConnectionTreeNodeType.Empty:
 		default:
-			return '\u00b7';
+			return 'circle-outline';
 	}
 }
 
