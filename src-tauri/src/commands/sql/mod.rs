@@ -1,3 +1,10 @@
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "A1.1 adapter is consumed by later Agent runtime slices"
+    )
+)]
 pub mod agent;
 mod connection;
 pub mod connection_manager;

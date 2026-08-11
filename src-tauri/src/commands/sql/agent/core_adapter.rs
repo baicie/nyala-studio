@@ -1,3 +1,8 @@
+//! Agent-facing metadata adapter over the existing V1 and V2 SQL stores.
+//!
+//! A1.1 exposes only secret-free runtime capabilities and scoped metadata.
+//! Query execution, search/cache budgets, IPC, and model access live in later slices.
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -7,6 +12,7 @@ use crate::runtime_status::{self, DriverId, RuntimeStatus};
 
 use super::super::connection_manager::SharedConnectionManager;
 use super::super::dialect::SqlDialect;
+use super::super::metadata_v2::{ColumnDto, SchemaObjectDto, SchemaObjectKind, SchemataDto};
 use super::super::state::SqlConnectionStore;
 use super::super::types::{
     ConnectionProfile, DriverIdDto, SqlCommandError, SqlConnection, SqlConnectionKind,
@@ -17,11 +23,13 @@ const MYSQL_METADATA_UNSUPPORTED: &str =
 const POSTGRES_METADATA_UNSUPPORTED: &str =
     "PostgreSQL metadata is unavailable while the driver is planned";
 const SQLITE_METADATA_REQUIRES_STABLE: &str = "SQLite schema metadata requires a stable runtime";
+const COMMENT_METADATA_UNSUPPORTED: &str = "column comment metadata is not available in A1.1";
 const INDEX_METADATA_UNSUPPORTED: &str = "index metadata is not available in A1.1";
 const FOREIGN_KEY_METADATA_UNSUPPORTED: &str = "foreign-key metadata is not available in A1.1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
+/// Declares whether an Agent capability is usable, with an explicit reason when not.
 pub enum SqlCapabilitySupport {
     Supported,
     Unsupported { reason: String },
@@ -29,14 +37,17 @@ pub enum SqlCapabilitySupport {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Metadata features available for one validated workspace connection.
 pub struct SqlMetadataCapabilities {
     pub schema_context: SqlCapabilitySupport,
+    pub comments: SqlCapabilitySupport,
     pub indexes: SqlCapabilitySupport,
     pub foreign_keys: SqlCapabilitySupport,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Secret-free runtime identity and capability envelope exposed to Agent callers.
 pub struct SqlRuntimeCapabilities {
     pub connection_id: String,
     pub driver: DriverId,
@@ -46,19 +57,108 @@ pub struct SqlRuntimeCapabilities {
     pub metadata: SqlMetadataCapabilities,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Requests one bounded metadata level for an opaque workspace connection id.
+pub struct SchemaContextRequest {
+    pub connection_id: String,
+    pub scope: SchemaContextScope,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Metadata level requested from the existing V2 connection.
+pub enum SchemaContextScope {
+    Schemas,
+    Tables { schema: String },
+    Columns { schema: String, table: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// Agent-owned metadata result that does not expose V1 or V2 store identifiers.
+pub struct SchemaContextResult {
+    pub connection_id: String,
+    pub dialect: SqlDialect,
+    pub context: SchemaContextData,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "scope", rename_all = "snake_case")]
+/// Typed payload corresponding exactly to the requested metadata scope.
+pub enum SchemaContextData {
+    Schemas {
+        schemas: Vec<SchemaContextSchema>,
+    },
+    Tables {
+        schema: String,
+        objects: Vec<SchemaContextObject>,
+    },
+    Columns {
+        schema: String,
+        table: String,
+        columns: Vec<SchemaContextColumn>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// Schema identity safe for Agent context.
+pub struct SchemaContextSchema {
+    pub name: String,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+/// Agent-owned schema object classification.
+pub enum SchemaContextObjectKind {
+    Table,
+    View,
+    System,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// Table or view identity within a normalized schema scope.
+pub struct SchemaContextObject {
+    pub schema: String,
+    pub name: String,
+    pub kind: SchemaContextObjectKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// Column shape safe for Agent context; literal defaults are intentionally omitted.
+pub struct SchemaContextColumn {
+    pub name: String,
+    pub data_type: String,
+    pub is_nullable: bool,
+    pub is_primary_key: bool,
+    pub ordinal: i32,
+}
+
+/// Stable SQL Core boundary used by future Agent runtime and tool implementations.
 pub trait SqlCoreAdapter: Send + Sync {
+    /// Resolves driver maturity and metadata support for an open workspace connection.
     fn runtime_capabilities(
         &self,
         connection_id: &str,
     ) -> Result<SqlRuntimeCapabilities, SqlCommandError>;
+
+    /// Returns scoped schema context after capability and V1/V2 binding validation.
+    fn list_schema_context(
+        &self,
+        request: SchemaContextRequest,
+    ) -> Result<SchemaContextResult, SqlCommandError>;
 }
 
+/// Local adapter backed by the V2 metadata manager and optional V1 identity validation.
 pub struct LocalSqlCoreAdapter {
     metadata_manager: SharedConnectionManager,
     legacy_store: Arc<SqlConnectionStore>,
 }
 
 impl LocalSqlCoreAdapter {
+    /// Creates an adapter without opening, cloning, or persisting a database secret.
     pub fn new(
         metadata_manager: SharedConnectionManager,
         legacy_store: Arc<SqlConnectionStore>,
@@ -141,6 +241,94 @@ impl SqlCoreAdapter for LocalSqlCoreAdapter {
         let binding = self.resolve_binding(connection_id)?;
         Ok(binding.into_capabilities())
     }
+
+    fn list_schema_context(
+        &self,
+        request: SchemaContextRequest,
+    ) -> Result<SchemaContextResult, SqlCommandError> {
+        let binding = self.resolve_binding(&request.connection_id)?;
+        ensure_schema_context_supported(&binding)?;
+
+        let context = match request.scope {
+            SchemaContextScope::Schemas => {
+                let schemas = self
+                    .metadata_manager
+                    .with_conn(&binding.connection_id, |entry| entry.conn.list_schemas())?
+                    .into_iter()
+                    .map(map_schema)
+                    .collect();
+                SchemaContextData::Schemas { schemas }
+            }
+            SchemaContextScope::Tables { schema } => {
+                let schema = normalize_schema_scope(&binding, &schema)?;
+                let mut objects: Vec<_> = self
+                    .metadata_manager
+                    .with_conn(&binding.connection_id, |entry| {
+                        entry.conn.list_tables(&schema)
+                    })?
+                    .into_iter()
+                    .map(|object| map_schema_object(object, &schema))
+                    .collect();
+                objects.sort_by(|left, right| {
+                    left.schema
+                        .cmp(&right.schema)
+                        .then_with(|| left.name.cmp(&right.name))
+                        .then_with(|| {
+                            object_kind_rank(left.kind).cmp(&object_kind_rank(right.kind))
+                        })
+                });
+                SchemaContextData::Tables { schema, objects }
+            }
+            SchemaContextScope::Columns { schema, table } => {
+                let schema = normalize_schema_scope(&binding, &schema)?;
+                let table = normalize_scope_name(&table, "table")?.to_string();
+                self.ensure_schema_object_exists(&binding, &schema, &table)?;
+                let mut columns: Vec<_> = self
+                    .metadata_manager
+                    .with_conn(&binding.connection_id, |entry| {
+                        entry.conn.list_columns(&schema, &table)
+                    })?
+                    .into_iter()
+                    .map(map_column)
+                    .collect();
+                columns.sort_by_key(|column| column.ordinal);
+                SchemaContextData::Columns {
+                    schema,
+                    table,
+                    columns,
+                }
+            }
+        };
+
+        Ok(SchemaContextResult {
+            connection_id: binding.connection_id,
+            dialect: binding.dialect,
+            context,
+        })
+    }
+}
+
+impl LocalSqlCoreAdapter {
+    fn ensure_schema_object_exists(
+        &self,
+        binding: &ValidatedMetadataBinding,
+        schema: &str,
+        table: &str,
+    ) -> Result<(), SqlCommandError> {
+        let objects = self
+            .metadata_manager
+            .with_conn(&binding.connection_id, |entry| {
+                entry.conn.list_tables(schema)
+            })?;
+        if objects.iter().any(|object| object.name == table) {
+            Ok(())
+        } else {
+            Err(SqlCommandError::new(
+                "validation",
+                format!("schema object '{schema}.{table}' does not exist"),
+            ))
+        }
+    }
 }
 
 struct ValidatedMetadataBinding {
@@ -174,6 +362,7 @@ fn metadata_capabilities(driver: DriverId, status: RuntimeStatus) -> SqlMetadata
 
     SqlMetadataCapabilities {
         schema_context,
+        comments: unsupported(COMMENT_METADATA_UNSUPPORTED),
         indexes: unsupported(INDEX_METADATA_UNSUPPORTED),
         foreign_keys: unsupported(FOREIGN_KEY_METADATA_UNSUPPORTED),
     }
@@ -185,16 +374,91 @@ fn unsupported(reason: &str) -> SqlCapabilitySupport {
     }
 }
 
+fn ensure_schema_context_supported(
+    binding: &ValidatedMetadataBinding,
+) -> Result<(), SqlCommandError> {
+    match metadata_capabilities(binding.driver, binding.status).schema_context {
+        SqlCapabilitySupport::Supported => Ok(()),
+        SqlCapabilitySupport::Unsupported { reason } => {
+            Err(SqlCommandError::new("validation", reason))
+        }
+    }
+}
+
+fn map_schema(schema: SchemataDto) -> SchemaContextSchema {
+    SchemaContextSchema {
+        name: schema.schema,
+        is_default: schema.is_default,
+    }
+}
+
+fn map_schema_object(object: SchemaObjectDto, requested_schema: &str) -> SchemaContextObject {
+    SchemaContextObject {
+        schema: object
+            .schema
+            .map(|schema| schema.trim().to_string())
+            .filter(|schema| !schema.is_empty())
+            .unwrap_or_else(|| requested_schema.to_string()),
+        name: object.name,
+        kind: match object.kind {
+            SchemaObjectKind::Table => SchemaContextObjectKind::Table,
+            SchemaObjectKind::View => SchemaContextObjectKind::View,
+            SchemaObjectKind::System => SchemaContextObjectKind::System,
+        },
+    }
+}
+
+fn object_kind_rank(kind: SchemaContextObjectKind) -> u8 {
+    match kind {
+        SchemaContextObjectKind::Table => 0,
+        SchemaContextObjectKind::View => 1,
+        SchemaContextObjectKind::System => 2,
+    }
+}
+
+fn map_column(column: ColumnDto) -> SchemaContextColumn {
+    SchemaContextColumn {
+        name: column.name,
+        data_type: column.data_type,
+        is_nullable: column.is_nullable,
+        is_primary_key: column.is_primary_key,
+        ordinal: column.ordinal,
+    }
+}
+
 fn normalize_connection_id(connection_id: &str) -> Result<&str, SqlCommandError> {
-    let connection_id = connection_id.trim();
-    if connection_id.is_empty() {
+    normalize_scope_name(connection_id, "connection id")
+}
+
+fn normalize_scope_name<'a>(value: &'a str, label: &str) -> Result<&'a str, SqlCommandError> {
+    let value = value.trim();
+    if value.is_empty() {
         Err(SqlCommandError::new(
             "invalid_input",
-            "connection id must not be empty",
+            format!("{label} must not be empty"),
+        ))
+    } else if value.contains('\0') {
+        Err(SqlCommandError::new(
+            "invalid_input",
+            format!("{label} must not contain NUL"),
         ))
     } else {
-        Ok(connection_id)
+        Ok(value)
     }
+}
+
+fn normalize_schema_scope(
+    binding: &ValidatedMetadataBinding,
+    schema: &str,
+) -> Result<String, SqlCommandError> {
+    let schema = normalize_scope_name(schema, "schema")?;
+    if binding.driver == DriverId::Sqlite && schema != "main" {
+        return Err(SqlCommandError::new(
+            "validation",
+            "SQLite schema context only supports the 'main' schema",
+        ));
+    }
+    Ok(schema.to_string())
 }
 
 fn not_open_error(connection_id: &str) -> SqlCommandError {
@@ -294,6 +558,7 @@ fn normalized_network_port(driver: DriverIdDto, port: Option<u16>) -> Option<u16
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -438,6 +703,7 @@ mod tests {
         let profile = sqlite_profile("workspace", &database, true);
         open_profile(&manager, &profile, ConnectionSecret::default());
         let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+        let adapter: &dyn SqlCoreAdapter = &adapter;
 
         let capabilities = adapter
             .runtime_capabilities("workspace")
@@ -451,6 +717,307 @@ mod tests {
             capabilities.metadata.schema_context,
             SqlCapabilitySupport::Supported
         );
+        assert!(matches!(
+            capabilities.metadata.comments,
+            SqlCapabilitySupport::Unsupported { .. }
+        ));
+    }
+
+    #[test]
+    fn v2_only_sqlite_lists_main_schema_context() {
+        let root = TempRoot::new("schema-context");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+
+        let result = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "workspace".to_string(),
+                scope: SchemaContextScope::Schemas,
+            })
+            .expect("list schema context");
+
+        assert_eq!(result.connection_id, "workspace");
+        assert_eq!(result.dialect, SqlDialect::Sqlite);
+        assert_eq!(
+            result.context,
+            SchemaContextData::Schemas {
+                schemas: vec![SchemaContextSchema {
+                    name: "main".to_string(),
+                    is_default: true,
+                }],
+            }
+        );
+    }
+
+    #[test]
+    fn v2_only_in_memory_sqlite_lists_main_schema_context() {
+        let root = TempRoot::new("v2-memory-context");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_memory_profile("workspace");
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+
+        let result = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "workspace".to_string(),
+                scope: SchemaContextScope::Schemas,
+            })
+            .expect("list in-memory schema context");
+
+        assert!(matches!(
+            result.context,
+            SchemaContextData::Schemas { schemas }
+                if schemas == vec![SchemaContextSchema {
+                    name: "main".to_string(),
+                    is_default: true,
+                }]
+        ));
+    }
+
+    #[test]
+    fn v2_only_sqlite_lists_seeded_table_context() {
+        let root = TempRoot::new("table-context");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+
+        let result = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "workspace".to_string(),
+                scope: SchemaContextScope::Tables {
+                    schema: "main".to_string(),
+                },
+            })
+            .expect("list table context");
+        let SchemaContextData::Tables { objects, .. } = result.context else {
+            panic!("expected table context");
+        };
+
+        assert_eq!(
+            objects,
+            vec![
+                SchemaContextObject {
+                    schema: "main".to_string(),
+                    name: "orders".to_string(),
+                    kind: SchemaContextObjectKind::Table,
+                },
+                SchemaContextObject {
+                    schema: "main".to_string(),
+                    name: "users".to_string(),
+                    kind: SchemaContextObjectKind::Table,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn v2_only_sqlite_lists_columns_in_ordinal_order() {
+        let root = TempRoot::new("column-context");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+
+        let result = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "workspace".to_string(),
+                scope: SchemaContextScope::Columns {
+                    schema: "main".to_string(),
+                    table: "orders".to_string(),
+                },
+            })
+            .expect("list column context");
+        let SchemaContextData::Columns { columns, .. } = result.context else {
+            panic!("expected column context");
+        };
+        assert_eq!(
+            columns,
+            vec![
+                SchemaContextColumn {
+                    name: "id".to_string(),
+                    data_type: "INTEGER".to_string(),
+                    is_nullable: true,
+                    is_primary_key: true,
+                    ordinal: 0,
+                },
+                SchemaContextColumn {
+                    name: "user_id".to_string(),
+                    data_type: "INTEGER".to_string(),
+                    is_nullable: false,
+                    is_primary_key: false,
+                    ordinal: 1,
+                },
+                SchemaContextColumn {
+                    name: "amount".to_string(),
+                    data_type: "INTEGER".to_string(),
+                    is_nullable: false,
+                    is_primary_key: false,
+                    ordinal: 2,
+                },
+                SchemaContextColumn {
+                    name: "created_at".to_string(),
+                    data_type: "TEXT".to_string(),
+                    is_nullable: false,
+                    is_primary_key: false,
+                    ordinal: 3,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn schema_context_trims_schema_and_table_scope_names() {
+        let root = TempRoot::new("trimmed-scope");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+
+        let result = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "workspace".to_string(),
+                scope: SchemaContextScope::Columns {
+                    schema: " main ".to_string(),
+                    table: " orders ".to_string(),
+                },
+            })
+            .expect("list trimmed column context");
+
+        assert!(matches!(
+            result.context,
+            SchemaContextData::Columns { schema, table, .. }
+                if schema == "main" && table == "orders"
+        ));
+    }
+
+    #[test]
+    fn schema_context_rejects_blank_schema() {
+        let root = TempRoot::new("blank-schema");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+
+        let error = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "workspace".to_string(),
+                scope: SchemaContextScope::Tables {
+                    schema: "  ".to_string(),
+                },
+            })
+            .unwrap_err();
+
+        assert!(matches!(error, SqlCommandError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn schema_context_rejects_blank_table() {
+        let root = TempRoot::new("blank-table");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+
+        let error = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "workspace".to_string(),
+                scope: SchemaContextScope::Columns {
+                    schema: "main".to_string(),
+                    table: "  ".to_string(),
+                },
+            })
+            .unwrap_err();
+
+        assert!(matches!(error, SqlCommandError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn schema_context_rejects_non_main_sqlite_schema() {
+        let root = TempRoot::new("invalid-sqlite-schema");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+
+        let error = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "workspace".to_string(),
+                scope: SchemaContextScope::Tables {
+                    schema: "other".to_string(),
+                },
+            })
+            .unwrap_err();
+
+        assert!(matches!(error, SqlCommandError::Validation { .. }));
+    }
+
+    #[test]
+    fn schema_context_rejects_nul_scope_names() {
+        let root = TempRoot::new("nul-scope");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+
+        for scope in [
+            SchemaContextScope::Tables {
+                schema: "main\0".to_string(),
+            },
+            SchemaContextScope::Columns {
+                schema: "main".to_string(),
+                table: "orders\0".to_string(),
+            },
+        ] {
+            let error = adapter
+                .list_schema_context(SchemaContextRequest {
+                    connection_id: "workspace".to_string(),
+                    scope,
+                })
+                .unwrap_err();
+            assert!(matches!(error, SqlCommandError::InvalidInput { .. }));
+        }
+    }
+
+    #[test]
+    fn schema_context_rejects_unknown_sqlite_table() {
+        let root = TempRoot::new("unknown-table");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+
+        let error = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "workspace".to_string(),
+                scope: SchemaContextScope::Columns {
+                    schema: "main".to_string(),
+                    table: "missing".to_string(),
+                },
+            })
+            .unwrap_err();
+
+        assert!(matches!(error, SqlCommandError::Validation { .. }));
     }
 
     #[test]
@@ -491,6 +1058,71 @@ mod tests {
     }
 
     #[test]
+    fn schema_context_serialization_hides_store_and_secret_fields() {
+        let root = TempRoot::new("context-serialization");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let fixture = rusqlite::Connection::open(&database).expect("open default canary fixture");
+        fixture
+            .execute_batch(
+                "CREATE TABLE secret_defaults (
+                    id INTEGER PRIMARY KEY,
+                    value TEXT NOT NULL DEFAULT 'adapter-default-secret-canary'
+                );",
+            )
+            .expect("create default canary table");
+        drop(fixture);
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, false);
+        open_profile(
+            &manager,
+            &profile,
+            ConnectionSecret {
+                password: Some("adapter-secret-canary".to_string()),
+            },
+        );
+        let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+        let result = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "workspace".to_string(),
+                scope: SchemaContextScope::Columns {
+                    schema: "main".to_string(),
+                    table: "secret_defaults".to_string(),
+                },
+            })
+            .expect("list schema context");
+
+        let serialized = serde_json::to_string(&result).expect("serialize schema context");
+        let debug = format!("{result:?}");
+        let persisted =
+            std::fs::read_to_string(root.persistence("v2")).expect("read persisted V2 profiles");
+
+        for forbidden in [
+            "adapter-secret-canary",
+            "adapter-default-secret-canary",
+            "password",
+            "defaultValue",
+            "profileId",
+            "legacyConnectionId",
+            "filePath",
+            "databasePath",
+            "host",
+            "username",
+        ] {
+            assert!(
+                !serialized.contains(forbidden),
+                "serialized schema context exposed {forbidden}: {serialized}"
+            );
+            assert!(
+                !debug.contains(forbidden),
+                "debug schema context exposed {forbidden}: {debug}"
+            );
+        }
+        assert!(!persisted.contains("adapter-secret-canary"));
+        assert!(!persisted.contains("password"));
+    }
+
+    #[test]
     fn compatible_dual_store_sqlite_binding_is_accepted() {
         let root = TempRoot::new("dual-compatible");
         let database = root.database("main");
@@ -504,9 +1136,12 @@ mod tests {
             .expect("open V1 SQLite");
         let adapter = LocalSqlCoreAdapter::new(manager, legacy);
 
-        let capabilities = adapter.runtime_capabilities("workspace");
+        let context = adapter.list_schema_context(SchemaContextRequest {
+            connection_id: "workspace".to_string(),
+            scope: SchemaContextScope::Schemas,
+        });
 
-        assert!(capabilities.is_ok(), "{capabilities:?}");
+        assert!(context.is_ok(), "{context:?}");
     }
 
     #[test]
@@ -525,7 +1160,36 @@ mod tests {
             .expect("open V1 SQLite");
         let adapter = LocalSqlCoreAdapter::new(manager, legacy);
 
-        let error = adapter.runtime_capabilities("workspace").unwrap_err();
+        let error = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "workspace".to_string(),
+                scope: SchemaContextScope::Schemas,
+            })
+            .unwrap_err();
+
+        assert!(matches!(error, SqlCommandError::Validation { .. }));
+    }
+
+    #[test]
+    fn dual_store_sqlite_binding_rejects_read_only_mismatch() {
+        let root = TempRoot::new("dual-read-only-mismatch");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let legacy = empty_legacy_store();
+        legacy
+            .open_connection(legacy_sqlite_input("workspace", &database, false))
+            .expect("open V1 SQLite");
+        let adapter = LocalSqlCoreAdapter::new(manager, legacy);
+
+        let error = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "workspace".to_string(),
+                scope: SchemaContextScope::Schemas,
+            })
+            .unwrap_err();
 
         assert!(matches!(error, SqlCommandError::Validation { .. }));
     }
@@ -542,7 +1206,12 @@ mod tests {
             .expect("open V1 in-memory SQLite");
         let adapter = LocalSqlCoreAdapter::new(manager, legacy);
 
-        let error = adapter.runtime_capabilities("workspace").unwrap_err();
+        let error = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "workspace".to_string(),
+                scope: SchemaContextScope::Schemas,
+            })
+            .unwrap_err();
 
         assert!(matches!(error, SqlCommandError::Validation { .. }));
     }
@@ -558,7 +1227,12 @@ mod tests {
             .expect("save profile");
         let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
 
-        let error = adapter.runtime_capabilities("workspace").unwrap_err();
+        let error = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "workspace".to_string(),
+                scope: SchemaContextScope::Schemas,
+            })
+            .unwrap_err();
 
         assert!(matches!(error, SqlCommandError::NotOpen { .. }));
     }
@@ -573,12 +1247,19 @@ mod tests {
         open_profile(&manager, &profile, ConnectionSecret::default());
         let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
 
-        let error = adapter.runtime_capabilities("missing").unwrap_err();
+        let error = adapter
+            .list_schema_context(SchemaContextRequest {
+                connection_id: "missing".to_string(),
+                scope: SchemaContextScope::Schemas,
+            })
+            .unwrap_err();
 
         assert!(matches!(error, SqlCommandError::NotOpen { .. }));
     }
 
-    struct FakeMysqlDriver;
+    struct FakeMysqlDriver {
+        metadata_calls: Arc<AtomicUsize>,
+    }
 
     impl SqlDriver for FakeMysqlDriver {
         fn id(&self) -> DriverId {
@@ -590,11 +1271,15 @@ mod tests {
             _profile: &ConnectionProfile,
             _secret: &ConnectionSecret,
         ) -> Result<BoxedConnection, String> {
-            Ok(Arc::new(FakeMysqlConnection))
+            Ok(Arc::new(FakeMysqlConnection {
+                metadata_calls: Arc::clone(&self.metadata_calls),
+            }))
         }
     }
 
-    struct FakeMysqlConnection;
+    struct FakeMysqlConnection {
+        metadata_calls: Arc<AtomicUsize>,
+    }
 
     impl std::fmt::Debug for FakeMysqlConnection {
         fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -610,10 +1295,12 @@ mod tests {
         }
 
         fn list_schemas(&self) -> Result<Vec<SchemataDto>, SqlCommandError> {
+            self.metadata_calls.fetch_add(1, Ordering::Relaxed);
             Ok(Vec::new())
         }
 
         fn list_tables(&self, _schema: &str) -> Result<Vec<SchemaObjectDto>, SqlCommandError> {
+            self.metadata_calls.fetch_add(1, Ordering::Relaxed);
             Ok(Vec::new())
         }
 
@@ -622,6 +1309,7 @@ mod tests {
             _schema: &str,
             _table: &str,
         ) -> Result<Vec<ColumnDto>, SqlCommandError> {
+            self.metadata_calls.fetch_add(1, Ordering::Relaxed);
             Ok(Vec::new())
         }
     }
@@ -629,7 +1317,8 @@ mod tests {
     #[test]
     fn mysql_preview_reports_schema_context_as_unsupported() {
         let root = TempRoot::new("mysql-preview");
-        let registry = SqlDriverRegistry::new(vec![Box::new(FakeMysqlDriver)]);
+        let metadata_calls = Arc::new(AtomicUsize::new(0));
+        let registry = SqlDriverRegistry::new(vec![Box::new(FakeMysqlDriver { metadata_calls })]);
         let manager = Arc::new(ConnectionManager::new(registry, root.persistence("v2")));
         let profile = mysql_profile("workspace");
         open_profile(&manager, &profile, ConnectionSecret::default());
@@ -644,6 +1333,44 @@ mod tests {
             capabilities.metadata.schema_context,
             SqlCapabilitySupport::Unsupported { .. }
         ));
+    }
+
+    #[test]
+    fn mysql_preview_rejects_schema_context_retrieval() {
+        let root = TempRoot::new("mysql-context");
+        let metadata_calls = Arc::new(AtomicUsize::new(0));
+        let registry = SqlDriverRegistry::new(vec![Box::new(FakeMysqlDriver {
+            metadata_calls: Arc::clone(&metadata_calls),
+        })]);
+        let manager = Arc::new(ConnectionManager::new(registry, root.persistence("v2")));
+        let profile = mysql_profile("workspace");
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+
+        for scope in [
+            SchemaContextScope::Schemas,
+            SchemaContextScope::Tables {
+                schema: "app".to_string(),
+            },
+            SchemaContextScope::Columns {
+                schema: "app".to_string(),
+                table: "users".to_string(),
+            },
+        ] {
+            let error = adapter
+                .list_schema_context(SchemaContextRequest {
+                    connection_id: "workspace".to_string(),
+                    scope,
+                })
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                SqlCommandError::Validation { message }
+                    if message == MYSQL_METADATA_UNSUPPORTED
+            ));
+        }
+
+        assert_eq!(metadata_calls.load(Ordering::Relaxed), 0);
     }
 
     #[test]
