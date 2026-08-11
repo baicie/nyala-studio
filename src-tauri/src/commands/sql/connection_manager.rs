@@ -31,6 +31,7 @@ pub struct ConnectionEntry {
     #[allow(dead_code)]
     pub driver_id: DriverId,
     pub conn: BoxedConnection,
+    open_profile: ConnectionProfile,
 }
 
 pub struct ConnectionManager {
@@ -86,6 +87,14 @@ impl ConnectionManager {
     pub fn get_profile(&self, profile_id: &str) -> Option<ConnectionProfile> {
         let inner = self.inner.lock().expect("connection manager poisoned");
         inner.profile_by_id.get(profile_id).cloned()
+    }
+
+    pub(crate) fn get_open_profile(&self, profile_id: &str) -> Option<ConnectionProfile> {
+        let inner = self.inner.lock().expect("connection manager poisoned");
+        inner
+            .drivers
+            .get(profile_id)
+            .map(|entry| entry.open_profile.clone())
     }
 
     pub fn drop_secret(&self, profile_id: &str) {
@@ -180,6 +189,7 @@ impl ConnectionManager {
             ConnectionEntry {
                 driver_id: runtime_id,
                 conn,
+                open_profile: profile.clone(),
             },
         );
         inner.last_secret_by_id.insert(profile.id.clone(), secret);
@@ -209,6 +219,27 @@ impl ConnectionManager {
             .drivers
             .get_mut(profile_id)
             .ok_or_else(|| SqlCommandError::new("not_open", "connection not open"))?;
+        f(entry)
+    }
+
+    pub(crate) fn with_conn_for_profile<R>(
+        &self,
+        profile: &ConnectionProfile,
+        f: impl FnOnce(&mut ConnectionEntry) -> Result<R, SqlCommandError>,
+    ) -> Result<R, SqlCommandError> {
+        let mut inner = self.inner.lock().expect("connection manager poisoned");
+        let entry = inner
+            .drivers
+            .get_mut(&profile.id)
+            .ok_or_else(|| SqlCommandError::new("not_open", "connection not open"))?;
+
+        if entry.open_profile != *profile {
+            return Err(SqlCommandError::new(
+                "validation",
+                "open connection changed while metadata was being resolved",
+            ));
+        }
+
         f(entry)
     }
 }

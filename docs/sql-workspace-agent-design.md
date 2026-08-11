@@ -669,10 +669,11 @@ UI 规则：
   - Acceptance：覆盖率、体积、license、Rust 版本、dialect gaps 有数据。
   - Verify：fixture command 与 `cargo tree` 记录。
   - Files：ADR/spike doc；只有批准后才改 Cargo files。
-- [ ] A1.1：定义 metadata capability 与 `SqlCoreAdapter`，封装 V1/V2 id mapping。
+- [x] A1.1：定义 metadata capability 与 `SqlCoreAdapter`，封装 V1/V2 id mapping。
   - Acceptance：Agent caller 看不到 store 版本。
   - Verify：SQLite adapter tests + MySQL unsupported/preview tests。
   - Plan：[`A1.1 Implementation Plan`](./sql-workspace-agent-a1-1-implementation-plan.md)。
+  - Record：`e808fbef`、`08e4fc81`、`2007400a`（2026-08-11 完成；25 个 focused tests + 全量回归）。
 - [ ] A1.2：实现 bounded schema search/cache，之后再加 FK graph。
   - Acceptance：稳定排序、TTL/invalidation、object/byte cap 可测。
   - Verify：pure Rust tests。
@@ -838,4 +839,4 @@ pnpm run test
 - A6 write 和 A8 advanced 保持在首版范围之外；
 - Phase 08 状态和 SQLite/MySQL/PostgreSQL maturity 没有被本文改变。
 
-本次用户已明确授权 A0.1 作为顺序例外，并按独立 implementation plan 完成。A0.2 与 A1+ 仍保持未批准、未实现；后续继续按 Stage 拆分，不能把 A0-A4 合并成一个大 PR。
+本次用户已明确授权 A0.1 与 A1.1 作为顺序例外，并分别按独立 implementation plan 完成。A0.2、A1.2 与 A2+ 仍保持未批准、未实现；后续继续按 Stage 拆分，不能把 A0-A4 合并成一个大 PR。

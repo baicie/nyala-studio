@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::runtime_status::{self, DriverId, RuntimeStatus};
 
-use super::super::connection_manager::SharedConnectionManager;
+use super::super::connection_manager::{ConnectionEntry, SharedConnectionManager};
 use super::super::dialect::SqlDialect;
 use super::super::metadata_v2::{ColumnDto, SchemaObjectDto, SchemaObjectKind, SchemataDto};
 use super::super::state::SqlConnectionStore;
@@ -176,12 +176,8 @@ impl LocalSqlCoreAdapter {
         let connection_id = normalize_connection_id(connection_id)?;
         let profile = self
             .metadata_manager
-            .get_profile(connection_id)
+            .get_open_profile(connection_id)
             .ok_or_else(|| not_open_error(connection_id))?;
-
-        if !self.metadata_manager.is_open(connection_id) {
-            return Err(not_open_error(connection_id));
-        }
 
         self.validate_legacy_binding(&profile)?;
 
@@ -189,13 +185,16 @@ impl LocalSqlCoreAdapter {
         let status = runtime_status::lookup(driver)
             .map(|entry| entry.status)
             .ok_or_else(|| SqlCommandError::new("internal", "driver runtime status is missing"))?;
+        let dialect = dialect_for_driver(profile.driver);
+        let read_only = profile.read_only;
 
         Ok(ValidatedMetadataBinding {
             connection_id: connection_id.to_string(),
+            open_profile: profile,
             driver,
             status,
-            dialect: dialect_for_driver(profile.driver),
-            read_only: profile.read_only,
+            dialect,
+            read_only,
         })
     }
 
@@ -239,6 +238,7 @@ impl SqlCoreAdapter for LocalSqlCoreAdapter {
         connection_id: &str,
     ) -> Result<SqlRuntimeCapabilities, SqlCommandError> {
         let binding = self.resolve_binding(connection_id)?;
+        self.with_metadata_connection(&binding, |_| Ok(()))?;
         Ok(binding.into_capabilities())
     }
 
@@ -252,8 +252,7 @@ impl SqlCoreAdapter for LocalSqlCoreAdapter {
         let context = match request.scope {
             SchemaContextScope::Schemas => {
                 let schemas = self
-                    .metadata_manager
-                    .with_conn(&binding.connection_id, |entry| entry.conn.list_schemas())?
+                    .with_metadata_connection(&binding, |entry| entry.conn.list_schemas())?
                     .into_iter()
                     .map(map_schema)
                     .collect();
@@ -262,10 +261,7 @@ impl SqlCoreAdapter for LocalSqlCoreAdapter {
             SchemaContextScope::Tables { schema } => {
                 let schema = normalize_schema_scope(&binding, &schema)?;
                 let mut objects: Vec<_> = self
-                    .metadata_manager
-                    .with_conn(&binding.connection_id, |entry| {
-                        entry.conn.list_tables(&schema)
-                    })?
+                    .with_metadata_connection(&binding, |entry| entry.conn.list_tables(&schema))?
                     .into_iter()
                     .map(|object| map_schema_object(object, &schema))
                     .collect();
@@ -284,8 +280,7 @@ impl SqlCoreAdapter for LocalSqlCoreAdapter {
                 let table = normalize_scope_name(&table, "table")?.to_string();
                 self.ensure_schema_object_exists(&binding, &schema, &table)?;
                 let mut columns: Vec<_> = self
-                    .metadata_manager
-                    .with_conn(&binding.connection_id, |entry| {
+                    .with_metadata_connection(&binding, |entry| {
                         entry.conn.list_columns(&schema, &table)
                     })?
                     .into_iter()
@@ -309,17 +304,23 @@ impl SqlCoreAdapter for LocalSqlCoreAdapter {
 }
 
 impl LocalSqlCoreAdapter {
+    fn with_metadata_connection<R>(
+        &self,
+        binding: &ValidatedMetadataBinding,
+        f: impl FnOnce(&mut ConnectionEntry) -> Result<R, SqlCommandError>,
+    ) -> Result<R, SqlCommandError> {
+        self.metadata_manager
+            .with_conn_for_profile(&binding.open_profile, f)
+    }
+
     fn ensure_schema_object_exists(
         &self,
         binding: &ValidatedMetadataBinding,
         schema: &str,
         table: &str,
     ) -> Result<(), SqlCommandError> {
-        let objects = self
-            .metadata_manager
-            .with_conn(&binding.connection_id, |entry| {
-                entry.conn.list_tables(schema)
-            })?;
+        let objects =
+            self.with_metadata_connection(binding, |entry| entry.conn.list_tables(schema))?;
         if objects.iter().any(|object| object.name == table) {
             Ok(())
         } else {
@@ -333,6 +334,7 @@ impl LocalSqlCoreAdapter {
 
 struct ValidatedMetadataBinding {
     connection_id: String,
+    open_profile: ConnectionProfile,
     driver: DriverId,
     status: RuntimeStatus,
     dialect: SqlDialect,
@@ -1235,6 +1237,52 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(error, SqlCommandError::NotOpen { .. }));
+    }
+
+    #[test]
+    fn open_profile_identity_is_not_relabelled_by_a_saved_profile_update() {
+        let root = TempRoot::new("open-profile-snapshot");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        manager
+            .upsert_profile(mysql_profile("workspace"))
+            .expect("replace saved profile without reopening");
+        let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+
+        let capabilities = adapter
+            .runtime_capabilities("workspace")
+            .expect("resolve capabilities from the open profile");
+
+        assert_eq!(capabilities.driver, DriverId::Sqlite);
+    }
+
+    #[test]
+    fn resolved_metadata_binding_rejects_a_replaced_same_id_runtime() {
+        let root = TempRoot::new("replaced-open-runtime");
+        let original_database = root.database("original");
+        let replacement_database = root.database("replacement");
+        ensure_demo_db(&original_database).expect("seed original database");
+        ensure_demo_db(&replacement_database).expect("seed replacement database");
+        let manager = sqlite_manager(&root);
+        let original = sqlite_profile("workspace", &original_database, true);
+        open_profile(&manager, &original, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(Arc::clone(&manager), empty_legacy_store());
+        let binding = adapter
+            .resolve_binding("workspace")
+            .expect("resolve original binding");
+        let replacement = sqlite_profile("workspace", &replacement_database, true);
+        manager
+            .open(&replacement, ConnectionSecret::default())
+            .expect("replace open runtime");
+
+        let error = adapter
+            .with_metadata_connection(&binding, |entry| entry.conn.list_schemas())
+            .unwrap_err();
+
+        assert!(matches!(error, SqlCommandError::Validation { .. }));
     }
 
     #[test]

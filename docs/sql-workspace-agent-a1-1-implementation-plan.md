@@ -1,6 +1,6 @@
 # SQL Workspace Agent A1.1 Implementation Plan
 
-> **Status:** In progress
+> **Status:** Complete
 >
 > **Date:** 2026-08-11
 >
@@ -25,6 +25,10 @@ search/cache/budget behavior.
 
 - V2 `ConnectionManager` is the authoritative metadata source for A1. It already
   owns the shared `SqlConnection` metadata contract and structured errors.
+- Adapter binding uses the secret-free profile snapshot captured with the open
+  V2 runtime. A later saved-profile upsert cannot relabel an already-open driver
+  or database target, and each metadata operation rechecks that snapshot under
+  the manager lock before using the runtime handle.
 - A V2-only SQLite connection may provide Suggest-only schema context. Query
   execution is outside A1.1 and remains unavailable until A3 validates a V1
   execution binding.
@@ -64,14 +68,14 @@ the public, secret-free `SqlConnection` identity for an open connection.
 
 **Acceptance criteria:**
 
-- [ ] A known open id returns its public connection identity.
-- [ ] Missing and blank ids return structured `SqlCommandError` values.
-- [ ] No runtime handle, pool, interrupt handle, password, or persisted secret is exposed.
+- [x] A known open id returns its public connection identity.
+- [x] Missing and blank ids return structured `SqlCommandError` values.
+- [x] No runtime handle, pool, interrupt handle, password, or persisted secret is exposed.
 
 **Verification:**
 
-- [ ] Focused state tests pass: `cd src-tauri && cargo test --lib open_connection_info`
-- [ ] Rust formatting is clean: `pnpm run rust:fmt`
+- [x] Focused state tests pass: `cd src-tauri && cargo test --lib open_connection_info`
+- [x] Rust formatting is clean: `pnpm run rust:fmt`
 
 **Dependencies:** None.
 
@@ -89,15 +93,15 @@ V2 manager plus optional validated V1 identity.
 
 **Acceptance criteria:**
 
-- [ ] Public adapter inputs and outputs contain one workspace connection id and no store ids.
-- [ ] SQLite reports Stable schema-context support.
-- [ ] MySQL reports Preview with explicit unsupported metadata; PostgreSQL is not promoted.
-- [ ] Missing/closed V2 profiles and mismatched dual-store targets fail closed.
+- [x] Public adapter inputs and outputs contain one workspace connection id and no store ids.
+- [x] SQLite reports Stable schema-context support.
+- [x] MySQL reports Preview with explicit unsupported metadata; PostgreSQL is not promoted.
+- [x] Missing/closed V2 profiles and mismatched dual-store targets fail closed.
 
 **Verification:**
 
-- [ ] Focused adapter capability tests pass: `cd src-tauri && cargo test --lib sql_core_adapter`
-- [ ] Capability serialization contains no secret, host, username, path, or store-version fields.
+- [x] Focused adapter capability tests pass: `cd src-tauri && cargo test --lib core_adapter`
+- [x] Capability serialization contains no secret, host, username, path, or store-version fields.
 
 **Dependencies:** Task 1.
 
@@ -117,15 +121,15 @@ types.
 
 **Acceptance criteria:**
 
-- [ ] A file-backed SQLite fixture returns `main`, seeded tables, and ordered columns.
-- [ ] V2-only SQLite works; a compatible same-id V1 handle also works.
-- [ ] Same-id connections targeting different files and dual-store `:memory:` fail closed.
-- [ ] Unsupported MySQL metadata returns a structured error rather than empty success.
+- [x] A file-backed SQLite fixture returns `main`, seeded tables, and ordered columns.
+- [x] V2-only SQLite works; a compatible same-id V1 handle also works.
+- [x] Same-id connections targeting different files and dual-store `:memory:` fail closed.
+- [x] Unsupported MySQL metadata returns a structured error rather than empty success.
 
 **Verification:**
 
-- [ ] SQLite and MySQL fake-driver tests pass without a live database server.
-- [ ] Adapter results serialize without `profileId`, `legacyConnectionId`, password, or URI fields.
+- [x] SQLite and MySQL fake-driver tests pass without a live database server.
+- [x] Adapter results serialize without `profileId`, `legacyConnectionId`, password, or URI fields.
 
 **Dependencies:** Task 2.
 
@@ -137,21 +141,56 @@ types.
 
 ## Checkpoint: A1.1 Complete
 
-- [ ] `cd src-tauri && cargo test --lib sql_core_adapter` passes.
-- [ ] `pnpm run rust:fmt` passes.
-- [ ] `pnpm run rust:check` passes.
-- [ ] `pnpm run rust:clippy` passes with `-D warnings`.
-- [ ] `pnpm run test:rust` passes.
-- [ ] `pnpm run test` passes end to end.
-- [ ] Changed Markdown passes targeted Prettier check.
-- [ ] `git diff --check` passes.
-- [ ] Parent design marks only A1.1 complete; A1.2 and A2+ remain unchecked.
+- [x] `cd src-tauri && cargo test --lib core_adapter` passes.
+- [x] `pnpm run rust:fmt` passes.
+- [x] `pnpm run rust:check` passes.
+- [x] `pnpm run rust:clippy` passes with `-D warnings`.
+- [x] `pnpm run test:rust` passes.
+- [x] `pnpm run test` passes end to end.
+- [x] `pnpm run build` passes.
+- [x] Changed Markdown passes targeted Prettier check.
+- [x] `git diff --check` passes.
+- [x] Parent design marks only A1.1 complete; A1.2 and A2+ remain unchecked.
+
+## Completion Record
+
+A1.1 was completed on 2026-08-11 as three independently verified implementation
+slices, followed by final branch hardening:
+
+| Slice                                   | Commit     | Result                                                                 |
+| --------------------------------------- | ---------- | ---------------------------------------------------------------------- |
+| Safe V1 open-connection identity        | `e808fbef` | Exposes only the public connection identity through a crate-local API. |
+| Adapter and metadata capabilities       | `08e4fc81` | Adds the object-safe contract and fail-closed V1/V2 binding checks.    |
+| Typed schema, table, and column context | `2007400a` | Maps V2 metadata into stable, secret-free Agent-owned DTOs.            |
+
+The completed contract intentionally omits literal column defaults from Agent
+DTOs so DDL values do not enter model context by default. The Agent module has a
+temporary non-test `dead_code` expectation because A1.1 has no runtime caller;
+A2 must remove that expectation when it registers the Agent runtime.
+
+Final review bound capability and metadata reads to the secret-free V2 profile
+snapshot captured when the runtime opened. Metadata operations compare that
+snapshot under the manager lock, so a later saved-profile update or same-id
+runtime replacement cannot relabel the driver or database target mid-request.
+
+| Verification command                                    | Result                                       |
+| ------------------------------------------------------- | -------------------------------------------- |
+| `cd src-tauri && cargo test --lib open_connection_info` | Exit 0; 3 passed                             |
+| `cd src-tauri && cargo test --lib core_adapter`         | Exit 0; 25 passed                            |
+| `pnpm run rust:fmt`                                     | Exit 0                                       |
+| `pnpm run rust:check`                                   | Exit 0                                       |
+| `pnpm run rust:clippy`                                  | Exit 0 with `-D warnings`                    |
+| `pnpm run test:rust`                                    | Exit 0; 238 passed, 2 ignored live tests     |
+| `pnpm run test`                                         | Exit 0; complete Rust and frontend SQL chain |
+| `pnpm run build`                                        | Exit 0                                       |
+| Targeted Markdown Prettier check and `git diff --check` | Exit 0                                       |
 
 ## Risks And Mitigations
 
 | Risk                                            | Impact | Mitigation                                                                                                       |
 | ----------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------- |
 | Equal ids point to different databases          | High   | Compare public driver, read-only mode, and canonical SQLite file identity before accepting a dual-store binding. |
+| Saved profile relabels or replaces a V2 runtime | High   | Bind to the open-time secret-free profile snapshot and recheck it atomically for each metadata operation.        |
 | MySQL probe emptiness becomes false evidence    | High   | Capability is explicit `Unsupported`; retrieval returns a structured error.                                      |
 | Adapter leaks credentials or connection targets | High   | Inputs use opaque ids; outputs omit host/user/path; serialization tests use a secret canary.                     |
 | A1.1 grows into query/runtime work              | Medium | Keep execute/explain, Agent loop, IPC, cache/search, and result data outside this branch.                        |
