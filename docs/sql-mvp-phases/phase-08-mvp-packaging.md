@@ -23,10 +23,10 @@
 - README 新增 "Release readiness" 一节；
 - CI 增加 release gate：`pnpm run test` + `pnpm run lint` + `pnpm run build` + `pnpm run rust:check` + `pnpm run rust:clippy` + 自定义 mysql-integration opt-in。
 
-### 当前状态（2026-07-27）
+### 当前状态（2026-08-11）
 
 - Demo seed、V1/V2 兼容注册、Welcome ViewPane、Data Sources / Connectors 分离、Connect 表单优化、瞬时 MySQL validation 与 release gate 均已实现并有自动化覆盖。
-- Windows/Tauri 实机 Demo → query panel walkthrough 与隔离 MySQL 8 上的 live command validation 均已记录通过；Phase 08 仍为**部分完成**，仅缺原生连接页对 live MySQL 的 Validate 点击记录，详见 §3 与 §4。
+- Windows/Tauri 实机 Demo → query panel walkthrough、隔离 MySQL 8 上的 live command validation，以及 macOS/Tauri 原生连接页 live MySQL Preview Validate 均已记录通过；Phase 08 已具备 **P0 验收覆盖**，详见 §3 与 §4。
 
 ## 2. 设计
 
@@ -168,6 +168,12 @@ Windows/Tauri 原生走查（2026-07-26）exit 0：
 - COUNT 与 JOIN 数值列均保持 160px，可在当前 viewport 直接看到；
 - `console_errors=[]`、`page_errors=[]`，History toolbar 生命周期错误未复现。
 
+macOS/Tauri 原生 MySQL Preview Validate 走查（2026-08-11）exit 0：
+
+- 启动原生 Tauri WebView，在 Connectors 中选择 MySQL Preview，使用隔离 MySQL 8.4.11、无 password 账户与 `Prefer` SSL mode 填写公开连接字段；`Save data source` 保持关闭；
+- 点击 Validate 后，界面显示 `MySQL Preview validation passed. MySQL Preview: query cancellation is not supported yet.`，成功报告确认 `selectOk`、`ddlOk`、`droppedTable`；
+- 同一 live command 集成测试为 1 passed；走查后查询 `information_schema.tables`，确认 `nyala_validation_%` 遗留表数为 0；Validate 未保存 profile 或 secret。
+
 ## 4. 验收
 
 - [x] `pnpm run test:seed-demo` 7/7 通过；
@@ -184,7 +190,7 @@ Windows/Tauri 原生走查（2026-07-26）exit 0：
 - [x] 跑 `SELECT u.name, o.amount FROM users u JOIN orders o ON u.id=o.user_id` 在 panel 出现 5 行；
 - [x] 连接页 `MysqlPreviewValidationController` 覆盖 MySQL Preview Validate 的字段与瞬时 secret 转发；隔离 MySQL 8 上的同一 Tauri command 返回成功报告与 cancellation warning（2026-07-27）。
 - [x] 连接器管理页与连接表单展示 signed driver package 状态，并可通过服务调用受信任包下载；下载结果不会提升 PostgreSQL runtime maturity。
-- [ ] 选择 MySQL Preview 并填 host/port/database/username（账户需要时填写 password），点 Validate，live MySQL 返回成功报告与 cancellation warning；已有相同 command 的 live contract 记录，尚缺原生 WebView 点击证据。
+- [x] 原生 Tauri WebView 中选择 MySQL Preview 并填写 live MySQL 公开字段，点击 Validate 后返回成功报告与 cancellation warning；验证后 `nyala_validation_%` 遗留表数为 0（2026-08-11）。
 
 ## 5. 风险
 
@@ -212,4 +218,4 @@ Windows/Tauri 原生走查（2026-07-26）exit 0：
 - [x] 真有 Phase 00–07 自动化回归覆盖；
 - [x] 真有 Tauri 实机 Demo → query panel walkthrough 记录；
 - [x] 真有 live MySQL Preview command validation 记录。
-- [ ] 真有原生连接页 live MySQL Preview Validate 记录。
+- [x] 真有原生连接页 live MySQL Preview Validate 记录。

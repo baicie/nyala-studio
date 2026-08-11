@@ -65,7 +65,7 @@ Agent 的核心价值是使用当前工作区中可验证的事实完成闭环�
 | Explain           | 前端按 dialect 生成 Explain SQL，再走正常 query path                                                                     | 有用户触发的 Explain 基础，没有 Agent tool 或跨方言 normalized plan                 |
 | Plugin capability | `SqlStudioPluginCapability` 有声明 token；built-in AI plugin 声明 `agent.tool`                                           | 当前声明不等于统一运行时强制；开放 Agent tool 前必须补齐真正的 guard                |
 | Driver maturity   | SQLite Stable、MySQL Preview、PostgreSQL Planned                                                                         | 首个 Agent vertical slice 必须以 SQLite 为验收主线；不能按通用方案先做 PostgreSQL   |
-| Phase 08          | 仍缺原生连接页 live MySQL Validate 点击证据                                                                              | 本文可评审；Agent implementation 默认排在 Phase 08 收口之后                         |
+| Phase 08          | P0 已验收；原生连接页 live MySQL Validate 证据于 2026-08-11 完成                                                         | Agent implementation 可按 A0 → A1 顺序继续，不改变 driver maturity                  |
 
 这里有两个需要明确保留的事实：
 

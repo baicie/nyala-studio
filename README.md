@@ -241,8 +241,10 @@ MySQL validation sends `{ input, secret }` directly to the dedicated Tauri
 command and never creates or saves a temporary profile. The Windows/Tauri
 Demo-to-query walkthrough was recorded green on 2026-07-26, and the opt-in
 live MySQL Preview command validation passed against an isolated MySQL 8
-instance on 2026-07-27. The corresponding native WebView Validate click
-against a live MySQL instance is still an unrecorded Phase 08 acceptance item.
+instance on 2026-07-27. The native Tauri WebView Validate click against an
+isolated live MySQL instance was recorded green on 2026-08-11; it returned the
+success report and query cancellation warning, with no validation tables left
+behind.
 
 ## Development
 
