@@ -4,24 +4,54 @@
 //! and nested parentheses so read-only guards and result-shape detection do
 //! not mistake trivia or a CTE body for the statement's top-level keyword.
 
+use super::dialect::SqlDialect;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum SqlToken {
+    Word(String),
+    QuotedIdentifier(String),
+    Symbol(u8),
+}
+
 pub(super) fn first_sql_keyword(sql: &str) -> Option<String> {
     let bytes = sql.as_bytes();
     let mut index = skip_sql_trivia(bytes, 0);
-    let start = index;
+    read_sql_keyword(sql, bytes, &mut index)
+}
 
-    while index < bytes.len() && (bytes[index].is_ascii_alphabetic() || bytes[index] == b'_') {
-        index += 1;
+pub(super) fn first_sql_keyword_for_dialect(sql: &str, dialect: SqlDialect) -> Option<String> {
+    let bytes = sql.as_bytes();
+    let mut index = skip_statement_trivia(bytes, 0, dialect);
+    read_sql_keyword(sql, bytes, &mut index)
+}
+
+fn read_sql_keyword(sql: &str, bytes: &[u8], index: &mut usize) -> Option<String> {
+    let start = *index;
+
+    while *index < bytes.len() && (bytes[*index].is_ascii_alphabetic() || bytes[*index] == b'_') {
+        *index += 1;
     }
 
-    if start == index {
+    if start == *index {
         return None;
     }
 
-    Some(sql[start..index].to_ascii_lowercase())
+    Some(sql[start..*index].to_ascii_lowercase())
 }
 
 /// Finds the first top-level statement keyword after one or more CTE bodies.
 pub(super) fn statement_keyword_after_with(sql: &str) -> Option<String> {
+    statement_keyword_after_with_inner(sql, None)
+}
+
+pub(super) fn statement_keyword_after_with_for_dialect(
+    sql: &str,
+    dialect: SqlDialect,
+) -> Option<String> {
+    statement_keyword_after_with_inner(sql, Some(dialect))
+}
+
+fn statement_keyword_after_with_inner(sql: &str, dialect: Option<SqlDialect>) -> Option<String> {
     let bytes = sql.as_bytes();
     let mut index = 0;
     let mut depth = 0usize;
@@ -30,17 +60,32 @@ pub(super) fn statement_keyword_after_with(sql: &str) -> Option<String> {
     let mut after_cte_body = false;
 
     while index < bytes.len() {
-        index = skip_sql_trivia(bytes, index);
+        index = match dialect {
+            Some(dialect) => skip_statement_trivia(bytes, index, dialect),
+            None => skip_sql_trivia(bytes, index),
+        };
         if index >= bytes.len() {
             break;
         }
 
         match bytes[index] {
-            b'\'' | b'"' | b'`' => {
-                index = skip_sql_quoted(bytes, index, bytes[index]);
+            b'\'' | b'"' => {
+                index = match dialect {
+                    Some(dialect) => skip_statement_quoted(bytes, index, bytes[index], dialect),
+                    None => skip_sql_quoted(bytes, index, bytes[index]),
+                };
             }
-            b'[' => {
+            b'`' if dialect != Some(SqlDialect::PostgreSql) => {
+                index = match dialect {
+                    Some(dialect) => skip_statement_quoted(bytes, index, b'`', dialect),
+                    None => skip_sql_quoted(bytes, index, b'`'),
+                };
+            }
+            b'[' if dialect.is_none() || dialect == Some(SqlDialect::Sqlite) => {
                 index = skip_sql_bracket_identifier(bytes, index);
+            }
+            b'$' if dialect == Some(SqlDialect::PostgreSql) => {
+                index = skip_postgres_dollar_quote(bytes, index).unwrap_or(index + 1);
             }
             b'(' => {
                 depth += 1;
@@ -95,6 +140,252 @@ pub(super) fn statement_keyword_after_with(sql: &str) -> Option<String> {
     None
 }
 
+pub(super) fn split_sql_statements(sql: &str, dialect: SqlDialect) -> Vec<&str> {
+    let bytes = sql.as_bytes();
+    let mut statements = Vec::new();
+    let mut start = 0usize;
+    let mut index = 0usize;
+
+    while index < bytes.len() {
+        let next = skip_statement_trivia(bytes, index, dialect);
+        if next != index {
+            index = next;
+            continue;
+        }
+
+        match bytes[index] {
+            b'\'' | b'"' => index = skip_statement_quoted(bytes, index, bytes[index], dialect),
+            b'`' if dialect != SqlDialect::PostgreSql => {
+                index = skip_statement_quoted(bytes, index, b'`', dialect);
+            }
+            b'[' if dialect == SqlDialect::Sqlite => {
+                index = skip_sql_bracket_identifier(bytes, index);
+            }
+            b'$' if dialect == SqlDialect::PostgreSql => {
+                index = skip_postgres_dollar_quote(bytes, index).unwrap_or(index + 1);
+            }
+            b';' => {
+                push_sql_statement(&mut statements, &sql[start..index], dialect);
+                start = index + 1;
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+
+    push_sql_statement(&mut statements, &sql[start..], dialect);
+    statements
+}
+
+fn skip_statement_quoted(bytes: &[u8], mut index: usize, quote: u8, dialect: SqlDialect) -> usize {
+    index += 1;
+    while index < bytes.len() {
+        if dialect == SqlDialect::MySql && bytes[index] == b'\\' && quote != b'`' {
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+
+        if bytes[index] == quote {
+            if index + 1 < bytes.len() && bytes[index + 1] == quote {
+                index += 2;
+                continue;
+            }
+            return index + 1;
+        }
+        index += 1;
+    }
+    index
+}
+
+fn skip_statement_trivia(bytes: &[u8], mut index: usize, dialect: SqlDialect) -> usize {
+    loop {
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+
+        if dialect == SqlDialect::MySql && index < bytes.len() && bytes[index] == b'#' {
+            index = skip_sql_line_comment(bytes, index + 1);
+            continue;
+        }
+
+        if index + 1 < bytes.len() && bytes[index] == b'-' && bytes[index + 1] == b'-' {
+            let is_comment = dialect != SqlDialect::MySql
+                || index + 2 == bytes.len()
+                || bytes[index + 2].is_ascii_whitespace()
+                || bytes[index + 2].is_ascii_control();
+            if is_comment {
+                index = skip_sql_line_comment(bytes, index + 2);
+                continue;
+            }
+        }
+
+        if index + 1 < bytes.len() && bytes[index] == b'/' && bytes[index + 1] == b'*' {
+            index = skip_statement_block_comment(bytes, index, dialect);
+            continue;
+        }
+
+        return index;
+    }
+}
+
+fn skip_statement_block_comment(bytes: &[u8], mut index: usize, dialect: SqlDialect) -> usize {
+    let mut depth = 1usize;
+    index += 2;
+
+    while index + 1 < bytes.len() {
+        if dialect == SqlDialect::PostgreSql && bytes[index] == b'/' && bytes[index + 1] == b'*' {
+            depth += 1;
+            index += 2;
+            continue;
+        }
+
+        if bytes[index] == b'*' && bytes[index + 1] == b'/' {
+            depth -= 1;
+            index += 2;
+            if depth == 0 {
+                return index;
+            }
+            continue;
+        }
+
+        index += 1;
+    }
+
+    bytes.len()
+}
+
+fn skip_sql_line_comment(bytes: &[u8], mut index: usize) -> usize {
+    while index < bytes.len() && !matches!(bytes[index], b'\n' | b'\r') {
+        index += 1;
+    }
+    index
+}
+
+pub(super) fn sql_tokens(sql: &str, dialect: SqlDialect) -> Vec<SqlToken> {
+    let bytes = sql.as_bytes();
+    let mut tokens = Vec::new();
+    let mut index = 0usize;
+
+    while index < bytes.len() {
+        let next = skip_statement_trivia(bytes, index, dialect);
+        if next != index {
+            index = next;
+            continue;
+        }
+
+        match bytes[index] {
+            b'\'' => index = skip_statement_quoted(bytes, index, b'\'', dialect),
+            b'"' | b'`' if bytes[index] == b'"' || dialect != SqlDialect::PostgreSql => {
+                let quote = bytes[index];
+                let (identifier, next) = read_quoted_identifier(sql, index, quote, dialect);
+                if let Some(identifier) = identifier {
+                    tokens.push(SqlToken::QuotedIdentifier(identifier));
+                }
+                index = next;
+            }
+            b'[' if dialect == SqlDialect::Sqlite => {
+                let (identifier, next) = read_bracket_identifier(sql, index);
+                if let Some(identifier) = identifier {
+                    tokens.push(SqlToken::QuotedIdentifier(identifier));
+                }
+                index = next;
+            }
+            b'$' if dialect == SqlDialect::PostgreSql => {
+                index = skip_postgres_dollar_quote(bytes, index).unwrap_or(index + 1);
+            }
+            byte if byte.is_ascii_alphabetic() || byte == b'_' => {
+                let start = index;
+                index += 1;
+                while index < bytes.len()
+                    && (bytes[index].is_ascii_alphanumeric() || matches!(bytes[index], b'_' | b'$'))
+                {
+                    index += 1;
+                }
+                tokens.push(SqlToken::Word(sql[start..index].to_string()));
+            }
+            b'.' | b',' | b'(' | b')' | b'=' => {
+                tokens.push(SqlToken::Symbol(bytes[index]));
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+
+    tokens
+}
+
+fn push_sql_statement<'a>(statements: &mut Vec<&'a str>, sql: &'a str, dialect: SqlDialect) {
+    let mysql_executable_comment = dialect == SqlDialect::MySql
+        && (sql.contains("/*!") || sql.contains("/*M!") || sql.contains("/*m!"));
+    if mysql_executable_comment || skip_statement_trivia(sql.as_bytes(), 0, dialect) < sql.len() {
+        statements.push(sql);
+    }
+}
+
+fn read_quoted_identifier(
+    sql: &str,
+    start: usize,
+    quote: u8,
+    dialect: SqlDialect,
+) -> (Option<String>, usize) {
+    let bytes = sql.as_bytes();
+    let end = skip_statement_quoted(bytes, start, quote, dialect);
+    if end <= start + 1 || bytes.get(end - 1) != Some(&quote) {
+        return (None, end);
+    }
+
+    let quote = char::from(quote).to_string();
+    let escaped = format!("{quote}{quote}");
+    (Some(sql[start + 1..end - 1].replace(&escaped, &quote)), end)
+}
+
+fn read_bracket_identifier(sql: &str, start: usize) -> (Option<String>, usize) {
+    let bytes = sql.as_bytes();
+    let end = skip_sql_bracket_identifier(bytes, start);
+    if end <= start + 1 || bytes.get(end - 1) != Some(&b']') {
+        return (None, end);
+    }
+
+    (Some(sql[start + 1..end - 1].replace("]]", "]")), end)
+}
+
+fn skip_postgres_dollar_quote(bytes: &[u8], start: usize) -> Option<usize> {
+    if start > 0 && is_postgres_identifier_byte(bytes[start - 1]) {
+        return None;
+    }
+
+    let first = *bytes.get(start + 1)?;
+    let mut delimiter_end = start + 1;
+    if first != b'$' {
+        if first.is_ascii_digit() || !is_postgres_identifier_byte(first) {
+            return None;
+        }
+        while delimiter_end < bytes.len()
+            && bytes[delimiter_end] != b'$'
+            && is_postgres_identifier_byte(bytes[delimiter_end])
+        {
+            delimiter_end += 1;
+        }
+        if bytes.get(delimiter_end) != Some(&b'$') {
+            return None;
+        }
+    }
+
+    let delimiter = &bytes[start..=delimiter_end];
+    let content_start = delimiter_end + 1;
+    let closing_offset = bytes[content_start..]
+        .windows(delimiter.len())
+        .position(|window| window == delimiter);
+
+    Some(closing_offset.map_or(bytes.len(), |offset| {
+        content_start + offset + delimiter.len()
+    }))
+}
+
+fn is_postgres_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$') || !byte.is_ascii()
+}
+
 fn skip_sql_trivia(bytes: &[u8], mut index: usize) -> usize {
     loop {
         while index < bytes.len() && bytes[index].is_ascii_whitespace() {
@@ -102,18 +393,12 @@ fn skip_sql_trivia(bytes: &[u8], mut index: usize) -> usize {
         }
 
         if index < bytes.len() && bytes[index] == b'#' {
-            index += 1;
-            while index < bytes.len() && bytes[index] != b'\n' {
-                index += 1;
-            }
+            index = skip_sql_line_comment(bytes, index + 1);
             continue;
         }
 
         if index + 1 < bytes.len() && bytes[index] == b'-' && bytes[index + 1] == b'-' {
-            index += 2;
-            while index < bytes.len() && bytes[index] != b'\n' {
-                index += 1;
-            }
+            index = skip_sql_line_comment(bytes, index + 2);
             continue;
         }
 

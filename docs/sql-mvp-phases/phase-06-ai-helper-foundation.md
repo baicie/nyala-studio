@@ -709,6 +709,11 @@ test('ai service rejects when context missing required fields', async () => {
 
 ## 6. 与下游接口
 
+- SQL Workspace Agent：后续的本地 Rust Runtime、Context Engine、Tool Runtime、
+  Policy/Approval、Evidence 与 Workbench 集成见
+  [`SQL Workspace Agent 设计规格`](../sql-workspace-agent-design.md)。其中
+  `Agent Stage A0-A8` 是独立演进编号，不是 SQL MVP Phase 续号；A3 验收前不改变
+  本 Phase 的 draft-only / never-auto-execute 行为。
 - Phase 07：plugin 通过 `ISqlAiRegistry.register` 注册新 AI provider；其 capabilities 必须被 CapabilityGuard 验证。
 - Phase 10：MCP Tool permission 同样使用 Capability；写文档说明 "read-only / requestWrite / exportData" 三段映射。
 - Phase 11：BYO Key / Ollama provider 实现 `ISqlAiProvider`，capability 由服务自动声明。

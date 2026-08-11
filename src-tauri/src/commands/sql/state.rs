@@ -4,7 +4,7 @@ use super::mysql_runtime::{
     open_mysql_pool, test_mysql_connection,
 };
 use super::persistence::{load_saved_connections, save_saved_connections};
-use super::sql_lexer::{first_sql_keyword, statement_keyword_after_with};
+use super::sql_analysis::{analyze_sql, StatementRisk};
 use super::types::{
     SqlCancelQueryRequest, SqlCancelQueryResult, SqlCellValue, SqlColumn, SqlCommandError,
     SqlConnection, SqlConnectionInput, SqlConnectionKind, SqlConnectionTestResult, SqlDatabase,
@@ -13,6 +13,7 @@ use super::types::{
     SqlSaveConnectionRequest, SqlSavedConnection, SqlTable, SqlTableType, DEFAULT_QUERY_ROW_LIMIT,
     MAX_QUERY_ROW_LIMIT, MAX_SQL_BYTES,
 };
+use super::SqlDialect;
 use base64::{engine::general_purpose, Engine as _};
 use mysql::Pool;
 use rusqlite::types::ValueRef;
@@ -543,7 +544,7 @@ impl SqlConnectionStore {
         let limit = normalize_limit(request.limit)?;
         let handle = self.connection(&request.connection_id)?;
 
-        if handle.info.read_only && sql_may_mutate(sql) {
+        if handle.info.read_only && sql_may_mutate_for_kind(sql, handle.info.kind) {
             return Err(
                 "read-only connection only allows explicitly read-only statements".to_string(),
             );
@@ -824,33 +825,16 @@ fn quote_sqlite_identifier(identifier: &str) -> Result<String, String> {
     Ok(format!("\"{}\"", trimmed.replace('"', "\"\"")))
 }
 
-fn sql_may_mutate(sql: &str) -> bool {
-    let Some(keyword) = first_sql_keyword(sql) else {
-        return true;
-    };
-
-    if keyword == "with" {
-        return with_statement_may_mutate(sql);
-    }
-
-    !is_read_only_sql_keyword(&keyword)
-}
-
-fn with_statement_may_mutate(sql: &str) -> bool {
-    let Some(keyword) = statement_keyword_after_with(sql) else {
-        // A malformed or unsupported CTE is safer to reject on a read-only
-        // connection than to treat as a guaranteed read.
-        return true;
-    };
-
-    !is_read_only_sql_keyword(&keyword)
-}
-
-fn is_read_only_sql_keyword(keyword: &str) -> bool {
-    matches!(
-        keyword,
-        "select" | "show" | "describe" | "desc" | "explain" | "values"
+fn sql_may_mutate_for_kind(sql: &str, kind: SqlConnectionKind) -> bool {
+    !matches!(
+        analyze_sql(sql, SqlDialect::from_connection_kind(kind)).risk,
+        StatementRisk::Metadata | StatementRisk::ReadOnly | StatementRisk::ExplainReadOnly
     )
+}
+
+#[cfg(test)]
+fn sql_may_mutate(sql: &str) -> bool {
+    sql_may_mutate_for_kind(sql, SqlConnectionKind::Sqlite)
 }
 
 fn elapsed_ms(started_at: Instant) -> u64 {

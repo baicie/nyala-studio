@@ -132,6 +132,12 @@ The short-term roadmap is now aligned with the actual runtime status:
 > [`docs/sql-mvp-phases/README.md`](./docs/sql-mvp-phases/README.md).
 > Always cross-check that table before claiming a phase is met.
 
+The proposed post-MVP evolution from the deterministic AI Helper to a
+local-first SQL Workspace Agent is specified in
+[`docs/sql-workspace-agent-design.md`](./docs/sql-workspace-agent-design.md).
+Its `A0-A8` Agent Stages are not SQL MVP Phase numbers and do not change the
+current Phase 08 or driver-runtime status.
+
 ## SQLite Demo Flow
 
 Nyala Studio ships with a built-in demo SQLite database that lets a new
@@ -206,7 +212,7 @@ release notes. Production releases should configure signing before promotion.
 
 `pnpm run test` is a chain that runs the branding and application-icon guards,
 the runtime status consistency check, the demo data-directory suite, the Rust
-`cargo test --lib` suite (currently 199 passing tests plus 2 ignored live
+`cargo test --lib` suite (currently 210 passing tests plus 2 ignored live
 integration test), the Tauri search cancellation suite, and every
 per-subsystem frontend suite (`test:icons`, `test:seed-demo`, `test:search`,
 `test:sql-services`, `test:sql-domain`, `test:sql-connections`,
@@ -337,6 +343,11 @@ Commands
 Services
 Contributions
 ```
+
+The SQL Workspace Agent follows the same boundary: Workbench UI is a service
+and contribution, while the proposed Agent loop, policy, tool execution and
+evidence handling stay in the local Tauri Rust runtime. See the
+[`SQL Workspace Agent design`](./docs/sql-workspace-agent-design.md).
 
 ## Upstream Attribution
 

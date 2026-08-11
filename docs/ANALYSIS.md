@@ -23,7 +23,7 @@
 | 形态 | 客户端 GUI / 桌面 app | 复用了 Code - OSS / VS Code Workbench（活动栏、Panel、Keybinding、Palette） |
 | 定位 | 数据库工具 | "SQL-first 的 Workbench"——壳本身是 SQL-first，Workbench 模型只用作宿主 |
 | 扩展 | 自家 plugin 或没有 | Phase 07 已经在壳里塞入 13 类 contribution point（commands / sqlActions / views / panels / menus / keybindings / settings / snippets / formatters / resultViewers / exportProviders / aiProviders / dialects） |
-| AI | 通常外置 | Phase 06 起把 AI 当一等公民：基于统一 Capability Guard，不允许自动执行 |
+| AI | 通常外置 | Phase 06 起把 AI 当一等公民：已有 deterministic provider 与 capability declaration，不允许自动执行；统一 runtime enforcement 尚待 Agent Stage A2 |
 | 安全 | 通常混淆 | Secret 永不落盘，三层防御（持久化剥字段、redacted 展示、widget `clearSecret` finally） |
 
 ---
@@ -50,7 +50,7 @@
 │         src/vs/workbench/services/sql/  (services)            │
 │  ISqlConnectionService / ISqlMetadataService / ISqlQuery-     │
 │  Service / ISqlAiService / ISqlDriverCatalogService /         │
-│  CapabilityGuard / Plugin Registry / Bootstrappers            │
+│  Capability declarations / Plugin Registry / Bootstrappers    │
 └──────────────────────────────────────────────────────────────┘
                 ▲
                 │
@@ -98,7 +98,7 @@ Driver Card  ──┘                       │
 
 | 路径 | 角色 |
 | --- | --- |
-| `services/sql/common/*.ts` | service 接口（`ISqlConnectionService`、`ISqlMetadataService`、`ISqlQueryService`、`ISqlAiService`、`ISqlDriverCatalogService`、`ISqlCapabilityGuard`）和共享类型 |
+| `services/sql/common/*.ts` | service 接口（`ISqlConnectionService`、`ISqlMetadataService`、`ISqlQueryService`、`ISqlAiService`、`ISqlDriverCatalogService`）和共享类型；canonical capability contract 尚待收敛 |
 | `services/sql/browser/*.ts` | service 实现 + `SqlCommandExecutor` IPC 封装 |
 | `contrib/sqlConnections/*` | Connections View：tree、form、template、MySQL validation 视图 |
 | `contrib/sqlEditor/*` | SQL Editor tab + Statement Splitter + Execution Controller |
@@ -231,24 +231,23 @@ Driver         ─►  PRAGMA query_only /      (DB 层兜底)
 
 Phase 03 §2.3 详细列出 11 类被拦截的语句（`DROP / CREATE / ALTER / TRUNCATE / VACUUM / ATTACH / DETACH / INSERT / UPDATE / DELETE / WITH` 视为 SELECT 允许）。Read-only 不拦截 `PRAGMA / SELECT / BEGIN / COMMIT` 这些安全语句。
 
-### 4.5 Capability 一统（plugin / AI / future MCP 共用）
+### 4.5 Capability 一统（plugin / AI / future Agent 共用）
 
-`CapabilityGuard` 不是 "AI 专属"：plugin、agent、AI、未来的 MCP tool 共享同一份 schema。Phase 06 起逐步固化：
+当前 `SqlStudioPluginCapability` 已声明 metadata、read/write execution、filesystem、network 与 `agent.tool` token，Phase 06 的 AI service 也有 request validation；但当前源码没有可供 Agent Tool Runtime 复用的统一 backend guard。目标边界是：
 
 ```text
 plugin / agent / ai / mcp tool
         │
         ▼
 ┌──────────────────────────┐
-│   CapabilityGuard        │   ← 插件声明 caps；运行时校验 caps；
-│   (readMetadata,         │      缺 cap 的调用直接拒、不抛 exception。
-│    readSqlText, …)       │
+│ canonical capability     │   ← plugin / AI / Agent 共用声明；
+│ + Rust Policy Engine     │      每次 tool call 在 backend 重新授权。
 └──────────────────────────┘
 ```
 
-- `accessSecrets` 在 MVP 拒绝给插件（Phase 07 §2.1 `validate(manifest)`）；
-- AI Provider 通过 `guard.wrap(provider, capabilities)` 注册到 `ISqlAiRegistry`（Phase 07 §2.3）；
-- Phase 10 MCP tool permission 与 Capability **一一映射**。
+- 现有 capability declaration 不授予 `ConnectionSecret`；Agent 只使用 opaque connection id；
+- capability schema 在 `services/sql/common` 单点收敛，plugin API 只 re-export 或映射；
+- Agent Stage A2 在 Rust Policy Engine 中落实 allow/deny enforcement，完成前保持 Suggest-only。
 
 ### 4.6 AI "never auto-execute"
 
@@ -370,6 +369,11 @@ phase-04 §2 设计 `SqlColumnDto / SqlCellDto / SqlQueryResponseDto / SqlQueryO
 
 ## 7. 路线图与未决事项
 
+- **SQL Workspace Agent（Proposed）**：本地 Rust Agent Runtime、Schema Context、
+  Tool/Policy/Evidence 边界及 `Agent Stage A0-A8` 的可验收演进见
+  [`sql-workspace-agent-design.md`](./sql-workspace-agent-design.md)。这些 Stage 不是
+  SQL MVP Phase 续号，也不改变 Phase 08 或 driver runtime status。
+
 - **Phase 09 – 13**（dev-vault 长程）：
 
   ```text
@@ -393,7 +397,7 @@ phase-04 §2 设计 `SqlColumnDto / SqlCellDto / SqlQueryResponseDto / SqlQueryO
 - **Nyala Studio** = SideX 风格的 Workbench + Tauri Rust + 一个本地优先 SQL 客户端。
 - **分层**：壳不动、产品 SQL 全集中在 `contrib/sql*` 与 `services/sql*`、`src-tauri/src/commands/sql/`。
 - **MVP 闭环**：Phase 00–08 串成 9 步链；DoD 10 条针对代码基线 `c03f1a4b` 验证，并由 `60ab89c0` 提交报告。
-- **安全姿势**：Secret 三层防御（类型 / 持久化剥字段 / widget clearSecret finally）；Read-only 三段防御；Capability 一统；AI never auto-execute。
+- **安全姿势**：Secret 三层防御（类型 / 持久化剥字段 / widget clearSecret finally）；Read-only 三段防御；capability 已有声明地基、backend enforcement 待 A2；AI never auto-execute。
 - **测试**：Rust 与 frontend 分层测试、静态验证脚本及 opt-in MySQL integration；`pnpm run test` 是默认统一门禁，准确数量以最新验证输出为准。
 - **纪律**：所有 phase 之间是严格 `00 → 01 → … → 08` 顺序；任何上游清理都在保留扩展点（contribution / service / 命令）的前提下做，不删 SideX 架构本身。
 
@@ -408,8 +412,9 @@ AGENTS.md
    ├─ phase-03-editor-execution.md        (dialect + execution controller)
    ├─ phase-04-result-panel.md            (四态 outcome + copy)
    ├─ phase-05-history-formatter-snippets-explain.md
-   ├─ phase-06-ai-helper-foundation.md    (CapabilityGuard + deterministic)
+   ├─ phase-06-ai-helper-foundation.md    (deterministic + capability boundary)
    ├─ phase-07-plugin-api-mvp.md          (13 类 CP + local-only loader)
    ├─ phase-08-mvp-packaging.md           (demo flow + MySQL Preview validation)
    └─ phase-do-d-verification.md          (10 条 DoD 实证)
+└─ docs/sql-workspace-agent-design.md     (Proposed Agent 演进规格)
 ```

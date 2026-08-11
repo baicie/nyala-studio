@@ -15,12 +15,14 @@ pub mod persistence_v2;
 mod product;
 mod query;
 mod runtime_status_export;
+pub mod sql_analysis;
 mod sql_lexer;
 pub mod state;
 pub mod types;
 
 pub use connection::*;
 pub use connection_v2::*;
+pub use dialect::SqlDialect;
 pub use driver_packages::*;
 pub use metadata::*;
 pub use metadata_v2::*;
