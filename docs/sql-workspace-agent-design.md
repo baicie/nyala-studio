@@ -672,6 +672,7 @@ UI 规则：
 - [ ] A1.1：定义 metadata capability 与 `SqlCoreAdapter`，封装 V1/V2 id mapping。
   - Acceptance：Agent caller 看不到 store 版本。
   - Verify：SQLite adapter tests + MySQL unsupported/preview tests。
+  - Plan：[`A1.1 Implementation Plan`](./sql-workspace-agent-a1-1-implementation-plan.md)。
 - [ ] A1.2：实现 bounded schema search/cache，之后再加 FK graph。
   - Acceptance：稳定排序、TTL/invalidation、object/byte cap 可测。
   - Verify：pure Rust tests。
