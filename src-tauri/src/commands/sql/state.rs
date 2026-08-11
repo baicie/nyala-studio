@@ -196,6 +196,33 @@ impl SqlConnectionStore {
         Ok(connections)
     }
 
+    pub(crate) fn open_connection_info(
+        &self,
+        connection_id: &str,
+    ) -> Result<SqlConnection, SqlCommandError> {
+        let connection_id = connection_id.trim();
+        if connection_id.is_empty() {
+            return Err(SqlCommandError::new(
+                "invalid_input",
+                "connection id must not be empty",
+            ));
+        }
+
+        let connections = self
+            .connections()
+            .map_err(|message| SqlCommandError::new("internal", message))?;
+
+        connections
+            .get(connection_id)
+            .map(|handle| handle.info.clone())
+            .ok_or_else(|| {
+                SqlCommandError::new(
+                    "not_open",
+                    format!("connection '{connection_id}' is not open"),
+                )
+            })
+    }
+
     pub fn list_databases(&self, connection_id: &str) -> Result<Vec<SqlDatabase>, String> {
         let handle = self.connection(connection_id)?;
 
@@ -949,6 +976,35 @@ mod tests {
         store.close_connection("local").unwrap();
 
         assert!(store.list_connections().unwrap().is_empty());
+    }
+
+    #[test]
+    fn open_connection_info_returns_public_identity() {
+        let store = SqlConnectionStore::new();
+        let db = TempDb::new("open-connection-info");
+        let opened = store.open_connection(db.input("local")).unwrap();
+
+        let info = store.open_connection_info(" local ").unwrap();
+
+        assert_eq!(info, opened);
+    }
+
+    #[test]
+    fn open_connection_info_rejects_blank_id() {
+        let store = SqlConnectionStore::new();
+
+        let error = store.open_connection_info("  ").unwrap_err();
+
+        assert!(matches!(error, SqlCommandError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn open_connection_info_returns_not_open_for_missing_id() {
+        let store = SqlConnectionStore::new();
+
+        let error = store.open_connection_info("missing").unwrap_err();
+
+        assert!(matches!(error, SqlCommandError::NotOpen { .. }));
     }
 
     #[test]
