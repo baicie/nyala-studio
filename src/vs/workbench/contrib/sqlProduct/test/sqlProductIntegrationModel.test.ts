@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+	getPreferredResultRenderer,
 	getPreferredResultMaxRows,
 	limitRestoredDrafts,
 	shouldAutoSaveSqlEditorDraft,
@@ -91,5 +92,26 @@ test('getPreferredResultMaxRows returns resultMaxRows', () => {
 			resultMaxRows: 500
 		}),
 		500
+	);
+});
+
+test('getPreferredResultRenderer keeps the native fallback until Preview is available', () => {
+	assert.deepEqual(getPreferredResultRenderer(DEFAULT_SQL_PRODUCT_PREFERENCES, { zeusPreview: false }), {
+		requested: 'native',
+		selected: 'native',
+		fallback: false
+	});
+
+	assert.deepEqual(
+		getPreferredResultRenderer(
+			{ ...DEFAULT_SQL_PRODUCT_PREFERENCES, resultRenderer: 'zeus-preview' },
+			{ zeusPreview: false }
+		),
+		{
+			requested: 'zeus-preview',
+			selected: 'native',
+			fallback: true,
+			reason: 'Zeus Preview is unavailable.'
+		}
 	);
 });

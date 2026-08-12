@@ -1,0 +1,158 @@
+name: SQL Result Grid Synthetic Visual Evidence
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/sql-result-grid-visual.yml'
+      - 'scripts/benchmark-sql-result-grid.mjs'
+      - 'scripts/capture-sql-result-grid-visual.mjs'
+      - 'scripts/capture-sql-result-grid-visual.test.mjs'
+      - 'scripts/capture-sql-agent-workbench.mjs'
+      - 'scripts/capture-sql-agent-workbench.test.mjs'
+      - 'scripts/sql-agent-workbench-visual-contract.mjs'
+      - 'scripts/sql-result-grid-visual-png.mjs'
+      - 'src/vs/workbench/contrib/sqlAgent/**'
+      - 'package.json'
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: 'Captures per workload and renderer'
+        required: false
+        default: '1'
+        type: string
+      renderer:
+        description: 'Comma-separated synthetic renderers (native, workbench-table)'
+        required: false
+        default: 'native,workbench-table'
+        type: string
+      workload:
+        description: 'Comma-separated workloads; leave empty for all four'
+        required: false
+        default: ''
+        type: string
+permissions:
+  contents: read
+
+concurrency:
+  group: sql-result-grid-visual-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    name: Capture Chromium synthetic evidence
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Verify Chrome is available
+        run: |
+          test -x /usr/bin/google-chrome || test -x /usr/bin/google-chrome-stable || command -v chromium
+          google-chrome --version 2>/dev/null || google-chrome-stable --version 2>/dev/null || chromium --version
+
+      - name: Capture screenshots and manifest
+        env:
+          CAPTURE_REPEAT: ${{ inputs.repeat || '1' }}
+          CAPTURE_RENDERER: ${{ inputs.renderer || 'native,workbench-table' }}
+          CAPTURE_WORKLOAD: ${{ inputs.workload || '' }}
+        run: |
+          args=(--repeat "$CAPTURE_REPEAT" --renderer "$CAPTURE_RENDERER" --output "$RUNNER_TEMP/sql-result-grid-visual/visual-evidence.json" --screenshot-dir "$RUNNER_TEMP/sql-result-grid-visual/screenshots")
+          if [ -n "$CAPTURE_WORKLOAD" ]; then args+=(--workload "$CAPTURE_WORKLOAD"); fi
+          if [[ ",$CAPTURE_RENDERER," == *,zeus,* ]]; then
+            echo 'Zeus screenshots belong to sql-result-grid-platform.yml and require platform evidence.' >&2
+            exit 2
+          fi
+          node scripts/capture-sql-result-grid-visual.mjs "${args[@]}"
+
+      - name: Upload visual evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sql-result-grid-visual-${{ github.run_number }}
+          path: ${{ runner.temp }}/sql-result-grid-visual
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload workflow summary
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/sql-result-grid-visual/visual-evidence.json" ]; then
+            node -e "const fs=require('node:fs'); const r=JSON.parse(fs.readFileSync(process.argv[1])); console.log('### SQL Result Grid Synthetic Visual Evidence'); console.log('- status: '+r.status); console.log('- artifacts: '+r.artifactCount+'/'+r.expectedArtifactCount); console.log('- browser: '+(r.browserVersion || r.browser || 'unavailable')); console.log('- scope: standalone benchmark, not production Workbench'); if (r.reason) console.log('- reason: '+r.reason);" "$RUNNER_TEMP/sql-result-grid-visual/visual-evidence.json" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '### SQL Result Grid Synthetic Visual Evidence' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Capture did not produce a manifest.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  workbench-agent:
+    name: Capture real SQL Agent Workbench
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.33.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify Chrome is available
+        run: |
+          test -x /usr/bin/google-chrome || test -x /usr/bin/google-chrome-stable || command -v chromium
+          google-chrome --version 2>/dev/null || google-chrome-stable --version 2>/dev/null || chromium --version
+
+      - name: Start Nyala Workbench
+        run: |
+          pnpm run setup
+          node --max-old-space-size=8192 node_modules/vite/bin/vite.js --host 127.0.0.1 --port 1420 --strictPort > "$RUNNER_TEMP/nyala-vite.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/nyala-vite.pid"
+          for attempt in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:1420/ >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/nyala-vite.log"
+          exit 1
+
+      - name: Capture desktop and narrow SQL Agent evidence
+        run: |
+          pnpm run capture:sql-agent-workbench -- --url http://127.0.0.1:1420/ --output-dir "$RUNNER_TEMP/sql-agent-workbench"
+
+      - name: Upload Workbench visual evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sql-agent-workbench-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/sql-agent-workbench
+            ${{ runner.temp }}/nyala-vite.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Workbench summary
+        if: always()
+        run: |
+          manifest="$RUNNER_TEMP/sql-agent-workbench/workbench-evidence.json"
+          if [ -f "$manifest" ]; then
+            node -e "const fs=require('node:fs'); const r=JSON.parse(fs.readFileSync(process.argv[1])); console.log('### SQL Agent Workbench Visual Evidence'); console.log('- status: '+r.status); for (const a of r.artifacts) console.log('- '+a.viewport.id+': '+a.status+' ('+a.screenshot+')'); console.log('- scope: real Chromium Workbench contribution; native WebViews remain separate gates');" "$manifest" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '### SQL Agent Workbench Visual Evidence' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Capture did not produce a manifest.' >> "$GITHUB_STEP_SUMMARY"
+          fi

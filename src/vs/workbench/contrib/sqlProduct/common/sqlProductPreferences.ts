@@ -4,6 +4,11 @@
 
 import { SQL_EDITOR_MAX_RESTORED_DRAFTS } from '../../sqlEditor/common/sqlEditor.js';
 import { SQL_RESULT_MAX_RENDER_ROWS } from '../../sqlResult/common/sqlResult.js';
+import {
+	SQL_RESULT_NATIVE_RENDERER_ID,
+	SQL_RESULT_ZEUS_PREVIEW_RENDERER_ID,
+	SqlResultRendererId
+} from '../../sqlResult/common/sqlResultRenderer.js';
 import { SQL_PRODUCT_DEFAULT_QUERY, SQL_PRODUCT_STORAGE_PREFIX } from './sqlProduct.js';
 
 export const SQL_PRODUCT_PREFERENCES_STORAGE_KEY = `${SQL_PRODUCT_STORAGE_PREFIX}.preferences`;
@@ -20,6 +25,7 @@ export interface SqlProductPreferences {
 	readonly restoreEditorDraftsOnStartup: boolean;
 	readonly autoSaveEditorDrafts: boolean;
 	readonly resultMaxRows: number;
+	readonly resultRenderer: SqlResultRendererId;
 	readonly maxRestoredEditorDrafts: number;
 	readonly defaultQuery: string;
 }
@@ -32,6 +38,7 @@ export const DEFAULT_SQL_PRODUCT_PREFERENCES: SqlProductPreferences = {
 	restoreEditorDraftsOnStartup: true,
 	autoSaveEditorDrafts: true,
 	resultMaxRows: SQL_RESULT_MAX_RENDER_ROWS,
+	resultRenderer: SQL_RESULT_NATIVE_RENDERER_ID,
 	maxRestoredEditorDrafts: SQL_EDITOR_MAX_RESTORED_DRAFTS,
 	defaultQuery: SQL_PRODUCT_DEFAULT_QUERY
 };
@@ -71,6 +78,7 @@ export function normalizeSqlProductPreferences(raw: unknown): SqlProductPreferen
 			SQL_PRODUCT_MAX_RESULT_ROWS,
 			DEFAULT_SQL_PRODUCT_PREFERENCES.resultMaxRows
 		),
+		resultRenderer: normalizeResultRenderer(value.resultRenderer),
 		maxRestoredEditorDrafts: normalizeIntegerRange(
 			value.maxRestoredEditorDrafts,
 			SQL_PRODUCT_MIN_RESTORED_DRAFTS,
@@ -136,6 +144,9 @@ export function getSqlProductPreferenceLabel(key: SqlProductPreferenceKey): stri
 		case 'resultMaxRows':
 			return 'Max result rows';
 
+		case 'resultRenderer':
+			return 'Result grid renderer';
+
 		case 'maxRestoredEditorDrafts':
 			return 'Max restored editor drafts';
 
@@ -145,6 +156,14 @@ export function getSqlProductPreferenceLabel(key: SqlProductPreferenceKey): stri
 		default:
 			return assertNever(key);
 	}
+}
+
+function normalizeResultRenderer(value: unknown): SqlResultRendererId {
+	if (value === SQL_RESULT_NATIVE_RENDERER_ID || value === SQL_RESULT_ZEUS_PREVIEW_RENDERER_ID) {
+		return value;
+	}
+
+	return DEFAULT_SQL_PRODUCT_PREFERENCES.resultRenderer;
 }
 
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {

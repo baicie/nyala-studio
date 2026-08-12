@@ -1,0 +1,134 @@
+name: SQL Agent Native Workbench Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      macos_runner:
+        description: 'GitHub-hosted or self-hosted macOS runner label'
+        required: false
+        default: 'macos-14'
+        type: string
+      windows_runner:
+        description: 'GitHub-hosted or self-hosted Windows runner label'
+        required: false
+        default: 'windows-2022'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sql-agent-native-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_PROFILE_DEV_DEBUG: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  macos-agent:
+    name: macOS WKWebView SQL Agent evidence
+    runs-on: ${{ inputs.macos_runner }}
+    timeout-minutes: 120
+    env:
+      EVIDENCE_DIR: ${{ runner.temp }}/sql-agent-macos-evidence
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Initialize fail-closed evidence directory
+        run: |
+          mkdir -p "$EVIDENCE_DIR/screenshots"
+          node -e "const fs=require('node:fs');const p=process.env.EVIDENCE_DIR+'/workbench-evidence.json';fs.writeFileSync(p,JSON.stringify({version:1,status:'blocked',reason:'Native Agent runner did not complete.',driverProvider:'embedded',nativeWebView:false,nativeWebView2:false,engine:'embedded-unverified',platformName:'macos',artifacts:[]},null,2)+'\\n')"
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.33.4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cb54d1c4 # v2.9.1
+        with:
+          workspaces: '. -> target'
+          key: sql-agent-native-macos
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build frontend
+        run: pnpm run build
+      - name: Build webdriver-enabled Nyala debug binary
+        run: >-
+          pnpm exec tauri build --debug --features webdriver --no-bundle --ci
+          --config '{"build":{"beforeBuildCommand":""}}' -- --locked
+      - name: Capture embedded Agent Workbench evidence
+        run: |
+          pnpm run capture:sql-agent-workbench-native -- \
+            --app-binary "$GITHUB_WORKSPACE/target/debug/sql-studio-next" \
+            --platform macos \
+            --output "$EVIDENCE_DIR/workbench-evidence.json" \
+            --screenshot-dir "$EVIDENCE_DIR/screenshots" \
+            --app-log "$EVIDENCE_DIR/nyala-app.log"
+      - name: Upload macOS Agent evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sql-agent-native-macos
+          path: ${{ runner.temp }}/sql-agent-macos-evidence
+          if-no-files-found: warn
+          retention-days: 14
+
+  windows-agent:
+    name: Windows WebView2 SQL Agent evidence
+    runs-on: ${{ inputs.windows_runner }}
+    timeout-minutes: 120
+    env:
+      EVIDENCE_DIR: ${{ runner.temp }}\sql-agent-windows-evidence
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Initialize fail-closed evidence directory
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:EVIDENCE_DIR\screenshots" | Out-Null
+          node -e "const fs=require('node:fs');const p=process.env.EVIDENCE_DIR+'\\workbench-evidence.json';fs.writeFileSync(p,JSON.stringify({version:1,status:'blocked',reason:'Native Agent runner did not complete.',driverProvider:'embedded',nativeWebView:false,nativeWebView2:false,engine:'embedded-unverified',platformName:'windows',artifacts:[]},null,2)+'\\n')"
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.33.4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cb54d1c4 # v2.9.1
+        with:
+          workspaces: '. -> target'
+          key: sql-agent-native-windows
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build frontend
+        run: pnpm run build
+      - name: Build webdriver-enabled Nyala debug binary
+        shell: pwsh
+        run: >-
+          pnpm exec tauri build --debug --features webdriver --no-bundle --ci
+          --config '{"build":{"beforeBuildCommand":""}}' -- --locked
+      - name: Capture embedded Agent Workbench evidence
+        shell: pwsh
+        run: |
+          pnpm run capture:sql-agent-workbench-native -- `
+            --app-binary "$env:GITHUB_WORKSPACE\target\debug\sql-studio-next.exe" `
+            --platform windows `
+            --output "$env:EVIDENCE_DIR\workbench-evidence.json" `
+            --screenshot-dir "$env:EVIDENCE_DIR\screenshots" `
+            --app-log "$env:EVIDENCE_DIR\nyala-app.log"
+      - name: Upload Windows Agent evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sql-agent-native-windows
+          path: ${{ runner.temp }}\sql-agent-windows-evidence
+          if-no-files-found: warn
+          retention-days: 14

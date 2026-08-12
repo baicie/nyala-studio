@@ -376,7 +376,7 @@ pub fn run() {
         log::warn!("V2 SQL connection profiles could not be restored: {error}");
     }
 
-    let app = tauri::Builder::default()
+    let app = register_webdriver_for_test(tauri::Builder::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(UpdateManagerState::new())
@@ -395,6 +395,9 @@ pub fn run() {
         .manage(ExtensionDiagnosticsStore::new())
         .manage(Arc::new(SettingsStore::new()))
         .manage(Arc::new(SqlConnectionStore::new()))
+        .manage(Arc::new(
+            commands::sql::agent::bridge::AgentRuntimeState::new(),
+        ))
         .manage(sql_connection_manager)
         .manage(Arc::new(sidex_extension_api::CommandRegistry::new()))
         .manage(Arc::new(RemoteManagerStore::new()))
@@ -483,6 +486,7 @@ pub fn run() {
                 .expect("failed to initialize storage database");
 
             restore_and_show(app, &db);
+            focus_webdriver_window_for_test(app);
 
             app.manage(Arc::new(db));
 
@@ -722,6 +726,13 @@ pub fn run() {
             commands::sql_list_schemas,
             commands::sql_list_tables_v2,
             commands::sql_list_columns_v2,
+            // MVP vNext Agent A2.4 bridge.
+            commands::sql::agent::bridge::sql_agent_start,
+            commands::sql::agent::bridge::sql_agent_cancel,
+            commands::sql::agent::bridge::sql_agent_get_run,
+            // MVP vNext Agent A3.1 read-only SQLite tools.
+            commands::sql::agent::read_only::sql_agent_explain,
+            commands::sql::agent::read_only::sql_agent_execute_readonly,
             // sidex-db state persistence
             commands::db_get_recent_files,
             commands::db_get_recent_workspaces,
@@ -955,3 +966,32 @@ pub fn run() {
         let _ = (app_handle, event);
     });
 }
+
+#[cfg(all(feature = "webdriver", debug_assertions))]
+fn register_webdriver_for_test(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    if std::env::var_os(tauri_plugin_wdio_webdriver::PORT_ENV_VAR).is_some() {
+        builder.plugin(tauri_plugin_wdio_webdriver::init())
+    } else {
+        builder
+    }
+}
+
+#[cfg(not(all(feature = "webdriver", debug_assertions)))]
+fn register_webdriver_for_test(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    builder
+}
+
+#[cfg(all(feature = "webdriver", debug_assertions))]
+fn focus_webdriver_window_for_test(app: &tauri::App) {
+    if std::env::var_os(tauri_plugin_wdio_webdriver::PORT_ENV_VAR).is_some() {
+        if let Some(window) = app.get_webview_window("main") {
+            // Native visual QA exercises the Workbench's <=420px layout. The
+            // product minimum remains 800x600 outside this debug-only feature.
+            let _ = window.set_min_size(Some(tauri::LogicalSize::new(320.0, 480.0)));
+            let _ = window.set_focus();
+        }
+    }
+}
+
+#[cfg(not(all(feature = "webdriver", debug_assertions)))]
+fn focus_webdriver_window_for_test(_app: &tauri::App) {}

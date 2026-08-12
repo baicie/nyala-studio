@@ -4,6 +4,7 @@
 
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { ISqlAiService } from '../common/sqlAi.js';
+import { ISqlAgentService } from '../common/sqlAgent.js';
 import { ISqlConnectionService, ISqlConnectionServiceV2 } from '../common/sqlConnection.js';
 import { ISqlDriverCatalogService } from '../common/sqlDriverCatalog.js';
 import { ISqlDriverPackageService } from '../common/sqlDriverPackages.js';
@@ -11,6 +12,7 @@ import { ISqlMetadataService } from '../common/sqlMetadata.js';
 import { ISqlQueryService } from '../common/sqlQuery.js';
 import { ISqlProductService } from '../common/sqlProduct.js';
 import { SqlAiService } from './sqlAiService.js';
+import { SqlAgentService } from './sqlAgentService.js';
 import { SqlConnectionService } from './sqlConnectionService.js';
 import { SqlConnectionServiceV2 } from './sqlConnectionServiceV2.js';
 import { SqlDriverCatalogService } from './sqlDriverCatalogService.js';
@@ -24,6 +26,7 @@ registerSingleton(ISqlConnectionServiceV2, SqlConnectionServiceV2, Instantiation
 registerSingleton(ISqlMetadataService, SqlMetadataService, InstantiationType.Delayed);
 registerSingleton(ISqlQueryService, SqlQueryService, InstantiationType.Delayed);
 registerSingleton(ISqlAiService, SqlAiService, InstantiationType.Delayed);
+registerSingleton(ISqlAgentService, SqlAgentService, InstantiationType.Delayed);
 registerSingleton(ISqlDriverCatalogService, SqlDriverCatalogService, InstantiationType.Delayed);
 registerSingleton(ISqlDriverPackageService, SqlDriverPackageService, InstantiationType.Delayed);
 registerSingleton(ISqlProductService, SqlProductService, InstantiationType.Delayed);

@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "generatedAt": "2026-08-12T13:08:33.745Z",
+  "decision": "NO-GO",
+  "input": "/Users/liuzhiwei/Desktop/workspace/git-code/nyala-studio/docs/sql-mvp-phases/phase-z1-benchmark.json",
+  "benchmark": {
+    "repeat": 3,
+    "recordCount": 36,
+    "browser": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  },
+  "thresholds": {
+    "oneKInteractionRegressionMax": 0.1,
+    "tenKPrimaryImprovementMin": 0.2,
+    "primaryMetric": "scrollP95Ms",
+    "gzipBudgetBytes": 30000
+  },
+  "metricChecks": [
+    {
+      "id": "1k-x-20 scroll interaction",
+      "passed": false,
+      "baseline": 0.19999999925494194,
+      "zeus": 8.5,
+      "regression": 41.50000015832484,
+      "reason": "1k-x-20 scroll interaction regression 4150.0% exceeds no regression over 10%"
+    },
+    {
+      "id": "10k-x-50-primary",
+      "passed": false,
+      "baseline": 0.599999999627471,
+      "zeus": 8.099999999627471,
+      "improvement": -12.500000007761022,
+      "reason": "10k-x-50 scroll p95 improvement -1250.0% is below 20%"
+    }
+  ],
+  "platformMetricChecks": [],
+  "dependencyCheck": {
+    "bundleGzipBytes": 24260,
+    "budgetBytes": 30000,
+    "passed": true,
+    "source": "phase-z1-spike-verification.md Z1.1 audit"
+  },
+  "platformEvidence": {
+    "macosWebKit": {
+      "label": "macOS WebKit",
+      "status": "blocked",
+      "runs": 0,
+      "reason": "spawnSync curl ETIMEDOUT"
+    },
+    "windowsWebView2": {
+      "label": "Windows WebView2",
+      "status": "blocked",
+      "runs": 0,
+      "reason": "msedgedriver is not available in this environment."
+    }
+  },
+  "reasons": [
+    "1k-x-20 scroll interaction regression 4150.0% exceeds no regression over 10%",
+    "10k-x-50 scroll p95 improvement -1250.0% is below 20%",
+    "macOS WebKit: spawnSync curl ETIMEDOUT (0/5 runs recorded)",
+    "Windows WebView2: msedgedriver is not available in this environment. (0/5 runs recorded)"
+  ]
+}

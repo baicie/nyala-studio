@@ -5,12 +5,12 @@
 #![allow(dead_code)]
 
 use super::types::SqlConnectionKind;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub const SQL_DEFAULT_TABLE_PREVIEW_LIMIT: usize = 100;
 pub const SQL_MAX_TABLE_PREVIEW_LIMIT: usize = 10_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SqlDialect {
     Sqlite,

@@ -1,0 +1,1943 @@
+{
+  "version": 1,
+  "generatedAt": "2026-08-12T12:50:42.882Z",
+  "browser": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+  "repeat": 3,
+  "workloads": [
+    {
+      "id": "1k-x-20",
+      "rows": 1000,
+      "columns": 20,
+      "width": 1440,
+      "height": 420,
+      "wide": false
+    },
+    {
+      "id": "10k-x-50",
+      "rows": 10000,
+      "columns": 50,
+      "width": 1440,
+      "height": 420,
+      "wide": false
+    },
+    {
+      "id": "wide-columns",
+      "rows": 1000,
+      "columns": 20,
+      "width": 1440,
+      "height": 420,
+      "wide": true
+    },
+    {
+      "id": "narrow-panel",
+      "rows": 1000,
+      "columns": 20,
+      "width": 390,
+      "height": 420,
+      "wide": false
+    }
+  ],
+  "renderers": [
+    "native",
+    "workbench-table",
+    "zeus"
+  ],
+  "records": [
+    {
+      "status": "ok",
+      "renderer": "native",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.599999999627471,
+      "parseMs": 5.600000001490116,
+      "renderMs": 13.699999999254942,
+      "scroll": {
+        "medianMs": 0,
+        "p95Ms": 0.19999999925494194,
+        "maxMs": 0.19999999925494194
+      },
+      "domNodes": 21035,
+      "fixtureBytes": 249743,
+      "heapBytes": 884541,
+      "renderedRows": 1000,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 211144
+      },
+      "workloadId": "1k-x-20",
+      "iteration": 1
+    },
+    {
+      "status": "ok",
+      "renderer": "native",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.30000000074505806,
+      "parseMs": 4.199999999254942,
+      "renderMs": 12.800000000745058,
+      "scroll": {
+        "medianMs": 0,
+        "p95Ms": 0.09999999962747097,
+        "maxMs": 0.09999999962747097
+      },
+      "domNodes": 21035,
+      "fixtureBytes": 249743,
+      "heapBytes": 884525,
+      "renderedRows": 1000,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 211144
+      },
+      "workloadId": "1k-x-20",
+      "iteration": 2
+    },
+    {
+      "status": "ok",
+      "renderer": "native",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.3999999985098839,
+      "parseMs": 4.699999999254942,
+      "renderMs": 9,
+      "scroll": {
+        "medianMs": 0,
+        "p95Ms": 1.400000000372529,
+        "maxMs": 1.400000000372529
+      },
+      "domNodes": 21035,
+      "fixtureBytes": 249743,
+      "heapBytes": 839257,
+      "renderedRows": 1000,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 211144
+      },
+      "workloadId": "1k-x-20",
+      "iteration": 3
+    },
+    {
+      "status": "ok",
+      "renderer": "workbench-table",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.7999999988824129,
+      "parseMs": 7.900000000372529,
+      "renderMs": 9.900000000372529,
+      "scroll": {
+        "medianMs": 3.300000000745058,
+        "p95Ms": 4.200000001117587,
+        "maxMs": 4.200000001117587
+      },
+      "domNodes": 601,
+      "fixtureBytes": 249743,
+      "heapBytes": 359847,
+      "renderedRows": 27,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 5253
+      },
+      "workloadId": "1k-x-20",
+      "iteration": 1
+    },
+    {
+      "status": "ok",
+      "renderer": "workbench-table",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.7000000011175871,
+      "parseMs": 9.400000000372529,
+      "renderMs": 10.299999998882413,
+      "scroll": {
+        "medianMs": 4.099999999627471,
+        "p95Ms": 7.199999999254942,
+        "maxMs": 7.199999999254942
+      },
+      "domNodes": 601,
+      "fixtureBytes": 249743,
+      "heapBytes": null,
+      "renderedRows": 27,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 5253
+      },
+      "workloadId": "1k-x-20",
+      "iteration": 2
+    },
+    {
+      "status": "ok",
+      "renderer": "workbench-table",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 1.5,
+      "parseMs": 5.100000001490116,
+      "renderMs": 8.199999999254942,
+      "scroll": {
+        "medianMs": 3.5,
+        "p95Ms": 5.099999999627471,
+        "maxMs": 5.099999999627471
+      },
+      "domNodes": 601,
+      "fixtureBytes": 249743,
+      "heapBytes": 361191,
+      "renderedRows": 27,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 5253
+      },
+      "workloadId": "1k-x-20",
+      "iteration": 3
+    },
+    {
+      "status": "ok",
+      "renderer": "zeus",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.2999999988824129,
+      "parseMs": 4.799999998882413,
+      "renderMs": 23.90000000037253,
+      "scroll": {
+        "medianMs": 6,
+        "p95Ms": 7.400000000372529,
+        "maxMs": 7.400000000372529
+      },
+      "domNodes": 381,
+      "fixtureBytes": 249743,
+      "heapBytes": 6880652,
+      "renderedRows": 20,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 2789
+      },
+      "workloadId": "1k-x-20",
+      "iteration": 1
+    },
+    {
+      "status": "ok",
+      "renderer": "zeus",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.30000000074505806,
+      "parseMs": 5.800000000745058,
+      "renderMs": 27.5,
+      "scroll": {
+        "medianMs": 6.699999999254942,
+        "p95Ms": 8.5,
+        "maxMs": 8.5
+      },
+      "domNodes": 381,
+      "fixtureBytes": 249743,
+      "heapBytes": 8916784,
+      "renderedRows": 20,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 2789
+      },
+      "workloadId": "1k-x-20",
+      "iteration": 2
+    },
+    {
+      "status": "ok",
+      "renderer": "zeus",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.40000000037252903,
+      "parseMs": 4.199999999254942,
+      "renderMs": 24,
+      "scroll": {
+        "medianMs": 8.099999999627471,
+        "p95Ms": 9.299999998882413,
+        "maxMs": 9.299999998882413
+      },
+      "domNodes": 365,
+      "fixtureBytes": 249743,
+      "heapBytes": 16796571,
+      "renderedRows": 19,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 2650
+      },
+      "workloadId": "1k-x-20",
+      "iteration": 3
+    },
+    {
+      "status": "ok",
+      "renderer": "native",
+      "workload": {
+        "rows": 10000,
+        "columns": 50,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 5.5,
+      "parseMs": 59.90000000037253,
+      "renderMs": 238.89999999850988,
+      "scroll": {
+        "medianMs": 0,
+        "p95Ms": 0.2999999988824129,
+        "maxMs": 0.2999999988824129
+      },
+      "domNodes": 510065,
+      "fixtureBytes": 7144903,
+      "heapBytes": null,
+      "renderedRows": 10000,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 6164188
+      },
+      "workloadId": "10k-x-50",
+      "iteration": 1
+    },
+    {
+      "status": "ok",
+      "renderer": "native",
+      "workload": {
+        "rows": 10000,
+        "columns": 50,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 5.200000001117587,
+      "parseMs": 60.19999999925494,
+      "renderMs": 214.59999999962747,
+      "scroll": {
+        "medianMs": 0,
+        "p95Ms": 0.599999999627471,
+        "maxMs": 0.599999999627471
+      },
+      "domNodes": 510065,
+      "fixtureBytes": 7144903,
+      "heapBytes": null,
+      "renderedRows": 10000,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 6164188
+      },
+      "workloadId": "10k-x-50",
+      "iteration": 2
+    },
+    {
+      "status": "ok",
+      "renderer": "native",
+      "workload": {
+        "rows": 10000,
+        "columns": 50,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 5.399999998509884,
+      "parseMs": 67.5,
+      "renderMs": 220.40000000037253,
+      "scroll": {
+        "medianMs": 0,
+        "p95Ms": 0.6000000014901161,
+        "maxMs": 0.6000000014901161
+      },
+      "domNodes": 510065,
+      "fixtureBytes": 7144903,
+      "heapBytes": null,
+      "renderedRows": 10000,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 6164188
+      },
+      "workloadId": "10k-x-50",
+      "iteration": 3
+    },
+    {
+      "status": "ok",
+      "renderer": "workbench-table",
+      "workload": {
+        "rows": 10000,
+        "columns": 50,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 5.400000000372529,
+      "parseMs": 66,
+      "renderMs": 6.699999999254942,
+      "scroll": {
+        "medianMs": 6.599999999627471,
+        "p95Ms": 9.399999998509884,
+        "maxMs": 9.399999998509884
+      },
+      "domNodes": 1441,
+      "fixtureBytes": 7144903,
+      "heapBytes": null,
+      "renderedRows": 27,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 14163
+      },
+      "workloadId": "10k-x-50",
+      "iteration": 1
+    },
+    {
+      "status": "ok",
+      "renderer": "workbench-table",
+      "workload": {
+        "rows": 10000,
+        "columns": 50,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 5.599999999627471,
+      "parseMs": 63.80000000074506,
+      "renderMs": 7,
+      "scroll": {
+        "medianMs": 6.900000000372529,
+        "p95Ms": 8.799999998882413,
+        "maxMs": 8.799999998882413
+      },
+      "domNodes": 1441,
+      "fixtureBytes": 7144903,
+      "heapBytes": null,
+      "renderedRows": 27,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 14163
+      },
+      "workloadId": "10k-x-50",
+      "iteration": 2
+    },
+    {
+      "status": "ok",
+      "renderer": "workbench-table",
+      "workload": {
+        "rows": 10000,
+        "columns": 50,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 5.299999998882413,
+      "parseMs": 73,
+      "renderMs": 7.200000001117587,
+      "scroll": {
+        "medianMs": 7,
+        "p95Ms": 9.300000000745058,
+        "maxMs": 9.300000000745058
+      },
+      "domNodes": 1492,
+      "fixtureBytes": 7144903,
+      "heapBytes": null,
+      "renderedRows": 28,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 14687
+      },
+      "workloadId": "10k-x-50",
+      "iteration": 3
+    },
+    {
+      "status": "ok",
+      "renderer": "zeus",
+      "workload": {
+        "rows": 10000,
+        "columns": 50,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 5.199999999254942,
+      "parseMs": 63.90000000037253,
+      "renderMs": 86.20000000111759,
+      "scroll": {
+        "medianMs": 5.200000001117587,
+        "p95Ms": 8.099999999627471,
+        "maxMs": 8.099999999627471
+      },
+      "domNodes": 381,
+      "fixtureBytes": 7144903,
+      "heapBytes": 24405219,
+      "renderedRows": 20,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 2789
+      },
+      "workloadId": "10k-x-50",
+      "iteration": 1
+    },
+    {
+      "status": "ok",
+      "renderer": "zeus",
+      "workload": {
+        "rows": 10000,
+        "columns": 50,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 5.300000000745058,
+      "parseMs": 69.69999999925494,
+      "renderMs": 141.90000000037253,
+      "scroll": {
+        "medianMs": 6.900000000372529,
+        "p95Ms": 14.800000000745058,
+        "maxMs": 14.800000000745058
+      },
+      "domNodes": 381,
+      "fixtureBytes": 7144903,
+      "heapBytes": 23397967,
+      "renderedRows": 20,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 2789
+      },
+      "workloadId": "10k-x-50",
+      "iteration": 2
+    },
+    {
+      "status": "ok",
+      "renderer": "zeus",
+      "workload": {
+        "rows": 10000,
+        "columns": 50,
+        "wide": false,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 5.5,
+      "parseMs": 66.20000000111759,
+      "renderMs": 85.40000000037253,
+      "scroll": {
+        "medianMs": 5.5,
+        "p95Ms": 7.099999999627471,
+        "maxMs": 7.099999999627471
+      },
+      "domNodes": 381,
+      "fixtureBytes": 7144903,
+      "heapBytes": 24551411,
+      "renderedRows": 20,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 2789
+      },
+      "workloadId": "10k-x-50",
+      "iteration": 3
+    },
+    {
+      "status": "ok",
+      "renderer": "native",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": true,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.5,
+      "parseMs": 17.90000000037253,
+      "renderMs": 9.900000000372529,
+      "scroll": {
+        "medianMs": 0,
+        "p95Ms": 0.10000000149011612,
+        "maxMs": 0.10000000149011612
+      },
+      "domNodes": 21035,
+      "fixtureBytes": 1546783,
+      "heapBytes": 841624,
+      "renderedRows": 1000,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0_wide_header_valuewide_header_valuewide_header_value",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 1508184
+      },
+      "workloadId": "wide-columns",
+      "iteration": 1
+    },
+    {
+      "status": "ok",
+      "renderer": "native",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": true,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.5,
+      "parseMs": 17.59999999962747,
+      "renderMs": 8.199999999254942,
+      "scroll": {
+        "medianMs": 0,
+        "p95Ms": 0.10000000149011612,
+        "maxMs": 0.10000000149011612
+      },
+      "domNodes": 21035,
+      "fixtureBytes": 1546783,
+      "heapBytes": 738604,
+      "renderedRows": 1000,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0_wide_header_valuewide_header_valuewide_header_value",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 1508184
+      },
+      "workloadId": "wide-columns",
+      "iteration": 2
+    },
+    {
+      "status": "ok",
+      "renderer": "native",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": true,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.6000000014901161,
+      "parseMs": 19.40000000037253,
+      "renderMs": 11.699999999254942,
+      "scroll": {
+        "medianMs": 0,
+        "p95Ms": 0.30000000074505806,
+        "maxMs": 0.30000000074505806
+      },
+      "domNodes": 21035,
+      "fixtureBytes": 1546783,
+      "heapBytes": 880700,
+      "renderedRows": 1000,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0_wide_header_valuewide_header_valuewide_header_value",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 1508184
+      },
+      "workloadId": "wide-columns",
+      "iteration": 3
+    },
+    {
+      "status": "ok",
+      "renderer": "workbench-table",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": true,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 1.400000000372529,
+      "parseMs": 24.699999999254942,
+      "renderMs": 13.900000000372529,
+      "scroll": {
+        "medianMs": 4.299999998882413,
+        "p95Ms": 7.799999998882413,
+        "maxMs": 7.799999998882413
+      },
+      "domNodes": 601,
+      "fixtureBytes": 1546783,
+      "heapBytes": 358265,
+      "renderedRows": 27,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0_wide_header_valuewide_header_valuewide_header_value",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 41285
+      },
+      "workloadId": "wide-columns",
+      "iteration": 1
+    },
+    {
+      "status": "ok",
+      "renderer": "workbench-table",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": true,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 1.400000000372529,
+      "parseMs": 22.09999999962747,
+      "renderMs": 8.200000001117587,
+      "scroll": {
+        "medianMs": 4.099999999627471,
+        "p95Ms": 5.400000000372529,
+        "maxMs": 5.400000000372529
+      },
+      "domNodes": 601,
+      "fixtureBytes": 1546783,
+      "heapBytes": 359029,
+      "renderedRows": 27,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0_wide_header_valuewide_header_valuewide_header_value",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 41285
+      },
+      "workloadId": "wide-columns",
+      "iteration": 2
+    },
+    {
+      "status": "ok",
+      "renderer": "workbench-table",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": true,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.5,
+      "parseMs": 17.300000000745058,
+      "renderMs": 8.400000000372529,
+      "scroll": {
+        "medianMs": 4,
+        "p95Ms": 5.399999998509884,
+        "maxMs": 5.399999998509884
+      },
+      "domNodes": 622,
+      "fixtureBytes": 1546783,
+      "heapBytes": 369523,
+      "renderedRows": 28,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0_wide_header_valuewide_header_valuewide_header_value",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 42775
+      },
+      "workloadId": "wide-columns",
+      "iteration": 3
+    },
+    {
+      "status": "ok",
+      "renderer": "zeus",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": true,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.3999999985098839,
+      "parseMs": 15.099999999627471,
+      "renderMs": 29,
+      "scroll": {
+        "medianMs": 9.5,
+        "p95Ms": 13.300000000745058,
+        "maxMs": 13.300000000745058
+      },
+      "domNodes": 365,
+      "fixtureBytes": 1546783,
+      "heapBytes": 8955691,
+      "renderedRows": 19,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0_wide_header_valuewide_header_valuewide_header_value",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 20359
+      },
+      "workloadId": "wide-columns",
+      "iteration": 1
+    },
+    {
+      "status": "ok",
+      "renderer": "zeus",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": true,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.3999999985098839,
+      "parseMs": 16.199999999254942,
+      "renderMs": 31.5,
+      "scroll": {
+        "medianMs": 9,
+        "p95Ms": 12.199999999254942,
+        "maxMs": 12.199999999254942
+      },
+      "domNodes": 365,
+      "fixtureBytes": 1546783,
+      "heapBytes": 8955807,
+      "renderedRows": 19,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0_wide_header_valuewide_header_valuewide_header_value",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 20359
+      },
+      "workloadId": "wide-columns",
+      "iteration": 2
+    },
+    {
+      "status": "ok",
+      "renderer": "zeus",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": true,
+        "viewportWidth": 1440,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.5,
+      "parseMs": 18.09999999962747,
+      "renderMs": 26.40000000037253,
+      "scroll": {
+        "medianMs": 7.5,
+        "p95Ms": 8,
+        "maxMs": 8
+      },
+      "domNodes": 381,
+      "fixtureBytes": 1546783,
+      "heapBytes": 4277904,
+      "renderedRows": 20,
+      "visualProbe": {
+        "rootWidth": 1440,
+        "rootHeight": 420,
+        "headerText": "column_0_wide_header_valuewide_header_valuewide_header_value",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 21389
+      },
+      "workloadId": "wide-columns",
+      "iteration": 3
+    },
+    {
+      "status": "ok",
+      "renderer": "native",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 390,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.40000000037252903,
+      "parseMs": 4.400000000372529,
+      "renderMs": 7.900000000372529,
+      "scroll": {
+        "medianMs": 0,
+        "p95Ms": 0.09999999962747097,
+        "maxMs": 0.09999999962747097
+      },
+      "domNodes": 21035,
+      "fixtureBytes": 249743,
+      "heapBytes": 758292,
+      "renderedRows": 1000,
+      "visualProbe": {
+        "rootWidth": 390,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 211144
+      },
+      "workloadId": "narrow-panel",
+      "iteration": 1
+    },
+    {
+      "status": "ok",
+      "renderer": "native",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 390,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.2999999988824129,
+      "parseMs": 4.399999998509884,
+      "renderMs": 7.800000000745058,
+      "scroll": {
+        "medianMs": 0,
+        "p95Ms": 0.09999999962747097,
+        "maxMs": 0.09999999962747097
+      },
+      "domNodes": 21035,
+      "fixtureBytes": 249743,
+      "heapBytes": 715840,
+      "renderedRows": 1000,
+      "visualProbe": {
+        "rootWidth": 390,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 211144
+      },
+      "workloadId": "narrow-panel",
+      "iteration": 2
+    },
+    {
+      "status": "ok",
+      "renderer": "native",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 390,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.40000000037252903,
+      "parseMs": 4.699999999254942,
+      "renderMs": 8.099999999627471,
+      "scroll": {
+        "medianMs": 0,
+        "p95Ms": 0.10000000149011612,
+        "maxMs": 0.10000000149011612
+      },
+      "domNodes": 21035,
+      "fixtureBytes": 249743,
+      "heapBytes": 696124,
+      "renderedRows": 1000,
+      "visualProbe": {
+        "rootWidth": 390,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 211144
+      },
+      "workloadId": "narrow-panel",
+      "iteration": 3
+    },
+    {
+      "status": "ok",
+      "renderer": "workbench-table",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 390,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.40000000037252903,
+      "parseMs": 3.699999999254942,
+      "renderMs": 8,
+      "scroll": {
+        "medianMs": 2.700000001117587,
+        "p95Ms": 3.400000000372529,
+        "maxMs": 3.400000000372529
+      },
+      "domNodes": 622,
+      "fixtureBytes": 249743,
+      "heapBytes": 371814,
+      "renderedRows": 28,
+      "visualProbe": {
+        "rootWidth": 390,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 5447
+      },
+      "workloadId": "narrow-panel",
+      "iteration": 1
+    },
+    {
+      "status": "ok",
+      "renderer": "workbench-table",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 390,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.5,
+      "parseMs": 5.400000000372529,
+      "renderMs": 9.900000000372529,
+      "scroll": {
+        "medianMs": 2.900000000372529,
+        "p95Ms": 3.800000000745058,
+        "maxMs": 3.800000000745058
+      },
+      "domNodes": 622,
+      "fixtureBytes": 249743,
+      "heapBytes": 371734,
+      "renderedRows": 28,
+      "visualProbe": {
+        "rootWidth": 390,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 5447
+      },
+      "workloadId": "narrow-panel",
+      "iteration": 2
+    },
+    {
+      "status": "ok",
+      "renderer": "workbench-table",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 390,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.2999999988824129,
+      "parseMs": 3.799999998882413,
+      "renderMs": 9.200000001117587,
+      "scroll": {
+        "medianMs": 3.400000000372529,
+        "p95Ms": 6.700000001117587,
+        "maxMs": 6.700000001117587
+      },
+      "domNodes": 622,
+      "fixtureBytes": 249743,
+      "heapBytes": 371814,
+      "renderedRows": 28,
+      "visualProbe": {
+        "rootWidth": 390,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 5447
+      },
+      "workloadId": "narrow-panel",
+      "iteration": 3
+    },
+    {
+      "status": "ok",
+      "renderer": "zeus",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 390,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.40000000037252903,
+      "parseMs": 3.5,
+      "renderMs": 20.199999999254942,
+      "scroll": {
+        "medianMs": 2.599999999627471,
+        "p95Ms": 3.400000000372529,
+        "maxMs": 3.400000000372529
+      },
+      "domNodes": 167,
+      "fixtureBytes": 249743,
+      "heapBytes": 2496862,
+      "renderedRows": 19,
+      "visualProbe": {
+        "rootWidth": 390,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 849
+      },
+      "workloadId": "narrow-panel",
+      "iteration": 1
+    },
+    {
+      "status": "ok",
+      "renderer": "zeus",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 390,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.6000000014901161,
+      "parseMs": 5.699999999254942,
+      "renderMs": 19,
+      "scroll": {
+        "medianMs": 2.699999999254942,
+        "p95Ms": 3.299999998882413,
+        "maxMs": 3.299999998882413
+      },
+      "domNodes": 167,
+      "fixtureBytes": 249743,
+      "heapBytes": 2474866,
+      "renderedRows": 19,
+      "visualProbe": {
+        "rootWidth": 390,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 849
+      },
+      "workloadId": "narrow-panel",
+      "iteration": 2
+    },
+    {
+      "status": "ok",
+      "renderer": "zeus",
+      "workload": {
+        "rows": 1000,
+        "columns": 20,
+        "wide": false,
+        "viewportWidth": 390,
+        "viewportHeight": 420
+      },
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+      "formatMs": 0.40000000037252903,
+      "parseMs": 4.199999999254942,
+      "renderMs": 18.40000000037253,
+      "scroll": {
+        "medianMs": 2.400000000372529,
+        "p95Ms": 2.699999999254942,
+        "maxMs": 2.699999999254942
+      },
+      "domNodes": 167,
+      "fixtureBytes": 249743,
+      "heapBytes": 2485258,
+      "renderedRows": 19,
+      "visualProbe": {
+        "rootWidth": 390,
+        "rootHeight": 420,
+        "headerText": "column_0",
+        "firstVisibleCellText": "0",
+        "firstCellInViewport": true,
+        "virtualRowsBounded": true,
+        "visibleTextLength": 849
+      },
+      "workloadId": "narrow-panel",
+      "iteration": 3
+    }
+  ],
+  "summary": {
+    "1k-x-20/native": {
+      "count": 3,
+      "renderMs": {
+        "available": true,
+        "median": 12.800000000745058,
+        "p95": 13.699999999254942,
+        "min": 9,
+        "max": 13.699999999254942
+      },
+      "scrollP95Ms": {
+        "available": true,
+        "median": 0.19999999925494194,
+        "p95": 1.400000000372529,
+        "min": 0.09999999962747097,
+        "max": 1.400000000372529
+      },
+      "scrollMaxMs": {
+        "available": true,
+        "median": 0.19999999925494194,
+        "p95": 1.400000000372529,
+        "min": 0.09999999962747097,
+        "max": 1.400000000372529
+      },
+      "domNodes": {
+        "available": true,
+        "median": 21035,
+        "p95": 21035,
+        "min": 21035,
+        "max": 21035
+      },
+      "heapBytes": {
+        "available": true,
+        "median": 884525,
+        "p95": 884541,
+        "min": 839257,
+        "max": 884541
+      },
+      "formatMs": {
+        "available": true,
+        "median": 0.3999999985098839,
+        "p95": 0.599999999627471,
+        "min": 0.30000000074505806,
+        "max": 0.599999999627471
+      },
+      "parseMs": {
+        "available": true,
+        "median": 4.699999999254942,
+        "p95": 5.600000001490116,
+        "min": 4.199999999254942,
+        "max": 5.600000001490116
+      },
+      "fixtureBytes": 249743
+    },
+    "1k-x-20/workbench-table": {
+      "count": 3,
+      "renderMs": {
+        "available": true,
+        "median": 9.900000000372529,
+        "p95": 10.299999998882413,
+        "min": 8.199999999254942,
+        "max": 10.299999998882413
+      },
+      "scrollP95Ms": {
+        "available": true,
+        "median": 5.099999999627471,
+        "p95": 7.199999999254942,
+        "min": 4.200000001117587,
+        "max": 7.199999999254942
+      },
+      "scrollMaxMs": {
+        "available": true,
+        "median": 5.099999999627471,
+        "p95": 7.199999999254942,
+        "min": 4.200000001117587,
+        "max": 7.199999999254942
+      },
+      "domNodes": {
+        "available": true,
+        "median": 601,
+        "p95": 601,
+        "min": 601,
+        "max": 601
+      },
+      "heapBytes": {
+        "available": true,
+        "median": 361191,
+        "p95": 361191,
+        "min": 359847,
+        "max": 361191
+      },
+      "formatMs": {
+        "available": true,
+        "median": 0.7999999988824129,
+        "p95": 1.5,
+        "min": 0.7000000011175871,
+        "max": 1.5
+      },
+      "parseMs": {
+        "available": true,
+        "median": 7.900000000372529,
+        "p95": 9.400000000372529,
+        "min": 5.100000001490116,
+        "max": 9.400000000372529
+      },
+      "fixtureBytes": 249743
+    },
+    "1k-x-20/zeus": {
+      "count": 3,
+      "renderMs": {
+        "available": true,
+        "median": 24,
+        "p95": 27.5,
+        "min": 23.90000000037253,
+        "max": 27.5
+      },
+      "scrollP95Ms": {
+        "available": true,
+        "median": 8.5,
+        "p95": 9.299999998882413,
+        "min": 7.400000000372529,
+        "max": 9.299999998882413
+      },
+      "scrollMaxMs": {
+        "available": true,
+        "median": 8.5,
+        "p95": 9.299999998882413,
+        "min": 7.400000000372529,
+        "max": 9.299999998882413
+      },
+      "domNodes": {
+        "available": true,
+        "median": 381,
+        "p95": 381,
+        "min": 365,
+        "max": 381
+      },
+      "heapBytes": {
+        "available": true,
+        "median": 8916784,
+        "p95": 16796571,
+        "min": 6880652,
+        "max": 16796571
+      },
+      "formatMs": {
+        "available": true,
+        "median": 0.30000000074505806,
+        "p95": 0.40000000037252903,
+        "min": 0.2999999988824129,
+        "max": 0.40000000037252903
+      },
+      "parseMs": {
+        "available": true,
+        "median": 4.799999998882413,
+        "p95": 5.800000000745058,
+        "min": 4.199999999254942,
+        "max": 5.800000000745058
+      },
+      "fixtureBytes": 249743
+    },
+    "10k-x-50/native": {
+      "count": 3,
+      "renderMs": {
+        "available": true,
+        "median": 220.40000000037253,
+        "p95": 238.89999999850988,
+        "min": 214.59999999962747,
+        "max": 238.89999999850988
+      },
+      "scrollP95Ms": {
+        "available": true,
+        "median": 0.599999999627471,
+        "p95": 0.6000000014901161,
+        "min": 0.2999999988824129,
+        "max": 0.6000000014901161
+      },
+      "scrollMaxMs": {
+        "available": true,
+        "median": 0.599999999627471,
+        "p95": 0.6000000014901161,
+        "min": 0.2999999988824129,
+        "max": 0.6000000014901161
+      },
+      "domNodes": {
+        "available": true,
+        "median": 510065,
+        "p95": 510065,
+        "min": 510065,
+        "max": 510065
+      },
+      "heapBytes": {
+        "available": false
+      },
+      "formatMs": {
+        "available": true,
+        "median": 5.399999998509884,
+        "p95": 5.5,
+        "min": 5.200000001117587,
+        "max": 5.5
+      },
+      "parseMs": {
+        "available": true,
+        "median": 60.19999999925494,
+        "p95": 67.5,
+        "min": 59.90000000037253,
+        "max": 67.5
+      },
+      "fixtureBytes": 7144903
+    },
+    "10k-x-50/workbench-table": {
+      "count": 3,
+      "renderMs": {
+        "available": true,
+        "median": 7,
+        "p95": 7.200000001117587,
+        "min": 6.699999999254942,
+        "max": 7.200000001117587
+      },
+      "scrollP95Ms": {
+        "available": true,
+        "median": 9.300000000745058,
+        "p95": 9.399999998509884,
+        "min": 8.799999998882413,
+        "max": 9.399999998509884
+      },
+      "scrollMaxMs": {
+        "available": true,
+        "median": 9.300000000745058,
+        "p95": 9.399999998509884,
+        "min": 8.799999998882413,
+        "max": 9.399999998509884
+      },
+      "domNodes": {
+        "available": true,
+        "median": 1441,
+        "p95": 1492,
+        "min": 1441,
+        "max": 1492
+      },
+      "heapBytes": {
+        "available": false
+      },
+      "formatMs": {
+        "available": true,
+        "median": 5.400000000372529,
+        "p95": 5.599999999627471,
+        "min": 5.299999998882413,
+        "max": 5.599999999627471
+      },
+      "parseMs": {
+        "available": true,
+        "median": 66,
+        "p95": 73,
+        "min": 63.80000000074506,
+        "max": 73
+      },
+      "fixtureBytes": 7144903
+    },
+    "10k-x-50/zeus": {
+      "count": 3,
+      "renderMs": {
+        "available": true,
+        "median": 86.20000000111759,
+        "p95": 141.90000000037253,
+        "min": 85.40000000037253,
+        "max": 141.90000000037253
+      },
+      "scrollP95Ms": {
+        "available": true,
+        "median": 8.099999999627471,
+        "p95": 14.800000000745058,
+        "min": 7.099999999627471,
+        "max": 14.800000000745058
+      },
+      "scrollMaxMs": {
+        "available": true,
+        "median": 8.099999999627471,
+        "p95": 14.800000000745058,
+        "min": 7.099999999627471,
+        "max": 14.800000000745058
+      },
+      "domNodes": {
+        "available": true,
+        "median": 381,
+        "p95": 381,
+        "min": 381,
+        "max": 381
+      },
+      "heapBytes": {
+        "available": true,
+        "median": 24405219,
+        "p95": 24551411,
+        "min": 23397967,
+        "max": 24551411
+      },
+      "formatMs": {
+        "available": true,
+        "median": 5.300000000745058,
+        "p95": 5.5,
+        "min": 5.199999999254942,
+        "max": 5.5
+      },
+      "parseMs": {
+        "available": true,
+        "median": 66.20000000111759,
+        "p95": 69.69999999925494,
+        "min": 63.90000000037253,
+        "max": 69.69999999925494
+      },
+      "fixtureBytes": 7144903
+    },
+    "wide-columns/native": {
+      "count": 3,
+      "renderMs": {
+        "available": true,
+        "median": 9.900000000372529,
+        "p95": 11.699999999254942,
+        "min": 8.199999999254942,
+        "max": 11.699999999254942
+      },
+      "scrollP95Ms": {
+        "available": true,
+        "median": 0.10000000149011612,
+        "p95": 0.30000000074505806,
+        "min": 0.10000000149011612,
+        "max": 0.30000000074505806
+      },
+      "scrollMaxMs": {
+        "available": true,
+        "median": 0.10000000149011612,
+        "p95": 0.30000000074505806,
+        "min": 0.10000000149011612,
+        "max": 0.30000000074505806
+      },
+      "domNodes": {
+        "available": true,
+        "median": 21035,
+        "p95": 21035,
+        "min": 21035,
+        "max": 21035
+      },
+      "heapBytes": {
+        "available": true,
+        "median": 841624,
+        "p95": 880700,
+        "min": 738604,
+        "max": 880700
+      },
+      "formatMs": {
+        "available": true,
+        "median": 0.5,
+        "p95": 0.6000000014901161,
+        "min": 0.5,
+        "max": 0.6000000014901161
+      },
+      "parseMs": {
+        "available": true,
+        "median": 17.90000000037253,
+        "p95": 19.40000000037253,
+        "min": 17.59999999962747,
+        "max": 19.40000000037253
+      },
+      "fixtureBytes": 1546783
+    },
+    "wide-columns/workbench-table": {
+      "count": 3,
+      "renderMs": {
+        "available": true,
+        "median": 8.400000000372529,
+        "p95": 13.900000000372529,
+        "min": 8.200000001117587,
+        "max": 13.900000000372529
+      },
+      "scrollP95Ms": {
+        "available": true,
+        "median": 5.400000000372529,
+        "p95": 7.799999998882413,
+        "min": 5.399999998509884,
+        "max": 7.799999998882413
+      },
+      "scrollMaxMs": {
+        "available": true,
+        "median": 5.400000000372529,
+        "p95": 7.799999998882413,
+        "min": 5.399999998509884,
+        "max": 7.799999998882413
+      },
+      "domNodes": {
+        "available": true,
+        "median": 601,
+        "p95": 622,
+        "min": 601,
+        "max": 622
+      },
+      "heapBytes": {
+        "available": true,
+        "median": 359029,
+        "p95": 369523,
+        "min": 358265,
+        "max": 369523
+      },
+      "formatMs": {
+        "available": true,
+        "median": 1.400000000372529,
+        "p95": 1.400000000372529,
+        "min": 0.5,
+        "max": 1.400000000372529
+      },
+      "parseMs": {
+        "available": true,
+        "median": 22.09999999962747,
+        "p95": 24.699999999254942,
+        "min": 17.300000000745058,
+        "max": 24.699999999254942
+      },
+      "fixtureBytes": 1546783
+    },
+    "wide-columns/zeus": {
+      "count": 3,
+      "renderMs": {
+        "available": true,
+        "median": 29,
+        "p95": 31.5,
+        "min": 26.40000000037253,
+        "max": 31.5
+      },
+      "scrollP95Ms": {
+        "available": true,
+        "median": 12.199999999254942,
+        "p95": 13.300000000745058,
+        "min": 8,
+        "max": 13.300000000745058
+      },
+      "scrollMaxMs": {
+        "available": true,
+        "median": 12.199999999254942,
+        "p95": 13.300000000745058,
+        "min": 8,
+        "max": 13.300000000745058
+      },
+      "domNodes": {
+        "available": true,
+        "median": 365,
+        "p95": 381,
+        "min": 365,
+        "max": 381
+      },
+      "heapBytes": {
+        "available": true,
+        "median": 8955691,
+        "p95": 8955807,
+        "min": 4277904,
+        "max": 8955807
+      },
+      "formatMs": {
+        "available": true,
+        "median": 0.3999999985098839,
+        "p95": 0.5,
+        "min": 0.3999999985098839,
+        "max": 0.5
+      },
+      "parseMs": {
+        "available": true,
+        "median": 16.199999999254942,
+        "p95": 18.09999999962747,
+        "min": 15.099999999627471,
+        "max": 18.09999999962747
+      },
+      "fixtureBytes": 1546783
+    },
+    "narrow-panel/native": {
+      "count": 3,
+      "renderMs": {
+        "available": true,
+        "median": 7.900000000372529,
+        "p95": 8.099999999627471,
+        "min": 7.800000000745058,
+        "max": 8.099999999627471
+      },
+      "scrollP95Ms": {
+        "available": true,
+        "median": 0.09999999962747097,
+        "p95": 0.10000000149011612,
+        "min": 0.09999999962747097,
+        "max": 0.10000000149011612
+      },
+      "scrollMaxMs": {
+        "available": true,
+        "median": 0.09999999962747097,
+        "p95": 0.10000000149011612,
+        "min": 0.09999999962747097,
+        "max": 0.10000000149011612
+      },
+      "domNodes": {
+        "available": true,
+        "median": 21035,
+        "p95": 21035,
+        "min": 21035,
+        "max": 21035
+      },
+      "heapBytes": {
+        "available": true,
+        "median": 715840,
+        "p95": 758292,
+        "min": 696124,
+        "max": 758292
+      },
+      "formatMs": {
+        "available": true,
+        "median": 0.40000000037252903,
+        "p95": 0.40000000037252903,
+        "min": 0.2999999988824129,
+        "max": 0.40000000037252903
+      },
+      "parseMs": {
+        "available": true,
+        "median": 4.400000000372529,
+        "p95": 4.699999999254942,
+        "min": 4.399999998509884,
+        "max": 4.699999999254942
+      },
+      "fixtureBytes": 249743
+    },
+    "narrow-panel/workbench-table": {
+      "count": 3,
+      "renderMs": {
+        "available": true,
+        "median": 9.200000001117587,
+        "p95": 9.900000000372529,
+        "min": 8,
+        "max": 9.900000000372529
+      },
+      "scrollP95Ms": {
+        "available": true,
+        "median": 3.800000000745058,
+        "p95": 6.700000001117587,
+        "min": 3.400000000372529,
+        "max": 6.700000001117587
+      },
+      "scrollMaxMs": {
+        "available": true,
+        "median": 3.800000000745058,
+        "p95": 6.700000001117587,
+        "min": 3.400000000372529,
+        "max": 6.700000001117587
+      },
+      "domNodes": {
+        "available": true,
+        "median": 622,
+        "p95": 622,
+        "min": 622,
+        "max": 622
+      },
+      "heapBytes": {
+        "available": true,
+        "median": 371814,
+        "p95": 371814,
+        "min": 371734,
+        "max": 371814
+      },
+      "formatMs": {
+        "available": true,
+        "median": 0.40000000037252903,
+        "p95": 0.5,
+        "min": 0.2999999988824129,
+        "max": 0.5
+      },
+      "parseMs": {
+        "available": true,
+        "median": 3.799999998882413,
+        "p95": 5.400000000372529,
+        "min": 3.699999999254942,
+        "max": 5.400000000372529
+      },
+      "fixtureBytes": 249743
+    },
+    "narrow-panel/zeus": {
+      "count": 3,
+      "renderMs": {
+        "available": true,
+        "median": 19,
+        "p95": 20.199999999254942,
+        "min": 18.40000000037253,
+        "max": 20.199999999254942
+      },
+      "scrollP95Ms": {
+        "available": true,
+        "median": 3.299999998882413,
+        "p95": 3.400000000372529,
+        "min": 2.699999999254942,
+        "max": 3.400000000372529
+      },
+      "scrollMaxMs": {
+        "available": true,
+        "median": 3.299999998882413,
+        "p95": 3.400000000372529,
+        "min": 2.699999999254942,
+        "max": 3.400000000372529
+      },
+      "domNodes": {
+        "available": true,
+        "median": 167,
+        "p95": 167,
+        "min": 167,
+        "max": 167
+      },
+      "heapBytes": {
+        "available": true,
+        "median": 2485258,
+        "p95": 2496862,
+        "min": 2474866,
+        "max": 2496862
+      },
+      "formatMs": {
+        "available": true,
+        "median": 0.40000000037252903,
+        "p95": 0.6000000014901161,
+        "min": 0.40000000037252903,
+        "max": 0.6000000014901161
+      },
+      "parseMs": {
+        "available": true,
+        "median": 4.199999999254942,
+        "p95": 5.699999999254942,
+        "min": 3.5,
+        "max": 5.699999999254942
+      },
+      "fixtureBytes": 249743
+    }
+  },
+  "limitations": [
+    "Browser runs use Chromium-compatible headless mode; they are not macOS WebKit or Windows WebView2 evidence.",
+    "The WorkbenchTable renderer is a standalone fixed-row virtual-list characterization of the platform table contract, not a Workbench boot.",
+    "IPC and format timings measure the existing JSON-shaped result boundary and local cell formatting; no database or Tauri command is invoked."
+  ]
+}

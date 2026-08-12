@@ -665,7 +665,8 @@ UI 规则：
   - Verify：focused Rust tests + `pnpm run test:rust`。
   - Files：`sql_lexer.rs`、新 analysis module/test、`mod.rs`。
   - Record：[`A0 Implementation Plan`](./sql-workspace-agent-a0-implementation-plan.md)（2026-08-11 完成）。
-- [ ] A0.2：完成 parser dependency spike/ADR；不通过则继续增强本地 parser。
+- [x] A0.2：完成 parser dependency spike/ADR；不通过则继续增强本地 parser。
+  - Record：[`ADR 0003`](./adr/0003-sql-agent-parser-boundary.md)（2026-08-12，No-Go；malformed fail-closed 已补）。
   - Acceptance：覆盖率、体积、license、Rust 版本、dialect gaps 有数据。
   - Verify：fixture command 与 `cargo tree` 记录。
   - Files：ADR/spike doc；只有批准后才改 Cargo files。
@@ -674,31 +675,43 @@ UI 规则：
   - Verify：SQLite adapter tests + MySQL unsupported/preview tests。
   - Plan：[`A1.1 Implementation Plan`](./sql-workspace-agent-a1-1-implementation-plan.md)。
   - Record：`e808fbef`、`08e4fc81`、`2007400a`（2026-08-11 完成；25 个 focused tests + 全量回归）。
-- [ ] A1.2：实现 bounded schema search/cache，之后再加 FK graph。
+- [x] A1.2：实现 bounded schema search/cache，之后再加 FK graph。
+  - Record：[`Agent foundation verification`](./sql-mvp-phases/phase-a0-a1-foundation-verification.md)（2026-08-12）。
   - Acceptance：稳定排序、TTL/invalidation、object/byte cap 可测。
   - Verify：pure Rust tests。
-- [ ] A2.1：实现 domain、state machine、budget、evidence store。
+- [x] A2.1：实现 domain、state machine、budget、evidence store。
+  - Record：[`A2.1 Runtime Domain Verification`](./sql-mvp-phases/phase-a2-1-runtime-domain-verification.md)（2026-08-12 完成；47 个 agent focused tests）。
   - Acceptance：非法 transition、timeout、cancel、redaction 均有 tests。
   - Verify：`cargo test --lib agent`。
-- [ ] A2.2：统一 capability schema 并在 Rust policy 强制执行。
+- [x] A2.2：统一 capability schema 并在 Rust policy 强制执行。
+  - Record：[`A2.2 Capability Policy Verification`](./sql-mvp-phases/phase-a2-2-capability-policy-verification.md)（2026-08-12 完成；52 个 Rust agent tests + 2 个 canonical capability tests）。
   - Acceptance：manifest/model 不能绕过 tool capability。
   - Verify：allow/deny table tests + frontend type tests。
-- [ ] A2.3：实现 deterministic Model Gateway 与 Suggest-only loop。
+- [x] A2.3：实现 deterministic Model Gateway 与 Suggest-only loop。
+  - Record：[`A2.3 Suggest-only Loop Verification`](./sql-mvp-phases/phase-a2-3-suggest-only-loop-verification.md)（2026-08-12 完成；62 个 Rust agent tests）。
   - Acceptance：未知 tool/坏 JSON/超预算是 structured error，零 query call。
   - Verify：scripted model integration tests。
-- [ ] A2.4：增加 `ISqlAgentService` 与 Tauri command/event bridge。
+- [x] A2.4：增加 `ISqlAgentService` 与 Tauri command/event bridge。
+  - Record：[`A2.4 Service Bridge Verification`](./sql-mvp-phases/phase-a2-4-service-bridge-verification.md)（2026-08-12）。
+  - Acceptance：view 不直接 invoke；stream/cancel listener 可 dispose。
+  - Verify：`test:sql-services` + `test:sql-agent` + Rust checks。
   - Acceptance：view 不直接 invoke；stream/cancel listener 可 dispose。
   - Verify：`test:sql-services` + Rust command tests。
-- [ ] A3.1：增加 read-only explain/execute tools。
+- [x] A3.1：增加 read-only explain/execute tools。
+  - Record：[`A3.1 Read-only Tools Verification`](./sql-mvp-phases/phase-a3-1-read-only-tools-verification.md)（2026-08-12）。
+  - Files：`agent/read_only.rs`、`agent/policy.rs`、`state.rs`、Workbench Agent service contract。
   - Acceptance：SQLite SELECT 成功，write/multi-statement/unknown 全拒绝。
-  - Verify：Rust integration + `test:sql-domain`。
-- [ ] A3.2：实现 result shape/aggregate/sample policy。
+  - Verify：Rust Agent integration + `test:sql-services` + `test:sql-domain`。
+- [x] A3.2：实现 result shape/aggregate/sample policy。
+  - Record：[`A3.2 Result Policy Verification`](./sql-mvp-phases/phase-a3-2-result-policy-verification.md)（2026-08-12）。
   - Acceptance：默认不外发 rows，sample cap/redaction/approval 可测。
-  - Verify：policy tests + fake model envelope snapshot。
-- [ ] A4.1：先接 Editor/Error actions 和 diff artifact。
+  - Verify：policy tests + fake model envelope snapshot + scripted ReadOnly loop。
+- [x] A4.1：先接 Editor/Error actions 和 diff artifact。
+  - Record：[`A4 Workbench Verification`](./sql-mvp-phases/phase-a4-workbench-verification.md)（2026-08-12，browser QA pending）。
   - Acceptance：stale editor 不覆盖、已有 Phase 06 commands 不回归。
-  - Verify：`test:sql-editor` + `test:sql-advanced` + browser QA。
+  - Verify：artifact tests + `test:sql-editor` + `test:sql-advanced`。
 - [ ] A4.2：最后接 Agent Panel、Schema/Result actions。
+  - Progress：Panel shell 与 typed run projection 已实现；Schema/Result actions 和 browser QA 仍待完成。
   - Acceptance：全状态可见、键盘可达、dispose/cancel 行为清晰。
   - Verify：contribution tests + Playwright desktop/narrow viewport screenshots。
 
@@ -839,4 +852,4 @@ pnpm run test
 - A6 write 和 A8 advanced 保持在首版范围之外；
 - Phase 08 状态和 SQLite/MySQL/PostgreSQL maturity 没有被本文改变。
 
-本次用户已明确授权 A0.1 与 A1.1 作为顺序例外，并分别按独立 implementation plan 完成。A0.2、A1.2 与 A2+ 仍保持未批准、未实现；后续继续按 Stage 拆分，不能把 A0-A4 合并成一个大 PR。
+本次用户已明确授权 A0.1 与 A1.1 作为顺序例外，并分别按独立 implementation plan 完成。A0.2、A1.2、A2.1-A2.4 与 A3.1-A3.2 已按独立 spike/implementation record 完成；A4 仍保持未实现，后续继续按 Stage 拆分，不能把 A0-A4 合并成一个大 PR。

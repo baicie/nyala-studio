@@ -42,12 +42,21 @@ import { shouldAutoSaveSqlEditorDraft } from '../../sqlProduct/common/sqlProduct
 import { formatSql } from '../../sqlAdvanced/common/sqlAdvancedFormatter.js';
 import { createExplainSql } from '../../sqlAdvanced/common/sqlAdvancedExplain.js';
 import { getDialectForConnectionKind } from '../../../services/sql/common/sqlDialect.js';
+import {
+	applySqlAgentArtifact,
+	SqlAgentArtifact,
+	SqlAgentArtifactApplyResult,
+	SqlAgentArtifactTarget
+} from '../../../services/sql/common/sqlAgentArtifacts.js';
 
 export interface SqlEditorAssistantContext {
+	readonly editorId?: string;
+	readonly connectionId?: string;
 	readonly connectionKind?: SqlConnectionKind;
 	readonly connectionName?: string;
 	readonly sql: string;
 	readonly selectedSql?: string;
+	readonly versionId?: number;
 }
 
 export class SqlEditorPane extends EditorPane {
@@ -269,13 +278,47 @@ export class SqlEditorPane extends EditorPane {
 	getAssistantContext(): SqlEditorAssistantContext {
 		const connection = this.getSelectedConnection();
 		const selectedSql = this.getSelectedSql();
+		const model = this.editor?.getModel();
 
 		return {
+			editorId: this.currentInput?.id,
+			connectionId: connection?.id,
 			connectionKind: connection?.kind,
 			connectionName: connection?.name,
 			sql: this.getAllSql(),
-			selectedSql: selectedSql.trim() ? selectedSql : undefined
+			selectedSql: selectedSql.trim() ? selectedSql : undefined,
+			versionId: model?.getVersionId()
 		};
+	}
+
+	getAgentArtifactTarget(): SqlAgentArtifactTarget | undefined {
+		const model = this.editor?.getModel();
+		const editorId = this.currentInput?.id;
+		if (!model || !editorId) {
+			return undefined;
+		}
+		return {
+			editorId,
+			versionId: model.getVersionId(),
+			sql: model.getValue()
+		};
+	}
+
+	applyAgentArtifact(artifact: SqlAgentArtifact): SqlAgentArtifactApplyResult {
+		const model = this.editor?.getModel();
+		const target = this.getAgentArtifactTarget();
+		if (!model || !target) {
+			return { applied: false, reason: 'editor' };
+		}
+		const result = applySqlAgentArtifact(artifact, target);
+		if (result.applied) {
+			model.setValue(result.sql);
+			this.dirty = true;
+			this.saveCurrentDraft();
+			this.updateReadyStatus();
+			this.updateToolbarState();
+		}
+		return result;
 	}
 
 	async executeQuery(sourceOrSelectionOnly: SqlEditorExecutionSource | boolean): Promise<void> {

@@ -776,6 +776,11 @@ fn open_sqlite_connection(input: &SqlConnectionInput) -> Result<Connection, Stri
         conn.pragma_update(None, "foreign_keys", "ON")
             .map_err(|err| format!("failed to enable sqlite foreign_keys: {err}"))?;
 
+        if input.read_only {
+            conn.pragma_update(None, "query_only", 1)
+                .map_err(|err| format!("failed to enable sqlite query_only mode: {err}"))?;
+        }
+
         return Ok(conn);
     }
 

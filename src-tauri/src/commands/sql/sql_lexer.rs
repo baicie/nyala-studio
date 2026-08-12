@@ -177,6 +177,193 @@ pub(super) fn split_sql_statements(sql: &str, dialect: SqlDialect) -> Vec<&str> 
     statements
 }
 
+/// Returns false when quotes, comments, or parentheses cannot be closed.
+/// Classification must fail closed for these inputs because statement
+/// boundaries and side effects are otherwise ambiguous.
+pub(super) fn sql_structure_is_well_formed(sql: &str, dialect: SqlDialect) -> bool {
+    let bytes = sql.as_bytes();
+    let mut index = 0usize;
+    let mut depth = 0usize;
+
+    while index < bytes.len() {
+        let next = skip_statement_trivia(bytes, index, dialect);
+        if next != index {
+            // A block comment that reaches EOF is indistinguishable from a
+            // comment containing the rest of the query.
+            if next == bytes.len() && !statement_trivia_is_well_formed(bytes, index, dialect) {
+                return false;
+            }
+            index = next;
+            continue;
+        }
+
+        index = match bytes[index] {
+            b'\'' | b'"' => {
+                let next = scan_statement_quoted(bytes, index, bytes[index], dialect);
+                if !quoted_is_closed(bytes, index, bytes[index], dialect) {
+                    return false;
+                }
+                next
+            }
+            b'`' if dialect != SqlDialect::PostgreSql => {
+                let next = scan_statement_quoted(bytes, index, b'`', dialect);
+                if !quoted_is_closed(bytes, index, b'`', dialect) {
+                    return false;
+                }
+                next
+            }
+            b'[' if dialect == SqlDialect::Sqlite => {
+                let next = skip_sql_bracket_identifier(bytes, index);
+                if !bracket_identifier_is_closed(bytes, index) {
+                    return false;
+                }
+                next
+            }
+            b'$' if dialect == SqlDialect::PostgreSql => {
+                match skip_postgres_dollar_quote(bytes, index) {
+                    Some(next) if next == bytes.len() => {
+                        let delimiter_end = postgres_dollar_delimiter_end(bytes, index);
+                        let delimiter = &bytes[index..=delimiter_end];
+                        let content_start = delimiter_end + 1;
+                        if !bytes[content_start..]
+                            .windows(delimiter.len())
+                            .any(|window| window == delimiter)
+                        {
+                            return false;
+                        }
+                        next
+                    }
+                    Some(next) => next,
+                    None => index + 1,
+                }
+            }
+            b'(' => {
+                depth += 1;
+                index + 1
+            }
+            b')' => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+                index + 1
+            }
+            _ => index + 1,
+        };
+    }
+
+    depth == 0
+}
+
+fn scan_statement_quoted(bytes: &[u8], mut index: usize, quote: u8, dialect: SqlDialect) -> usize {
+    index += 1;
+    while index < bytes.len() {
+        if dialect == SqlDialect::MySql && bytes[index] == b'\\' && quote != b'`' {
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        if bytes[index] == quote {
+            if index + 1 < bytes.len() && bytes[index + 1] == quote {
+                index += 2;
+                continue;
+            }
+            return index + 1;
+        }
+        index += 1;
+    }
+    index
+}
+
+fn quoted_is_closed(bytes: &[u8], start: usize, quote: u8, dialect: SqlDialect) -> bool {
+    let mut index = start + 1;
+    while index < bytes.len() {
+        if dialect == SqlDialect::MySql && bytes[index] == b'\\' && quote != b'`' {
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        if bytes[index] == quote {
+            if index + 1 < bytes.len() && bytes[index + 1] == quote {
+                index += 2;
+                continue;
+            }
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn bracket_identifier_is_closed(bytes: &[u8], start: usize) -> bool {
+    let mut index = start + 1;
+    while index < bytes.len() {
+        if bytes[index] == b']' {
+            if index + 1 < bytes.len() && bytes[index + 1] == b']' {
+                index += 2;
+                continue;
+            }
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn statement_block_comment_is_closed(bytes: &[u8], start: usize, dialect: SqlDialect) -> bool {
+    let mut index = start + 2;
+    let mut depth = 1usize;
+    while index + 1 < bytes.len() {
+        if dialect == SqlDialect::PostgreSql && bytes[index] == b'/' && bytes[index + 1] == b'*' {
+            depth += 1;
+            index += 2;
+            continue;
+        }
+        if bytes[index] == b'*' && bytes[index + 1] == b'/' {
+            depth -= 1;
+            if depth == 0 {
+                return true;
+            }
+            index += 2;
+            continue;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn statement_trivia_is_well_formed(bytes: &[u8], mut index: usize, dialect: SqlDialect) -> bool {
+    loop {
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if dialect == SqlDialect::MySql && index < bytes.len() && bytes[index] == b'#' {
+            index = skip_sql_line_comment(bytes, index + 1);
+            continue;
+        }
+        if index + 1 < bytes.len() && bytes[index] == b'-' && bytes[index + 1] == b'-' {
+            index = skip_sql_line_comment(bytes, index + 2);
+            continue;
+        }
+        if index + 1 < bytes.len() && bytes[index] == b'/' && bytes[index + 1] == b'*' {
+            if !statement_block_comment_is_closed(bytes, index, dialect) {
+                return false;
+            }
+            index = skip_statement_block_comment(bytes, index, dialect);
+            continue;
+        }
+        return true;
+    }
+}
+
+fn postgres_dollar_delimiter_end(bytes: &[u8], start: usize) -> usize {
+    let mut end = start + 1;
+    if bytes.get(end) != Some(&b'$') {
+        while end < bytes.len() && bytes[end] != b'$' && is_postgres_identifier_byte(bytes[end]) {
+            end += 1;
+        }
+    }
+    end
+}
+
 fn skip_statement_quoted(bytes: &[u8], mut index: usize, quote: u8, dialect: SqlDialect) -> usize {
     index += 1;
     while index < bytes.len() {
@@ -492,5 +679,36 @@ mod tests {
     #[test]
     fn malformed_cte_is_not_classified_as_a_statement() {
         assert_eq!(statement_keyword_after_with("WITH cte AS (SELECT 1"), None);
+    }
+
+    #[test]
+    fn malformed_quotes_comments_and_parentheses_are_not_well_formed() {
+        for (dialect, sql) in [
+            (SqlDialect::Sqlite, "SELECT 'unterminated"),
+            (SqlDialect::PostgreSql, "SELECT 1 /* unterminated"),
+            (SqlDialect::Sqlite, "SELECT (1"),
+            (SqlDialect::MySql, "SELECT 1)"),
+        ] {
+            assert!(
+                !sql_structure_is_well_formed(sql, dialect),
+                "{dialect:?}: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn escaped_quotes_and_nested_comments_remain_well_formed() {
+        assert!(sql_structure_is_well_formed(
+            "SELECT 'it''s fine'",
+            SqlDialect::Sqlite
+        ));
+        assert!(sql_structure_is_well_formed(
+            "SELECT 1 /* outer /* inner */ done */",
+            SqlDialect::PostgreSql
+        ));
+        assert!(sql_structure_is_well_formed(
+            "SELECT [a]]b] FROM t",
+            SqlDialect::Sqlite
+        ));
     }
 }

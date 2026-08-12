@@ -32,6 +32,7 @@ pub struct ConnectionEntry {
     pub driver_id: DriverId,
     pub conn: BoxedConnection,
     open_profile: ConnectionProfile,
+    runtime_revision: u64,
 }
 
 pub struct ConnectionManager {
@@ -45,6 +46,7 @@ struct Inner {
     drivers: HashMap<String, ConnectionEntry>,
     profile_by_id: HashMap<String, ConnectionProfile>,
     last_secret_by_id: HashMap<String, ConnectionSecret>,
+    next_runtime_revision: u64,
 }
 
 impl ConnectionManager {
@@ -95,6 +97,17 @@ impl ConnectionManager {
             .drivers
             .get(profile_id)
             .map(|entry| entry.open_profile.clone())
+    }
+
+    pub(crate) fn get_open_profile_with_revision(
+        &self,
+        profile_id: &str,
+    ) -> Option<(ConnectionProfile, u64)> {
+        let inner = self.inner.lock().expect("connection manager poisoned");
+        inner
+            .drivers
+            .get(profile_id)
+            .map(|entry| (entry.open_profile.clone(), entry.runtime_revision))
     }
 
     pub fn drop_secret(&self, profile_id: &str) {
@@ -184,14 +197,26 @@ impl ConnectionManager {
             .map_err(|message| SqlCommandError::new("open_failed", message))?;
 
         let mut inner = self.inner.lock().expect("connection manager poisoned");
-        inner.drivers.insert(
+        let Some(runtime_revision) = inner.next_runtime_revision.checked_add(1) else {
+            conn.close();
+            return Err(SqlCommandError::new(
+                "internal",
+                "connection runtime revision exhausted",
+            ));
+        };
+        inner.next_runtime_revision = runtime_revision;
+        let replaced = inner.drivers.insert(
             profile.id.clone(),
             ConnectionEntry {
                 driver_id: runtime_id,
                 conn,
                 open_profile: profile.clone(),
+                runtime_revision,
             },
         );
+        if let Some(entry) = replaced {
+            entry.conn.close();
+        }
         inner.last_secret_by_id.insert(profile.id.clone(), secret);
         Ok(())
     }
@@ -207,6 +232,27 @@ impl ConnectionManager {
     pub fn is_open(&self, profile_id: &str) -> bool {
         let inner = self.inner.lock().expect("connection manager poisoned");
         inner.drivers.contains_key(profile_id)
+    }
+
+    /// Advances the metadata revision for an open connection after a schema
+    /// mutation or an explicit refresh. Closed connections have no runtime
+    /// revision to advance; their next open receives a fresh one.
+    pub(crate) fn bump_metadata_revision(&self, profile_id: &str) -> Result<(), SqlCommandError> {
+        let mut inner = self.inner.lock().expect("connection manager poisoned");
+        if !inner.drivers.contains_key(profile_id) {
+            return Ok(());
+        }
+        let Some(next_revision) = inner.next_runtime_revision.checked_add(1) else {
+            return Err(SqlCommandError::new(
+                "internal",
+                "connection runtime revision exhausted",
+            ));
+        };
+        inner.next_runtime_revision = next_revision;
+        if let Some(entry) = inner.drivers.get_mut(profile_id) {
+            entry.runtime_revision = next_revision;
+        }
+        Ok(())
     }
 
     pub fn with_conn<R>(
@@ -234,6 +280,28 @@ impl ConnectionManager {
             .ok_or_else(|| SqlCommandError::new("not_open", "connection not open"))?;
 
         if entry.open_profile != *profile {
+            return Err(SqlCommandError::new(
+                "validation",
+                "open connection changed while metadata was being resolved",
+            ));
+        }
+
+        f(entry)
+    }
+
+    pub(crate) fn with_conn_for_runtime<R>(
+        &self,
+        profile: &ConnectionProfile,
+        runtime_revision: u64,
+        f: impl FnOnce(&mut ConnectionEntry) -> Result<R, SqlCommandError>,
+    ) -> Result<R, SqlCommandError> {
+        let mut inner = self.inner.lock().expect("connection manager poisoned");
+        let entry = inner
+            .drivers
+            .get_mut(&profile.id)
+            .ok_or_else(|| SqlCommandError::new("not_open", "connection not open"))?;
+
+        if entry.open_profile != *profile || entry.runtime_revision != runtime_revision {
             return Err(SqlCommandError::new(
                 "validation",
                 "open connection changed while metadata was being resolved",
@@ -388,6 +456,76 @@ mod tests {
             .unwrap();
         assert!(!manager.is_open("a"));
         assert!(manager.get_secret("a").is_none());
+    }
+
+    #[test]
+    fn reopen_same_profile_id_allocates_a_new_runtime_revision() {
+        let manager = fresh_manager();
+        let mut p = profile("a", DriverIdDto::Sqlite);
+        p.remember_in_memory = true;
+
+        manager
+            .open(&p, ConnectionSecret::default())
+            .expect("open first runtime");
+        let (_, first_revision) = manager
+            .get_open_profile_with_revision("a")
+            .expect("first runtime snapshot");
+
+        manager.close("a");
+        manager
+            .open(&p, ConnectionSecret::default())
+            .expect("open replacement runtime");
+        let (_, second_revision) = manager
+            .get_open_profile_with_revision("a")
+            .expect("replacement runtime snapshot");
+
+        assert!(second_revision > first_revision);
+    }
+
+    #[test]
+    fn runtime_guard_rejects_a_reopened_connection_with_the_same_profile() {
+        let manager = fresh_manager();
+        let mut p = profile("a", DriverIdDto::Sqlite);
+        p.remember_in_memory = true;
+
+        manager
+            .open(&p, ConnectionSecret::default())
+            .expect("open first runtime");
+        let (open_profile, first_revision) = manager
+            .get_open_profile_with_revision("a")
+            .expect("first runtime snapshot");
+
+        manager.close("a");
+        manager
+            .open(&p, ConnectionSecret::default())
+            .expect("open replacement runtime");
+        let error = manager
+            .with_conn_for_runtime(&open_profile, first_revision, |_| Ok(()))
+            .unwrap_err();
+
+        assert!(matches!(error, SqlCommandError::Validation { .. }));
+    }
+
+    #[test]
+    fn metadata_revision_changes_without_reopening_after_refresh() {
+        let manager = fresh_manager();
+        let mut p = profile("a", DriverIdDto::Sqlite);
+        p.remember_in_memory = true;
+        manager
+            .open(&p, ConnectionSecret::default())
+            .expect("open runtime");
+        let (_, before) = manager
+            .get_open_profile_with_revision("a")
+            .expect("runtime snapshot");
+
+        manager
+            .bump_metadata_revision("a")
+            .expect("bump metadata revision");
+        let (_, after) = manager
+            .get_open_profile_with_revision("a")
+            .expect("runtime snapshot after refresh");
+
+        assert!(after > before);
     }
 
     #[test]

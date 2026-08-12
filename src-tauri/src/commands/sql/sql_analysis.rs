@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 use super::sql_lexer::{
-    first_sql_keyword_for_dialect, split_sql_statements, sql_tokens,
+    first_sql_keyword_for_dialect, split_sql_statements, sql_structure_is_well_formed, sql_tokens,
     statement_keyword_after_with_for_dialect, SqlToken,
 };
 use super::SqlDialect;
@@ -76,6 +76,9 @@ pub fn analyze_sql(sql: &str, dialect: SqlDialect) -> SqlAnalysis {
     }
 
     let statement = statements[0];
+    if !sql_structure_is_well_formed(statement, dialect) {
+        return unknown_analysis(dialect, 1, SqlAnalysisWarning::UnknownStatement);
+    }
     let tokens = sql_tokens(statement, dialect);
     let Some(first_keyword) = first_sql_keyword_for_dialect(statement, dialect) else {
         return unknown_analysis(dialect, 1, SqlAnalysisWarning::UnknownStatement);
@@ -458,6 +461,10 @@ mod tests {
             "PRAGMA journal_mode = WAL",
             "EXPLAIN ANALYZE SELECT * FROM users",
             "WITH recent AS (SELECT * FROM orders",
+            "SELECT 'unterminated",
+            "SELECT 1 /* unterminated comment",
+            "SELECT (1",
+            "SELECT 1)",
             "WITH removed AS (DELETE FROM users RETURNING *) SELECT * FROM removed",
             "CALL refresh_cache()",
         ] {

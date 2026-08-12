@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "generatedAt": "2026-08-11T22:48:07.667Z",
+  "decision": "NO-GO",
+  "checks": [
+    {
+      "id": "agent-default-smoke",
+      "passed": true,
+      "reason": "pnpm run test includes test:sql-agent"
+    },
+    {
+      "id": "benchmark-default-smoke",
+      "passed": true,
+      "reason": "pnpm run test includes deterministic result-grid benchmark smoke"
+    },
+    {
+      "id": "z1-go",
+      "passed": false,
+      "reason": "Z1 gate decision is NO-GO"
+    },
+    {
+      "id": "a4-checkpoint-w",
+      "passed": false,
+      "reason": "A4 Checkpoint W remains pending native WebView/screen-reader evidence"
+    },
+    {
+      "id": "z2-production-dependency",
+      "passed": false,
+      "reason": "@zeus-web/data-grid is not an exact production dependency"
+    },
+    {
+      "id": "z2-roadmap-status",
+      "passed": false,
+      "reason": "roadmap still marks Z2 as pending"
+    },
+    {
+      "id": "z2-renderer-seam",
+      "passed": false,
+      "reason": "SQL Result is missing the Zeus adapter/native fallback seam"
+    },
+    {
+      "id": "zeus-import-boundary",
+      "passed": true,
+      "reason": "Zeus production imports stay inside the SQL Result contribution"
+    }
+  ],
+  "blockers": [
+    "Z1 gate decision is NO-GO",
+    "A4 Checkpoint W remains pending native WebView/screen-reader evidence",
+    "@zeus-web/data-grid is not an exact production dependency",
+    "roadmap still marks Z2 as pending",
+    "SQL Result is missing the Zeus adapter/native fallback seam"
+  ],
+  "inputs": {
+    "z1Decision": "NO-GO",
+    "z1Gate": "docs/sql-mvp-phases/phase-z1-gate.json",
+    "a4Verification": "docs/sql-mvp-phases/phase-a4-workbench-verification.md"
+  }
+}

@@ -1,0 +1,290 @@
+name: SQL Result Grid Native WebView Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: 'Runs per workload and renderer'
+        required: false
+        default: '5'
+        type: string
+      macos_runner:
+        description: 'GitHub-hosted or self-hosted macOS runner label'
+        required: false
+        default: 'macos-14'
+        type: string
+      windows_runner:
+        description: 'GitHub-hosted or self-hosted Windows runner label'
+        required: false
+        default: 'windows-2022'
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_PROFILE_DEV_DEBUG: 0
+  RUST_BACKTRACE: 1
+
+concurrency:
+  group: sql-result-grid-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare-zeus:
+    name: Prepare temporary Zeus audit bundle
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.33.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Install Zeus only in a temporary directory
+        shell: bash
+        run: |
+          audit_dir="$RUNNER_TEMP/nyala-zeus-audit"
+          mkdir -p "$audit_dir"
+          printf '{"name":"nyala-zeus-audit","private":true}\n' > "$audit_dir/package.json"
+          pnpm add --dir "$audit_dir" --save-exact @zeus-web/data-grid@0.1.0-beta.2 esbuild@0.28.1
+          entry="$audit_dir/node_modules/@zeus-web/data-grid/dist/wc/auto.js"
+          test -f "$entry"
+          "$audit_dir/node_modules/.bin/esbuild" "$entry" \
+            --bundle --format=iife --platform=browser --minify --legal-comments=none \
+            --outfile="$audit_dir/data-grid-bundle.js"
+
+      - name: Upload temporary Zeus bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sql-result-grid-zeus-audit
+          path: ${{ runner.temp }}/nyala-zeus-audit/data-grid-bundle.js
+          if-no-files-found: error
+          retention-days: 7
+
+  macos-webkit:
+    name: macOS WKWebView benchmark and screenshots
+    needs: prepare-zeus
+    if: always()
+    runs-on: ${{ inputs.macos_runner }}
+    timeout-minutes: 120
+    env:
+      EVIDENCE_DIR: ${{ runner.temp }}/macos-webkit-evidence
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize fail-closed evidence
+        run: |
+          node -e "const fs=require('node:fs');const dir=process.env.EVIDENCE_DIR;fs.mkdirSync(dir+'/screenshots',{recursive:true});const report={version:2,generatedAt:new Date().toISOString(),label:'macOS WebKit',status:'blocked',runs:0,reason:'The native WKWebView build or benchmark did not complete.',driverProvider:'embedded',nativeWebView:false,nativeWebView2:false,engine:'embedded-unverified',browser:'unknown',summary:{},records:[],screenshots:[]};fs.writeFileSync(dir+'/platform-evidence.json',JSON.stringify(report,null,2)+'\n');fs.writeFileSync(dir+'/nyala-app.log','Nyala native benchmark did not start.\n');"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.33.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: '. -> target'
+          key: sql-result-grid-webdriver-macos
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download temporary Zeus bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sql-result-grid-zeus-audit
+          path: ${{ runner.temp }}/nyala-zeus-audit
+
+      - name: Build frontend
+        run: pnpm run build
+
+      - name: Build webdriver-enabled Nyala debug binary
+        run: >-
+          pnpm exec tauri build --debug --features webdriver --no-bundle --ci
+          --config '{"build":{"beforeBuildCommand":""}}' -- --locked
+
+      - name: Verify native binary
+        run: test -x "$GITHUB_WORKSPACE/target/debug/sql-studio-next"
+
+      - name: Run embedded WKWebView benchmark
+        env:
+          BENCHMARK_REPEAT: ${{ inputs.repeat || '5' }}
+        run: |
+          node scripts/benchmark-sql-result-grid-webdriver.mjs \
+            --app-binary "$GITHUB_WORKSPACE/target/debug/sql-studio-next" \
+            --platform macos \
+            --repeat "$BENCHMARK_REPEAT" \
+            --zeus-bundle "$RUNNER_TEMP/nyala-zeus-audit/data-grid-bundle.js" \
+            --output "$EVIDENCE_DIR/platform-evidence.json" \
+            --screenshot-dir "$EVIDENCE_DIR/screenshots" \
+            --app-log "$EVIDENCE_DIR/nyala-app.log"
+
+      - name: Upload macOS evidence, screenshots, and app log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sql-result-grid-macos-webkit
+          path: ${{ runner.temp }}/macos-webkit-evidence
+          if-no-files-found: warn
+          retention-days: 14
+
+  windows-webview2:
+    name: Windows WebView2 benchmark and screenshots
+    needs: prepare-zeus
+    if: always()
+    runs-on: ${{ inputs.windows_runner }}
+    timeout-minutes: 120
+    env:
+      EVIDENCE_DIR: ${{ runner.temp }}/windows-webview2-evidence
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize fail-closed evidence
+        shell: pwsh
+        run: |
+          node -e "const fs=require('node:fs');const dir=process.env.EVIDENCE_DIR;fs.mkdirSync(dir+'/screenshots',{recursive:true});const report={version:2,generatedAt:new Date().toISOString(),label:'Windows WebView2',status:'blocked',runs:0,reason:'The native WebView2 build or benchmark did not complete.',driverProvider:'embedded',nativeWebView:false,nativeWebView2:false,engine:'embedded-unverified',browser:'unknown',summary:{},records:[],screenshots:[]};fs.writeFileSync(dir+'/platform-evidence.json',JSON.stringify(report,null,2)+'\n');fs.writeFileSync(dir+'/nyala-app.log','Nyala native benchmark did not start.\n');"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.33.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: '. -> target'
+          key: sql-result-grid-webdriver-windows
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download temporary Zeus bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sql-result-grid-zeus-audit
+          path: ${{ runner.temp }}/nyala-zeus-audit
+
+      - name: Build frontend
+        run: pnpm run build
+
+      - name: Build webdriver-enabled Nyala debug binary
+        shell: pwsh
+        run: >-
+          pnpm exec tauri build --debug --features webdriver --no-bundle --ci
+          --config '{"build":{"beforeBuildCommand":""}}' -- --locked
+
+      - name: Verify native binary
+        shell: pwsh
+        run: |
+          $binary = Join-Path $env:GITHUB_WORKSPACE 'target\debug\sql-studio-next.exe'
+          if (-not (Test-Path $binary -PathType Leaf)) {
+            throw "Nyala debug binary was not created at $binary"
+          }
+
+      - name: Run embedded WebView2 benchmark
+        shell: pwsh
+        env:
+          BENCHMARK_REPEAT: ${{ inputs.repeat || '5' }}
+        run: |
+          node scripts/benchmark-sql-result-grid-webdriver.mjs `
+            --app-binary "$env:GITHUB_WORKSPACE\target\debug\sql-studio-next.exe" `
+            --platform windows `
+            --repeat "$env:BENCHMARK_REPEAT" `
+            --zeus-bundle "$env:RUNNER_TEMP\nyala-zeus-audit\data-grid-bundle.js" `
+            --output "$env:EVIDENCE_DIR\platform-evidence.json" `
+            --screenshot-dir "$env:EVIDENCE_DIR\screenshots" `
+            --app-log "$env:EVIDENCE_DIR\nyala-app.log"
+
+      - name: Upload Windows evidence, screenshots, and app log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sql-result-grid-windows-webview2
+          path: ${{ runner.temp }}/windows-webview2-evidence
+          if-no-files-found: warn
+          retention-days: 14
+
+  aggregate-gate:
+    name: Aggregate platform evidence and run Z1 gate
+    needs: [macos-webkit, windows-webview2]
+    if: always()
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Initialize aggregate evidence directory
+        run: mkdir -p "$RUNNER_TEMP/sql-result-grid-evidence"
+
+      - name: Download platform evidence
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: sql-result-grid-*
+          path: ${{ runner.temp }}/sql-result-grid-evidence
+          merge-multiple: false
+
+      - name: Merge evidence
+        run: |
+          node scripts/merge-sql-result-grid-platform-evidence.mjs \
+            --macos "$RUNNER_TEMP/sql-result-grid-evidence/sql-result-grid-macos-webkit/platform-evidence.json" \
+            --windows "$RUNNER_TEMP/sql-result-grid-evidence/sql-result-grid-windows-webview2/platform-evidence.json" \
+            --output "$RUNNER_TEMP/sql-result-grid-evidence/platform-evidence.json"
+
+      - name: Run fail-closed Z1 gate
+        run: |
+          node scripts/verify-sql-result-grid-gate.mjs \
+            docs/sql-mvp-phases/phase-z1-benchmark.json \
+            "$RUNNER_TEMP/sql-result-grid-evidence/phase-z1-gate.json" \
+            "$RUNNER_TEMP/sql-result-grid-evidence/platform-evidence.json"
+
+      - name: Upload aggregate gate and visual evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sql-result-grid-platform-gate
+          path: ${{ runner.temp }}/sql-result-grid-evidence
+          if-no-files-found: warn
+          retention-days: 14

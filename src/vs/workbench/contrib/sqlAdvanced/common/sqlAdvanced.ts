@@ -19,3 +19,5 @@ export const SQL_AI_ASSISTANT_COMMAND_ID = 'sql.ai.assistant';
 export const SQL_AI_EXPLAIN_ERROR_COMMAND_ID = 'sql.ai.explainError';
 export const SQL_AI_GENERATE_QUERY_COMMAND_ID = 'sql.ai.generateQuery';
 export const SQL_AI_OPTIMIZE_QUERY_COMMAND_ID = 'sql.ai.optimizeQuery';
+export const SQL_AI_SCHEMA_GENERATE_QUERY_COMMAND_ID = 'sql.ai.schemaGenerateQuery';
+export const SQL_AI_RESULT_ASSISTANT_COMMAND_ID = 'sql.ai.resultAssistant';

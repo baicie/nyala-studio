@@ -5,6 +5,10 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
+
+#[cfg(test)]
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -17,6 +21,13 @@ use super::super::state::SqlConnectionStore;
 use super::super::types::{
     ConnectionProfile, DriverIdDto, SqlCommandError, SqlConnection, SqlConnectionKind,
 };
+use super::schema_context::{
+    search_snapshot, SchemaCacheKey, SchemaSearchRequest, SchemaSearchResult, SchemaSnapshotCache,
+    SchemaSnapshotObject, DEFAULT_SCHEMA_CACHE_TTL,
+};
+
+#[allow(unused_imports)]
+pub use super::schema_context::{SchemaMatchKind, SchemaSearchBudget, SchemaSearchMatch};
 
 const MYSQL_METADATA_UNSUPPORTED: &str =
     "MySQL Preview metadata is not available through the V2 probe connection";
@@ -149,12 +160,23 @@ pub trait SqlCoreAdapter: Send + Sync {
         &self,
         request: SchemaContextRequest,
     ) -> Result<SchemaContextResult, SqlCommandError>;
+
+    /// Searches the validated schema snapshot without querying the model or
+    /// exposing V1/V2 store identity.
+    fn search_schema(
+        &self,
+        request: SchemaSearchRequest,
+    ) -> Result<SchemaSearchResult, SqlCommandError>;
+
+    /// Invalidates all cached schema snapshots for one opaque connection id.
+    fn invalidate_schema_cache(&self, connection_id: &str) -> Result<(), SqlCommandError>;
 }
 
 /// Local adapter backed by the V2 metadata manager and optional V1 identity validation.
 pub struct LocalSqlCoreAdapter {
     metadata_manager: SharedConnectionManager,
     legacy_store: Arc<SqlConnectionStore>,
+    schema_cache: Arc<SchemaSnapshotCache>,
 }
 
 impl LocalSqlCoreAdapter {
@@ -166,6 +188,21 @@ impl LocalSqlCoreAdapter {
         Self {
             metadata_manager,
             legacy_store,
+            schema_cache: Arc::new(SchemaSnapshotCache::new(DEFAULT_SCHEMA_CACHE_TTL)),
+        }
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    fn new_with_cache_ttl(
+        metadata_manager: SharedConnectionManager,
+        legacy_store: Arc<SqlConnectionStore>,
+        ttl: Duration,
+    ) -> Self {
+        Self {
+            metadata_manager,
+            legacy_store,
+            schema_cache: Arc::new(SchemaSnapshotCache::new(ttl)),
         }
     }
 
@@ -174,9 +211,9 @@ impl LocalSqlCoreAdapter {
         connection_id: &str,
     ) -> Result<ValidatedMetadataBinding, SqlCommandError> {
         let connection_id = normalize_connection_id(connection_id)?;
-        let profile = self
+        let (profile, metadata_revision) = self
             .metadata_manager
-            .get_open_profile(connection_id)
+            .get_open_profile_with_revision(connection_id)
             .ok_or_else(|| not_open_error(connection_id))?;
 
         self.validate_legacy_binding(&profile)?;
@@ -195,6 +232,7 @@ impl LocalSqlCoreAdapter {
             status,
             dialect,
             read_only,
+            metadata_revision,
         })
     }
 
@@ -301,6 +339,49 @@ impl SqlCoreAdapter for LocalSqlCoreAdapter {
             context,
         })
     }
+
+    fn search_schema(
+        &self,
+        request: SchemaSearchRequest,
+    ) -> Result<SchemaSearchResult, SqlCommandError> {
+        let binding = self.resolve_binding(&request.connection_id)?;
+        ensure_schema_context_supported(&binding)?;
+        let schema = normalize_schema_scope(&binding, &request.schema)?;
+
+        // Validate the runtime again before accepting a cache hit. This
+        // closes the race where a connection is replaced after binding
+        // resolution but before search begins.
+        self.with_metadata_connection(&binding, |_| Ok(()))?;
+
+        let key = SchemaCacheKey::new(&binding.connection_id, &schema, binding.metadata_revision);
+        let snapshot = self
+            .schema_cache
+            .get_or_try_insert_with(key, Instant::now(), || {
+                self.load_schema_snapshot(&binding, &schema)
+            })?;
+
+        let request = SchemaSearchRequest {
+            connection_id: binding.connection_id.clone(),
+            schema,
+            ..request
+        };
+        search_snapshot(
+            &request,
+            binding.dialect,
+            binding.metadata_revision,
+            &snapshot,
+        )
+    }
+
+    fn invalidate_schema_cache(&self, connection_id: &str) -> Result<(), SqlCommandError> {
+        let connection_id = normalize_connection_id(connection_id)?;
+        // Advance the revision before deleting entries so a concurrent load
+        // cannot publish a snapshot under the old metadata identity.
+        self.metadata_manager
+            .bump_metadata_revision(connection_id)?;
+        self.schema_cache.invalidate(connection_id);
+        Ok(())
+    }
 }
 
 impl LocalSqlCoreAdapter {
@@ -309,8 +390,49 @@ impl LocalSqlCoreAdapter {
         binding: &ValidatedMetadataBinding,
         f: impl FnOnce(&mut ConnectionEntry) -> Result<R, SqlCommandError>,
     ) -> Result<R, SqlCommandError> {
-        self.metadata_manager
-            .with_conn_for_profile(&binding.open_profile, f)
+        self.metadata_manager.with_conn_for_runtime(
+            &binding.open_profile,
+            binding.metadata_revision,
+            f,
+        )
+    }
+
+    fn load_schema_snapshot(
+        &self,
+        binding: &ValidatedMetadataBinding,
+        schema: &str,
+    ) -> Result<Vec<SchemaSnapshotObject>, SqlCommandError> {
+        self.with_metadata_connection(binding, |entry| {
+            let mut objects: Vec<_> = entry
+                .conn
+                .list_tables(schema)?
+                .into_iter()
+                .map(|object| {
+                    let context_object = map_schema_object(object, schema);
+                    let mut columns = entry
+                        .conn
+                        .list_columns(schema, &context_object.name)?
+                        .into_iter()
+                        .map(map_column)
+                        .collect::<Vec<_>>();
+                    columns.sort_by_key(|column| column.ordinal);
+                    Ok(SchemaSnapshotObject {
+                        object: context_object,
+                        columns,
+                    })
+                })
+                .collect::<Result<_, SqlCommandError>>()?;
+            objects.sort_by(|left, right| {
+                left.object
+                    .schema
+                    .cmp(&right.object.schema)
+                    .then_with(|| left.object.name.cmp(&right.object.name))
+                    .then_with(|| {
+                        object_kind_rank(left.object.kind).cmp(&object_kind_rank(right.object.kind))
+                    })
+            });
+            Ok(objects)
+        })
     }
 
     fn ensure_schema_object_exists(
@@ -339,6 +461,7 @@ struct ValidatedMetadataBinding {
     status: RuntimeStatus,
     dialect: SqlDialect,
     read_only: bool,
+    metadata_revision: u64,
 }
 
 impl ValidatedMetadataBinding {
@@ -874,6 +997,111 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn schema_search_returns_bounded_real_columns_and_reuses_runtime_snapshot() {
+        let root = TempRoot::new("schema-search");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(manager, empty_legacy_store());
+
+        let request = SchemaSearchRequest {
+            connection_id: "workspace".to_string(),
+            schema: "main".to_string(),
+            query: "user_id".to_string(),
+            explicit_tables: Vec::new(),
+            budget: SchemaSearchBudget::default(),
+        };
+        let first = adapter
+            .search_schema(request.clone())
+            .expect("search schema");
+        let second = adapter
+            .search_schema(request)
+            .expect("reuse schema snapshot");
+
+        assert_eq!(first, second);
+        assert_eq!(first.matches.len(), 1);
+        assert_eq!(first.matches[0].object.name, "orders");
+        assert_eq!(first.matches[0].columns[1].name, "user_id");
+        assert_eq!(
+            first.returned_byte_count,
+            serde_json::to_vec(&first).unwrap().len()
+        );
+    }
+
+    #[test]
+    fn schema_search_invalidation_refreshes_schema_and_changes_revision() {
+        let root = TempRoot::new("schema-search-invalidate");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(Arc::clone(&manager), empty_legacy_store());
+        let request = SchemaSearchRequest {
+            connection_id: "workspace".to_string(),
+            schema: "main".to_string(),
+            query: "invoices".to_string(),
+            explicit_tables: Vec::new(),
+            budget: SchemaSearchBudget::default(),
+        };
+
+        let before = adapter
+            .search_schema(request.clone())
+            .expect("initial search");
+        assert!(before.matches.is_empty());
+        let external = rusqlite::Connection::open(&database).expect("open schema fixture");
+        external
+            .execute_batch("CREATE TABLE invoices (id INTEGER PRIMARY KEY);")
+            .expect("create table outside metadata adapter");
+        drop(external);
+
+        let stale = adapter
+            .search_schema(request.clone())
+            .expect("cached search");
+        assert!(stale.matches.is_empty());
+
+        adapter
+            .invalidate_schema_cache("workspace")
+            .expect("invalidate schema cache");
+        let refreshed = adapter.search_schema(request).expect("refreshed search");
+        assert!(refreshed
+            .matches
+            .iter()
+            .any(|entry| entry.object.name == "invoices"));
+        assert!(refreshed.metadata_revision > before.metadata_revision);
+    }
+
+    #[test]
+    fn schema_search_after_close_and_reopen_does_not_reuse_old_revision() {
+        let root = TempRoot::new("schema-search-reopen");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(Arc::clone(&manager), empty_legacy_store());
+        let request = SchemaSearchRequest {
+            connection_id: "workspace".to_string(),
+            schema: "main".to_string(),
+            query: "users".to_string(),
+            explicit_tables: Vec::new(),
+            budget: SchemaSearchBudget::default(),
+        };
+
+        let first = adapter
+            .search_schema(request.clone())
+            .expect("initial search");
+        manager.close("workspace");
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let reopened = adapter.search_schema(request).expect("search after reopen");
+
+        assert!(reopened.metadata_revision > first.metadata_revision);
+        assert_eq!(reopened.matches[0].object.name, "users");
     }
 
     #[test]
@@ -1417,6 +1645,21 @@ mod tests {
                     if message == MYSQL_METADATA_UNSUPPORTED
             ));
         }
+
+        let error = adapter
+            .search_schema(SchemaSearchRequest {
+                connection_id: "workspace".to_string(),
+                schema: "app".to_string(),
+                query: "users".to_string(),
+                explicit_tables: Vec::new(),
+                budget: SchemaSearchBudget::default(),
+            })
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            SqlCommandError::Validation { message }
+                if message == MYSQL_METADATA_UNSUPPORTED
+        ));
 
         assert_eq!(metadata_calls.load(Ordering::Relaxed), 0);
     }
