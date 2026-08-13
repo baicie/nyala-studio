@@ -12,7 +12,9 @@ import {
 	SqlEditorQueryStartedEvent,
 	SqlEditorStatementResult
 } from '../../sqlEditor/common/sqlEditorEvents.js';
+import { SqlEditorExecutionSource } from '../../sqlEditor/common/sqlEditorModel.js';
 import { SQL_RESULT_MAX_RENDER_ROWS } from './sqlResult.js';
+import { SqlAgentErrorContext } from '../../../services/sql/common/sqlAgent.js';
 
 export const enum SqlResultStateKind {
 	Idle = 'idle',
@@ -24,8 +26,11 @@ export const enum SqlResultStateKind {
 
 export interface SqlResultQueryInfo {
 	editorId: string;
+	editorVersionId?: number;
 	connectionId: string;
 	sql: string;
+	source?: SqlEditorExecutionSource;
+	statementCount?: number;
 	startedAt: number;
 	completedAt?: number;
 }
@@ -51,6 +56,7 @@ export interface SqlResultErrorState {
 	errorCode?: string;
 	errorMessage: string;
 	errorDetail: string;
+	errorContext: SqlAgentErrorContext;
 }
 
 export interface SqlResultCancelledState {
@@ -82,8 +88,11 @@ export function createRunningSqlResultState(event: SqlEditorQueryStartedEvent): 
 		kind: SqlResultStateKind.Running,
 		query: {
 			editorId: event.editorId,
+			editorVersionId: event.editorVersionId,
 			connectionId: event.connectionId,
 			sql: event.sql,
+			source: event.source,
+			statementCount: event.statementCount,
 			startedAt: event.startedAt
 		}
 	};
@@ -95,8 +104,11 @@ export function createSuccessSqlResultState(event: SqlEditorQueryCompletedEvent)
 		kind: SqlResultStateKind.Success,
 		query: {
 			editorId: event.editorId,
+			editorVersionId: event.editorVersionId,
 			connectionId: event.connectionId,
 			sql: finalStatement?.sql ?? event.sql,
+			source: event.source,
+			statementCount: finalStatement?.statementCount ?? event.statementCount,
 			startedAt: finalStatement?.startedAt ?? event.startedAt,
 			completedAt: finalStatement?.completedAt ?? event.completedAt
 		},
@@ -111,14 +123,18 @@ export function createErrorSqlResultState(event: SqlEditorQueryFailedEvent): Sql
 		kind: SqlResultStateKind.Error,
 		query: {
 			editorId: event.editorId,
+			editorVersionId: event.editorVersionId,
 			connectionId: event.connectionId,
 			sql: failedStatement?.sql ?? event.sql,
+			source: event.source,
+			statementCount: failedStatement?.statementCount ?? event.statementCount,
 			startedAt: failedStatement?.startedAt ?? event.startedAt,
 			completedAt: failedStatement?.completedAt ?? event.completedAt
 		},
 		errorCode: error.code,
 		errorMessage: error.message,
-		errorDetail: error.detail
+		errorDetail: error.detail,
+		errorContext: toSqlAgentErrorContext(error)
 	};
 }
 
@@ -127,8 +143,11 @@ export function createCancelledSqlResultState(event: SqlEditorQueryCancelledEven
 		kind: SqlResultStateKind.Cancelled,
 		query: {
 			editorId: event.editorId,
+			editorVersionId: event.editorVersionId,
 			connectionId: event.connectionId,
 			sql: event.sql,
+			source: event.source,
+			statementCount: event.statementCount,
 			startedAt: event.startedAt,
 			completedAt: event.completedAt
 		},
@@ -253,8 +272,10 @@ export interface SqlResultSnapshotBase {
 	readonly statementIndex?: number;
 	readonly statementCount?: number;
 	readonly editorId: string;
+	readonly editorVersionId?: number;
 	readonly connectionId: string;
 	readonly sql: string;
+	readonly source?: SqlEditorExecutionSource;
 	readonly sqlPreview: string;
 	readonly startedAt: number;
 	readonly createdAt: number;
@@ -273,6 +294,7 @@ export interface SqlResultErrorSnapshot extends SqlResultSnapshotBase {
 	readonly errorCode?: string;
 	readonly errorMessage: string;
 	readonly detail: string;
+	readonly errorContext?: SqlAgentErrorContext;
 }
 
 export interface SqlResultCancelledSnapshot extends SqlResultSnapshotBase {
@@ -297,8 +319,10 @@ export function createSuccessResultSnapshot(options: {
 	readonly statementIndex?: number;
 	readonly statementCount?: number;
 	readonly editorId: string;
+	readonly editorVersionId?: number;
 	readonly connectionId: string;
 	readonly sql: string;
+	readonly source?: SqlEditorExecutionSource;
 	readonly result: SqlQueryResult;
 	readonly startedAt?: number;
 	readonly createdAt: number;
@@ -311,8 +335,10 @@ export function createSuccessResultSnapshot(options: {
 		statementIndex: options.statementIndex,
 		statementCount: options.statementCount,
 		editorId: options.editorId,
+		editorVersionId: options.editorVersionId,
 		connectionId: options.connectionId,
 		sql: normalizeSnapshotSql(options.sql),
+		source: options.source,
 		sqlPreview: createSqlResultPreview(options.sql),
 		startedAt: options.startedAt ?? options.createdAt,
 		createdAt: options.createdAt,
@@ -333,8 +359,10 @@ export function createErrorResultSnapshot(options: {
 	readonly statementIndex?: number;
 	readonly statementCount?: number;
 	readonly editorId: string;
+	readonly editorVersionId?: number;
 	readonly connectionId: string;
 	readonly sql: string;
+	readonly source?: SqlEditorExecutionSource;
 	readonly error: unknown;
 	readonly startedAt?: number;
 	readonly createdAt: number;
@@ -347,15 +375,18 @@ export function createErrorResultSnapshot(options: {
 		statementIndex: options.statementIndex,
 		statementCount: options.statementCount,
 		editorId: options.editorId,
+		editorVersionId: options.editorVersionId,
 		connectionId: options.connectionId,
 		sql: normalizeSnapshotSql(options.sql),
+		source: options.source,
 		sqlPreview: createSqlResultPreview(options.sql),
 		startedAt: options.startedAt ?? options.createdAt,
 		createdAt: options.createdAt,
 		title: formatStatementSnapshotTitle('Query Error', options.statementIndex, options.statementCount),
 		errorCode: error.code,
 		errorMessage: error.message,
-		detail: error.detail
+		detail: error.detail,
+		errorContext: toSqlAgentErrorContext(error)
 	};
 }
 
@@ -365,8 +396,10 @@ export function createCancelledResultSnapshot(options: {
 	readonly statementIndex?: number;
 	readonly statementCount?: number;
 	readonly editorId: string;
+	readonly editorVersionId?: number;
 	readonly connectionId: string;
 	readonly sql: string;
+	readonly source?: SqlEditorExecutionSource;
 	readonly message: string;
 	readonly startedAt?: number;
 	readonly createdAt: number;
@@ -378,8 +411,10 @@ export function createCancelledResultSnapshot(options: {
 		statementIndex: options.statementIndex,
 		statementCount: options.statementCount,
 		editorId: options.editorId,
+		editorVersionId: options.editorVersionId,
 		connectionId: options.connectionId,
 		sql: normalizeSnapshotSql(options.sql),
+		source: options.source,
 		sqlPreview: createSqlResultPreview(options.sql),
 		startedAt: options.startedAt ?? options.createdAt,
 		createdAt: options.createdAt,
@@ -397,8 +432,11 @@ export function createSuccessResultSnapshotFromEvent(event: SqlEditorQueryComple
 	return createSuccessResultSnapshot({
 		id: createResultSnapshotId(event.editorId, event.completedAt),
 		editorId: event.editorId,
+		editorVersionId: event.editorVersionId,
 		connectionId: event.connectionId,
 		sql: event.sql,
+		source: event.source,
+		statementCount: event.statementCount,
 		result: event.result,
 		startedAt: event.startedAt,
 		createdAt: event.completedAt
@@ -420,8 +458,11 @@ export function createErrorResultSnapshotFromEvent(event: SqlEditorQueryFailedEv
 		id: event.executionId ? `${event.executionId}-error` : createResultSnapshotId(event.editorId, event.completedAt),
 		executionId: event.executionId,
 		editorId: event.editorId,
+		editorVersionId: event.editorVersionId,
 		connectionId: event.connectionId,
 		sql: event.sql,
+		source: event.source,
+		statementCount: event.statementCount,
 		error: event.error,
 		startedAt: event.startedAt,
 		createdAt: event.completedAt
@@ -437,8 +478,11 @@ export function createCancelledResultSnapshotFromEvent(
 			: createResultSnapshotId(event.editorId, event.completedAt),
 		executionId: event.executionId,
 		editorId: event.editorId,
+		editorVersionId: event.editorVersionId,
 		connectionId: event.connectionId,
 		sql: event.sql,
+		source: event.source,
+		statementCount: event.statementCount,
 		message: event.message,
 		startedAt: event.startedAt,
 		createdAt: event.completedAt
@@ -535,8 +579,11 @@ export function getSqlResultPanelContentState(state: SqlResultState, panelState:
 
 	const query: SqlResultQueryInfo = {
 		editorId: snapshot.editorId,
+		editorVersionId: snapshot.editorVersionId,
 		connectionId: snapshot.connectionId,
 		sql: snapshot.sql,
+		source: snapshot.source,
+		statementCount: snapshot.statementCount,
 		startedAt: snapshot.startedAt,
 		completedAt: snapshot.createdAt
 	};
@@ -550,7 +597,14 @@ export function getSqlResultPanelContentState(state: SqlResultState, panelState:
 				query,
 				errorCode: snapshot.errorCode,
 				errorMessage: snapshot.errorMessage,
-				errorDetail: snapshot.detail
+				errorDetail: snapshot.detail,
+				errorContext:
+					snapshot.errorContext ??
+					toSqlAgentErrorContext({
+						code: snapshot.errorCode,
+						message: snapshot.errorMessage,
+						detail: snapshot.detail
+					})
 			};
 		case SqlResultSnapshotKind.Cancelled:
 			return { kind: SqlResultStateKind.Cancelled, query, message: snapshot.message };
@@ -580,8 +634,10 @@ function createSuccessResultSnapshotFromStatement(
 		statementIndex: statement.statementIndex,
 		statementCount: statement.statementCount,
 		editorId: event.editorId,
+		editorVersionId: event.editorVersionId,
 		connectionId: event.connectionId,
 		sql: statement.sql,
+		source: event.source,
 		result: statement.result,
 		startedAt: statement.startedAt,
 		createdAt: statement.completedAt
@@ -598,8 +654,10 @@ function createErrorResultSnapshotFromFailedStatement(
 		statementIndex: statement.statementIndex,
 		statementCount: statement.statementCount,
 		editorId: event.editorId,
+		editorVersionId: event.editorVersionId,
 		connectionId: event.connectionId,
 		sql: statement.sql,
+		source: event.source,
 		error: statement.error,
 		startedAt: statement.startedAt,
 		createdAt: statement.completedAt
@@ -678,6 +736,18 @@ function normalizeSqlResultError(error: unknown): {
 		code,
 		message: summarizeSnapshotMessage(normalizedMessage || detail),
 		detail
+	};
+}
+
+function toSqlAgentErrorContext(error: {
+	readonly code?: string;
+	readonly message: string;
+	readonly detail: string;
+}): SqlAgentErrorContext {
+	return {
+		...(error.code ? { code: error.code } : {}),
+		message: error.message,
+		detail: error.detail
 	};
 }
 

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
 	applySqlAgentArtifact,
 	createSqlAgentArtifact,
+	createSqlAgentArtifactForTarget,
 	getSqlAgentArtifactStaleReason,
 	SqlAgentArtifactKind
 } from '../common/sqlAgentArtifacts.js';
@@ -49,6 +50,33 @@ test('SQL Agent artifact refuses stale editor content without overwriting it', (
 		}).applied,
 		false
 	);
+});
+
+test('SQL Agent draft captured before an async run refuses an editor changed while the run is pending', async () => {
+	let editor = {
+		editorId: 'editor-1',
+		versionId: 7,
+		sql: 'SELECT missing FROM orders;'
+	};
+	const capturedTarget = { ...editor };
+	const agentResponse = Promise.resolve('SELECT id FROM orders;');
+
+	editor = {
+		...editor,
+		versionId: 8,
+		sql: 'SELECT total FROM orders;'
+	};
+	const artifact = createSqlAgentArtifactForTarget({
+		artifactId: 'artifact-async',
+		runId: 'run-async',
+		target: capturedTarget,
+		content: await agentResponse,
+		createdAt: 101
+	});
+	const result = applySqlAgentArtifact(artifact, editor);
+
+	assert.deepEqual(result, { applied: false, reason: 'version' });
+	assert.equal(editor.sql, 'SELECT total FROM orders;');
 });
 
 test('SQL Agent artifact normalizes identity and rejects invalid proposals', () => {

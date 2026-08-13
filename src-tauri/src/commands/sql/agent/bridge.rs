@@ -81,6 +81,7 @@ pub fn sql_agent_start(
     sql_state: State<'_, Arc<SqlConnectionStore>>,
     request: SqlAgentStartRequest,
 ) -> Result<SqlAgentRunEvent, SqlCommandError> {
+    validate_task_mode(request.task, request.mode)?;
     let capabilities = AgentCapabilitySet::from_wire(request.capabilities)?;
     let budget = request.budget.unwrap_or_default();
     let run_id = state.allocate_run_id();
@@ -127,6 +128,16 @@ pub fn sql_agent_start(
             Err(error)
         }
     }
+}
+
+fn validate_task_mode(task: AgentTaskKind, mode: AgentMode) -> Result<(), SqlCommandError> {
+    if task == AgentTaskKind::FixError && mode != AgentMode::SuggestOnly {
+        return Err(SqlCommandError::new(
+            "invalid_input",
+            "Fix Error requires Suggest Only mode",
+        ));
+    }
+    Ok(())
 }
 
 /// Small local provider used by the deterministic A3 bridge. It exercises the
@@ -284,5 +295,43 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&third).unwrap()["type"],
             "final"
         );
+    }
+
+    #[test]
+    fn start_request_deserializes_fix_error_with_structured_error_context() {
+        let request: SqlAgentStartRequest = serde_json::from_value(json!({
+            "goal": "fix the failed query",
+            "task": "fix_error",
+            "mode": "suggest_only",
+            "context": {
+                "dialect": "sqlite",
+                "sql": "SELECT missing FROM orders",
+                "errorContext": {
+                    "code": "no_such_column",
+                    "message": "no such column: missing",
+                    "detail": "orders exposes id and total"
+                },
+                "schema": [{"schema": "main", "name": "orders", "columns": ["id", "total"]}]
+            },
+            "capabilities": ["agent.tool"]
+        }))
+        .unwrap();
+
+        assert_eq!(request.task, AgentTaskKind::FixError);
+        assert_eq!(
+            request
+                .context
+                .error_context
+                .as_ref()
+                .and_then(|error| error.code.as_deref()),
+            Some("no_such_column")
+        );
+    }
+
+    #[test]
+    fn fix_error_rejects_modes_that_can_call_database_tools() {
+        let error = validate_task_mode(AgentTaskKind::FixError, AgentMode::ReadOnly).unwrap_err();
+
+        assert!(matches!(error, SqlCommandError::InvalidInput { .. }));
     }
 }

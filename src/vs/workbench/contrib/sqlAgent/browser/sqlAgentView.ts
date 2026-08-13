@@ -140,6 +140,7 @@ export class SqlAgentView extends ViewPane {
 		for (const [value, label] of [
 			[SqlAgentTaskKind.Assistant, 'Assistant'],
 			[SqlAgentTaskKind.ExplainError, 'Explain error'],
+			[SqlAgentTaskKind.FixError, 'Fix error'],
 			[SqlAgentTaskKind.GenerateQuery, 'Generate query'],
 			[SqlAgentTaskKind.OptimizeQuery, 'Optimize query']
 		] as const) {

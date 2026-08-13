@@ -181,10 +181,28 @@ export function normalizeSqlAgentStartRequest(request: SqlAgentStartRequest): Sq
 			sql: request.context.sql?.trim() || undefined,
 			selectedSql: request.context.selectedSql?.trim() || undefined,
 			errorMessage: request.context.errorMessage?.trim() || undefined,
+			errorContext: normalizeSqlAgentErrorContext(request.context.errorContext),
 			userPrompt: request.context.userPrompt?.trim() || undefined,
 			explainPlan: request.context.explainPlan?.trim() || undefined
 		},
 		capabilities
+	};
+}
+
+function normalizeSqlAgentErrorContext(
+	context: SqlAgentStartRequest['context']['errorContext']
+): SqlAgentStartRequest['context']['errorContext'] {
+	if (!context) {
+		return undefined;
+	}
+	const message = context.message?.trim();
+	if (!message) {
+		return undefined;
+	}
+	return {
+		code: context.code?.trim() || undefined,
+		message,
+		detail: context.detail?.trim() || undefined
 	};
 }
 

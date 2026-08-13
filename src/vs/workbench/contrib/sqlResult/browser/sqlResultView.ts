@@ -12,6 +12,7 @@ import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
@@ -43,6 +44,7 @@ import {
 } from '../common/sqlResultGridModel.js';
 import { getPreferredResultMaxRows } from '../../sqlProduct/common/sqlProductIntegrationModel.js';
 import { SqlResultNativeRendererAdapter } from './sqlResultNativeRenderer.js';
+import { SQL_AI_FIX_ERROR_COMMAND_ID } from '../../sqlAdvanced/common/sqlAdvanced.js';
 
 export class SqlResultView extends ViewPane {
 	static readonly ID = SQL_RESULT_VIEW_ID;
@@ -81,6 +83,7 @@ export class SqlResultView extends ViewPane {
 		@IOpenerService openerService: IOpenerService,
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
+		@ICommandService private readonly commandService: ICommandService,
 		@ISqlResultService private readonly sqlResultService: ISqlResultService,
 		@ISqlProductPreferencesService private readonly preferencesService: ISqlProductPreferencesService
 	) {
@@ -373,6 +376,22 @@ export class SqlResultView extends ViewPane {
 		if (state.errorDetail !== state.errorMessage) {
 			append(wrapper, $('pre.sql-result-error-detail', undefined, state.errorDetail));
 		}
+		const fixButton = append(
+			wrapper,
+			$('button.sql-result-fix-button', {
+				type: 'button',
+				title: 'Fix with Agent',
+				'aria-label': 'Fix with Agent'
+			})
+		) as HTMLButtonElement;
+		const fixIcon = append(fixButton, $('.codicon', { 'aria-hidden': 'true' }));
+		fixIcon.classList.add(...ThemeIcon.asClassNameArray(Codicon.wand));
+		append(fixButton, $('span', undefined, 'Fix with Agent'));
+		this.contentRenderDisposables.add(
+			addDisposableListener(fixButton, EventType.CLICK, () => {
+				void this.commandService.executeCommand(SQL_AI_FIX_ERROR_COMMAND_ID);
+			})
+		);
 		append(wrapper, $('pre.sql-result-sql', undefined, state.query.sql));
 	}
 

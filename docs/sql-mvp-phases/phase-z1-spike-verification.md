@@ -26,6 +26,7 @@ Go/No-Go 尚未完成，仍未放行生产接入。
 | `pnpm add --dir <temp> @zeus-web/data-grid@0.1.0-beta.2`                                             | exit 0                             |
 | `pnpm view @zeus-web/data-grid@0.1.0-beta.2 dist.integrity dist.unpackedSize license version --json` | exit 0                             |
 | `pnpm why @zeus-web/data-grid`（临时目录）                                                           | exit 0，只有临时 root project 引用 |
+| `pnpm run test:sql-result-grid-gate`                                                                 | 5 verifier tests 通过              |
 
 ## Z1.2 三 renderer benchmark
 
@@ -35,22 +36,25 @@ Go/No-Go 尚未完成，仍未放行生产接入。
 完整原始记录（含 user agent、fixture bytes、parse/format、render、scroll、DOM 和 heap 字段）见
 [`phase-z1-benchmark.json`](./phase-z1-benchmark.json)。
 
-中位数摘要如下，时间单位为 ms：
+以下为 corrected benchmark JSON 的中位数摘要，时间单位为 ms。`scroll p95` 列表示每次
+运行先收集 scroll samples 后计算的 per-run p95，再对 3 次运行取 median；跨运行的 p95
+长尾仍保存在 JSON 的 `scrollP95Ms.p95` 中。旧记录中 `19.5/6.6/4.0` 等 scroll 值来自
+过期摘要，不应用于门禁判断。
 
 | workload / renderer           | render | scroll p95 | DOM nodes |  heap delta | parse | format |
 | ----------------------------- | -----: | ---------: | --------: | ----------: | ----: | -----: |
-| 1k-x-20 / native              |    7.5 |       19.5 |    21,035 |     763,932 |   3.0 |    0.3 |
-| 1k-x-20 / WorkbenchTable      |    5.5 |        6.6 |       622 |     161,917 |   3.1 |    0.3 |
-| 1k-x-20 / Zeus                |   16.8 |        4.0 |       202 |   1,997,231 |   2.9 |    0.3 |
-| 10k-x-50 / native             |  201.5 |      325.9 |   510,065 | unavailable |  51.4 |    5.2 |
-| 10k-x-50 / WorkbenchTable     |    5.8 |        5.1 |     1,492 |     816,146 |  51.6 |    5.2 |
-| 10k-x-50 / Zeus               |   77.2 |        4.0 |       202 |   1,400,297 |  51.8 |    5.2 |
-| wide-columns / native         |    7.5 |       20.1 |    21,035 | unavailable |  12.8 |    0.4 |
-| wide-columns / WorkbenchTable |    5.1 |        8.1 |       622 |     160,325 |  12.9 |    0.3 |
-| wide-columns / Zeus           |   16.8 |        4.1 |       202 | unavailable |  12.7 |    0.4 |
-| narrow-panel / native         |    7.5 |       18.2 |    21,035 |   1,274,131 |   3.0 |    0.4 |
-| narrow-panel / WorkbenchTable |    5.2 |        6.8 |       622 |     161,737 |   2.9 |    0.3 |
-| narrow-panel / Zeus           |   16.5 |        4.1 |       202 |   2,048,191 |   3.0 |    0.3 |
+| 1k-x-20 / native              |   12.8 |        0.2 |    21,035 |     884,525 |   4.7 |    0.4 |
+| 1k-x-20 / WorkbenchTable      |    9.9 |        5.1 |       601 |     361,191 |   7.9 |    0.8 |
+| 1k-x-20 / Zeus                |   24.0 |        8.5 |       381 |   8,916,784 |   4.8 |    0.3 |
+| 10k-x-50 / native             |  220.4 |        0.6 |   510,065 | unavailable |  60.2 |    5.4 |
+| 10k-x-50 / WorkbenchTable     |    7.0 |        9.3 |     1,441 | unavailable |  66.0 |    5.4 |
+| 10k-x-50 / Zeus               |   86.2 |        8.1 |       381 |  24,405,219 |  66.2 |    5.3 |
+| wide-columns / native         |    9.9 |        0.1 |    21,035 |     841,624 |  17.9 |    0.5 |
+| wide-columns / WorkbenchTable |    8.4 |        5.4 |       601 |     359,029 |  22.1 |    1.4 |
+| wide-columns / Zeus           |   29.0 |       12.2 |       365 |   8,955,691 |  16.2 |    0.4 |
+| narrow-panel / native         |    7.9 |        0.1 |    21,035 |     715,840 |   4.4 |    0.4 |
+| narrow-panel / WorkbenchTable |    9.2 |        3.8 |       622 |     371,814 |   3.8 |    0.4 |
+| narrow-panel / Zeus           |   19.0 |        3.3 |       167 |   2,485,258 |   4.2 |    0.4 |
 
 The heap field is `unavailable` when Chromium does not expose a non-zero
 `performance.memory` delta; zero is not treated as a memory win. The benchmark is a browser
@@ -59,16 +63,25 @@ timings do not invoke Tauri or a database.
 
 ## Gate 状态
 
-Z1.1 和 Z1.2 已完成（Z1.2 的 36 条原始记录和 3 次重复摘要已保存）。Z1.3 仍需 macOS
-WebKit 与 Windows WebView2 各 5 次运行，验证 1k×20 关键交互回归不超过 10%、10k×50
-相对最佳非 Zeus baseline 的主指标改善至少 20%、以及 gzip 增量不超过 30 KB。
+Z1.1 和 Z1.2 已完成（Z1.2 的 36 条原始记录和 3 次重复摘要已保存）。Z1.3 的预注册门禁
+要求 1k×20 关键交互回归不超过 10%、10k×50 相对最佳非 Zeus baseline 的主指标改善至少
+20%、gzip 增量不超过 30 KB，并且 macOS WebKit 与 Windows WebView2 各有 5 次原生运行。
 
 Z1.3 gate verifier [`scripts/verify-sql-result-grid-gate.mjs`](../../scripts/verify-sql-result-grid-gate.mjs)
 已将这些阈值、bundle budget 和平台探测固化；本次报告见
-[`phase-z1-gate.json`](./phase-z1-gate.json)。当前结论为 `NO-GO`，命令因为门禁未满足返回
-exit 1：macOS WebKit session 需要用户在 Safari Developer 设置开启 Allow remote automation，
-Windows 环境没有 `msedgedriver`，两边均为 `0/5` runs。指标计算不会把 Chromium-only 结果冒充
-WebKit/WebView2 证据。
+[`phase-z1-gate.json`](./phase-z1-gate.json)。当前结论为 `NO-GO`，门禁命令返回 exit 1，且
+该结论有两组独立原因：
+
+- 性能门禁失败。`1k-x-20` 以最佳非 Zeus baseline（native `0.2ms`）比较 Zeus `8.5ms`，
+  回归为 `(8.5 - 0.2) / 0.2 = 41.5`，即 `4150.0%`，超过最多 `10%`；`10k-x-50` 以
+  native `0.6ms` 为最佳 baseline，Zeus 为 `8.1ms`，改善为 `-12.5`，即 `-1250.0%`，
+  低于至少 `20%` 的要求。
+- 平台证据缺失。gate JSON 记录 macOS WebKit 为 `spawnSync curl ETIMEDOUT`、Windows
+  WebView2 为 `msedgedriver is not available in this environment.`，两边都是 `0/5` runs。
+
+gzip 增量 `24,260 bytes` 小于 `30,000 bytes`，这一项通过，但不能抵消性能和平台门禁失败。
+即使之后补齐双 WebView 证据，当前 corrected Chromium benchmark 仍不能记录 Go；指标计算也
+不会把 Chromium-only 结果冒充 WebKit/WebView2 证据。
 
 ## CI 证据工作流
 
@@ -80,8 +93,9 @@ WebKit/WebView2 证据。
 [`benchmark-sql-result-grid-webdriver.mjs`](../../scripts/benchmark-sql-result-grid-webdriver.mjs)。
 
 工作流默认允许 Windows 使用 EdgeDriver 做诊断，但这不会被当成原生 WebView2 证据；只有真实
-WebView2 host 的 runner 才能把 `nativeWebView2` 设为 `true`。gate 同时要求 macOS evidence
-明确 `engine: "safari-webdriver"`，避免截图或 Chromium 结果绕过平台身份校验。截图、driver log、
+WebView2 host 的 runner 才能把 `nativeWebView2` 设为 `true`。gate 要求两边都明确 embedded
+provider、native WebView flags、engine、browser 和 platform identity，避免截图或 Chromium 结果
+绕过平台身份校验。SafariDriver/EdgeDriver 仍可作为诊断失败记录，但不能作为 Go 证据。截图、driver log、
 合并后的 `platform-evidence.json` 和 `phase-z1-gate.json` 都会作为 workflow artifacts 保留。
 设置 `native_webview2: true` 时，workflow 不会启动普通 EdgeDriver，而是使用
 `windows_driver_url` 指向 runner 上已经启动的原生 WebView2 WebDriver。
@@ -96,8 +110,13 @@ scroll median/p95 数据）的两项记录。例如，`summary` 应直接来自�
 	"macosWebKit": {
 		"status": "ready",
 		"runs": 5,
-		"engine": "safari-webdriver",
-		"reason": "recorded on macOS WebKit",
+		"driverProvider": "embedded",
+		"nativeWebView": true,
+		"nativeWebView2": false,
+		"engine": "wkwebview-embedded",
+		"browser": "webkit",
+		"platformName": "macos",
+		"reason": "recorded in the embedded macOS WKWebView",
 		"summary": {
 			"1k-x-20/native": {},
 			"1k-x-20/workbench-table": {},
@@ -110,9 +129,13 @@ scroll median/p95 数据）的两项记录。例如，`summary` 应直接来自�
 	"windowsWebView2": {
 		"status": "ready",
 		"runs": 5,
-		"engine": "msedgedriver",
+		"driverProvider": "embedded",
+		"nativeWebView": true,
 		"nativeWebView2": true,
-		"reason": "recorded on Windows WebView2",
+		"engine": "webview2-embedded",
+		"browser": "msedge",
+		"platformName": "windows",
+		"reason": "recorded in the embedded Windows WebView2",
 		"summary": {
 			"1k-x-20/native": {},
 			"1k-x-20/workbench-table": {},

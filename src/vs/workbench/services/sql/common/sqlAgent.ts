@@ -16,6 +16,7 @@ export const ISqlAgentService = createDecorator<ISqlAgentService>('sqlAgentServi
 export const enum SqlAgentTaskKind {
 	Assistant = 'assistant',
 	ExplainError = 'explain_error',
+	FixError = 'fix_error',
 	GenerateQuery = 'generate_query',
 	OptimizeQuery = 'optimize_query'
 }
@@ -42,6 +43,12 @@ export interface SqlAgentSchemaTable {
 	readonly columns: readonly string[];
 }
 
+export interface SqlAgentErrorContext {
+	readonly code?: string;
+	readonly message: string;
+	readonly detail?: string;
+}
+
 export interface SqlAgentResultShapeColumn {
 	readonly name: string;
 	readonly ordinal: number;
@@ -62,6 +69,7 @@ export interface SqlAgentModelContext {
 	readonly sql?: string;
 	readonly selectedSql?: string;
 	readonly errorMessage?: string;
+	readonly errorContext?: SqlAgentErrorContext;
 	readonly userPrompt?: string;
 	readonly explainPlan?: string;
 	readonly schema?: readonly SqlAgentSchemaTable[];
@@ -180,6 +188,7 @@ export function isSqlAgentTaskKind(value: unknown): value is SqlAgentTaskKind {
 	return (
 		value === SqlAgentTaskKind.Assistant ||
 		value === SqlAgentTaskKind.ExplainError ||
+		value === SqlAgentTaskKind.FixError ||
 		value === SqlAgentTaskKind.GenerateQuery ||
 		value === SqlAgentTaskKind.OptimizeQuery
 	);

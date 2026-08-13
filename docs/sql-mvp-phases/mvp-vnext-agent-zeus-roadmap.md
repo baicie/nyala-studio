@@ -102,7 +102,7 @@ Result surface。A2 -> A3 -> A4、Z1 -> Z2、A4 -> Z2 和 Z2 -> R0 必须顺序�
 | A3    | Read-only Agent       | A2                           | A3.1/A3.2 已实现；Checkpoint R 待原生走查              | SQLite 真闭环，write/multi/Unknown deny，cancel/budget，result policy |
 | A4    | Workbench Integration | A3 service contract          | A4.1 与 A4.2 actions/Panel 已实现；Checkpoint W 待完成 | Editor/Error/Schema/Result/Panel tests 与浏览器 QA                    |
 | Z0    | Zeus 采用评估         | B0                           | 评估完成，生产未接入                                   | 选择性采用评估与边界记录                                              |
-| Z1    | Data Grid Spike       | Z0                           | Z1.1/Z1.2 已完成；Z1.3 双 WebView Go/No-Go 待完成       | 可复现依赖/包体/性能/双 WebView Go/No-Go 记录                         |
+| Z1    | Data Grid Spike       | Z0                           | Z1.1/Z1.2 已完成；Z1.3 双 WebView Go/No-Go 待完成      | 可复现依赖/包体/性能/双 WebView Go/No-Go 记录                         |
 | Z2    | Result Grid Preview   | Z1 Go + A4                   | 待开始                                                 | feature flag、native fallback、行为契约和原生 QA                      |
 | R0    | vNext Release Gate    | A4 + Z2                      | 待开始                                                 | §2 DoD 与 §8 verification matrix 全绿                                 |
 
@@ -190,8 +190,9 @@ typed run event 并展示 state、usage、answer、evidence refs，Start/Cancel 
 不把 rows 放进 Agent context。Chromium desktop/narrow 与 ARIA/Tab 检查已通过；macOS WebKit、
 Windows WebView2 和真实 screen-reader walkthrough 仍待完成。
 
-**Checkpoint W：** desktop/narrow viewport、keyboard、screen-reader label、stale editor、
-dispose/cancel 和所有 run state 通过 contribution tests 与浏览器 QA。
+**Checkpoint W：未完成。** Chromium desktop/narrow、ARIA contract、stale editor、dispose/cancel 和
+所有 run state 自动化已通过；macOS 原生 viewport/键盘、Windows WebView2 与真实
+VoiceOver/Narrator 走查仍缺证据。
 
 ### Parallel Spike：Z1 Zeus Data Grid
 

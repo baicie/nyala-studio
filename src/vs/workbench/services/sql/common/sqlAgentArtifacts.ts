@@ -65,6 +65,26 @@ export function createSqlAgentArtifact(input: {
 	};
 }
 
+export function createSqlAgentArtifactForTarget(input: {
+	readonly artifactId: string;
+	readonly runId: string;
+	readonly target: SqlAgentArtifactTarget;
+	readonly content: string;
+	readonly kind?: SqlAgentArtifactKind;
+	readonly createdAt?: number;
+}): SqlAgentArtifact {
+	return createSqlAgentArtifact({
+		artifactId: input.artifactId,
+		runId: input.runId,
+		editorId: input.target.editorId,
+		baseVersionId: input.target.versionId,
+		baseSql: input.target.sql,
+		content: input.content,
+		kind: input.kind,
+		createdAt: input.createdAt
+	});
+}
+
 export function applySqlAgentArtifact(
 	artifact: SqlAgentArtifact,
 	target: SqlAgentArtifactTarget

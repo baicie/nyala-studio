@@ -341,8 +341,10 @@ export class SqlEditorPane extends EditorPane {
 			}
 
 			const connection = this.getSelectedConnection();
+			const editorVersionId = this.editor?.getModel()?.getVersionId();
 			const executionPromise = this.executionController.execute({
 				editorId: input.id,
+				editorVersionId,
 				connectionId: connection?.id,
 				fullSql: this.getAllSql(),
 				selectedSql: this.getSelectedSql(),
@@ -368,10 +370,12 @@ export class SqlEditorPane extends EditorPane {
 			this.updateToolbarState();
 			this.sqlEditorEventService.fireQueryStarted({
 				editorId: runningState.editorId,
+				editorVersionId: runningState.editorVersionId,
 				executionId: runningState.executionId,
 				connectionId: runningState.connectionId,
 				sql: runningState.sql,
 				source: runningState.source,
+				statementCount: runningState.statementCount,
 				startedAt: runningState.startedAt
 			});
 
@@ -453,6 +457,7 @@ export class SqlEditorPane extends EditorPane {
 		const connection = this.getSelectedConnection();
 		const startedAt = Date.now();
 		let explainSql: string | undefined;
+		let editorVersionId: number | undefined;
 
 		try {
 			if (!input) {
@@ -463,6 +468,7 @@ export class SqlEditorPane extends EditorPane {
 				throw new Error('Select a SQL connection before explaining SQL.');
 			}
 
+			editorVersionId = this.editor?.getModel()?.getVersionId();
 			const sql = this.getCurrentStatementSql();
 
 			explainSql = createExplainSql({
@@ -475,9 +481,11 @@ export class SqlEditorPane extends EditorPane {
 
 			this.sqlEditorEventService.fireQueryStarted({
 				editorId: input.id,
+				editorVersionId,
 				connectionId: connection.id,
 				sql: explainSql,
 				source: SqlEditorExecutionSource.Statement,
+				statementCount: 1,
 				startedAt
 			});
 
@@ -490,9 +498,11 @@ export class SqlEditorPane extends EditorPane {
 
 			this.sqlEditorEventService.fireQueryCompleted({
 				editorId: input.id,
+				editorVersionId,
 				connectionId: connection.id,
 				sql: explainSql,
 				source: SqlEditorExecutionSource.Statement,
+				statementCount: 1,
 				startedAt,
 				completedAt,
 				result
@@ -507,9 +517,11 @@ export class SqlEditorPane extends EditorPane {
 			if (input && connection && explainSql) {
 				this.sqlEditorEventService.fireQueryFailed({
 					editorId: input.id,
+					editorVersionId,
 					connectionId: connection.id,
 					sql: explainSql,
 					source: SqlEditorExecutionSource.Statement,
+					statementCount: 1,
 					startedAt,
 					completedAt,
 					error: normalizedError

@@ -12,6 +12,7 @@ import { getDialectForConnectionKind, SqlDialect } from '../../../services/sql/c
 import {
 	SQL_AI_ASSISTANT_COMMAND_ID,
 	SQL_AI_EXPLAIN_ERROR_COMMAND_ID,
+	SQL_AI_FIX_ERROR_COMMAND_ID,
 	SQL_AI_GENERATE_QUERY_COMMAND_ID,
 	SQL_AI_OPTIMIZE_QUERY_COMMAND_ID,
 	SQL_AI_RESULT_ASSISTANT_COMMAND_ID,
@@ -28,18 +29,23 @@ import { SqlEditorPane } from '../../sqlEditor/browser/sqlEditorPane.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
-import { createSqlAgentArtifact } from '../../../services/sql/common/sqlAgentArtifacts.js';
+import {
+	createSqlAgentArtifactForTarget,
+	SqlAgentArtifactTarget
+} from '../../../services/sql/common/sqlAgentArtifacts.js';
 import {
 	ISqlAgentService,
 	SqlAgentMode,
+	SqlAgentErrorContext,
 	SqlAgentResultShape,
-	SqlAgentSchemaTable,
 	SqlAgentTaskKind
 } from '../../../services/sql/common/sqlAgent.js';
 import { SqlCapability } from '../../../services/sql/common/sqlCapabilities.js';
 import { ISqlMetadataService } from '../../../services/sql/common/sqlMetadata.js';
 import { ISqlResultService } from '../../sqlResult/common/sqlResultService.js';
-import { SqlResultStateKind } from '../../sqlResult/common/sqlResultModel.js';
+import { getSqlResultPanelContentState, SqlResultStateKind } from '../../sqlResult/common/sqlResultModel.js';
+import { canApplyAgentFixToEditor } from '../common/sqlAgentFixContext.js';
+import { loadAgentSchema } from '../common/sqlAgentSchemaLoader.js';
 
 class ExplainPlanAction extends Action2 {
 	constructor() {
@@ -172,6 +178,22 @@ class AiExplainErrorAction extends Action2 {
 	}
 }
 
+class AiFixErrorAction extends Action2 {
+	constructor() {
+		super({
+			id: SQL_AI_FIX_ERROR_COMMAND_ID,
+			title: localize2('sqlAiFixError', 'SQL AI: Fix Error'),
+			category: Categories.View,
+			f1: true,
+			menu: { id: MenuId.CommandPalette }
+		});
+	}
+
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		await fixSqlResultError(accessor);
+	}
+}
+
 class AiGenerateQueryAction extends Action2 {
 	constructor() {
 		super({
@@ -229,6 +251,7 @@ class SchemaGenerateQueryAction extends Action2 {
 		}
 
 		const context = pane.getAssistantContext();
+		const artifactTarget = pane.getAgentArtifactTarget();
 		if (!context.connectionId) {
 			notificationService.info('Select a database connection before generating from schema.');
 			return;
@@ -258,7 +281,7 @@ class SchemaGenerateQueryAction extends Action2 {
 				capabilities: [SqlCapability.AgentTool, SqlCapability.WorkspaceReadSql]
 			});
 			await commandService.executeCommand('sql.agent.openPanel');
-			await applyAgentAnswerDraft(pane, event, quickInputService, notificationService, commandService);
+			await applyAgentAnswerDraft(pane, event, quickInputService, notificationService, commandService, artifactTarget);
 		} catch (error) {
 			notificationService.error(toActionErrorMessage(error));
 		}
@@ -330,33 +353,6 @@ class ResultAssistantAction extends Action2 {
 	}
 }
 
-const MAX_AGENT_SCHEMA_TABLES = 24;
-const MAX_AGENT_SCHEMA_COLUMNS = 64;
-
-async function loadAgentSchema(
-	metadataService: ISqlMetadataService,
-	connectionId: string
-): Promise<SqlAgentSchemaTable[]> {
-	const tables = (await metadataService.listTables(connectionId))
-		.filter(table => table.name.trim())
-		.sort((left, right) => (left.schema ?? '').localeCompare(right.schema ?? '') || left.name.localeCompare(right.name))
-		.slice(0, MAX_AGENT_SCHEMA_TABLES);
-	return Promise.all(
-		tables.map(async table => {
-			let columns: string[] = [];
-			try {
-				columns = (await metadataService.listColumns({ connectionId, tableName: table.name, schema: table.schema }))
-					.sort((left, right) => left.ordinal - right.ordinal || left.name.localeCompare(right.name))
-					.slice(0, MAX_AGENT_SCHEMA_COLUMNS)
-					.map(column => column.name);
-			} catch {
-				// Keep the real table reference when optional column metadata is unavailable.
-			}
-			return { schema: table.schema, name: table.name, columns };
-		})
-	);
-}
-
 function createResultShape(result: {
 	columns: readonly { name: string; ordinal: number }[];
 	rowCount: number;
@@ -371,37 +367,46 @@ function createResultShape(result: {
 	};
 }
 
-async function applyAgentAnswerDraft(
+export async function applyAgentAnswerDraft(
 	pane: SqlEditorPane,
 	event: Awaited<ReturnType<ISqlAgentService['start']>>,
 	quickInputService: IQuickInputService,
 	notificationService: INotificationService,
-	commandService: ICommandService
+	commandService: ICommandService,
+	baseTarget: SqlAgentArtifactTarget | undefined,
+	allowApply = true,
+	isApplyStillAllowed?: () => boolean
 ): Promise<void> {
 	const sql = event.result?.answer?.sql?.trim();
 	if (!sql) {
 		return;
 	}
-	const target = pane.getAgentArtifactTarget();
-	if (!target) {
-		return;
-	}
-	const artifact = createSqlAgentArtifact({
-		artifactId: `artifact-${Date.now()}`,
-		runId: event.run.runId,
-		editorId: target.editorId,
-		baseVersionId: target.versionId,
-		baseSql: target.sql,
-		content: sql
-	});
+	const canApply = allowApply && baseTarget !== undefined;
 	const choice = await quickInputService.pick(
-		[{ label: 'Apply draft to current editor' }, { label: 'Open draft in new query' }, { label: 'Cancel' }],
+		[
+			...(canApply ? [{ label: 'Apply draft to current editor' }] : []),
+			{ label: 'Open draft in new query' },
+			{ label: 'Cancel' }
+		],
 		{ placeHolder: 'Choose how to handle the SQL draft' }
 	);
 	if (!choice || choice.label === 'Cancel') {
 		return;
 	}
 	if (choice.label === 'Apply draft to current editor') {
+		if (!canApply || !baseTarget) {
+			return;
+		}
+		if (isApplyStillAllowed?.() === false) {
+			notificationService.warn('The SQL editor context changed. The draft was not applied.');
+			return;
+		}
+		const artifact = createSqlAgentArtifactForTarget({
+			artifactId: `artifact-${Date.now()}`,
+			runId: event.run.runId,
+			target: baseTarget,
+			content: sql
+		});
 		const applied = pane.applyAgentArtifact(artifact);
 		if (!applied.applied) {
 			notificationService.warn('The SQL editor changed while the draft was generated. The draft was not applied.');
@@ -411,6 +416,78 @@ async function applyAgentAnswerDraft(
 		return;
 	}
 	await commandService.executeCommand(SQL_NEW_QUERY_COMMAND_ID, { initialSql: sql });
+}
+
+async function fixSqlResultError(accessor: ServicesAccessor): Promise<void> {
+	const editorService = accessor.get(IEditorService);
+	const resultService = accessor.get(ISqlResultService);
+	const agentService = accessor.get(ISqlAgentService);
+	const metadataService = accessor.get(ISqlMetadataService);
+	const commandService = accessor.get(ICommandService);
+	const quickInputService = accessor.get(IQuickInputService);
+	const notificationService = accessor.get(INotificationService);
+	const state = getSqlResultPanelContentState(resultService.state, resultService.panelState);
+	if (state.kind !== SqlResultStateKind.Error) {
+		notificationService.info('Run a SQL query that fails before asking Agent to fix it.');
+		return;
+	}
+	const pane = editorService.activeEditorPane;
+	if (!(pane instanceof SqlEditorPane)) {
+		notificationService.info('Open the failed SQL editor before asking Agent to fix it.');
+		return;
+	}
+	const context = pane.getAssistantContext();
+	if (!context.editorId || context.editorId !== state.query.editorId) {
+		notificationService.info('Open the editor that produced this SQL error before asking Agent to fix it.');
+		return;
+	}
+	if (!context.connectionId || context.connectionId !== state.query.connectionId) {
+		notificationService.info('Restore the failed query connection before asking Agent to fix SQL.');
+		return;
+	}
+	const goal = 'Fix the failed SQL using the supplied error and schema columns.';
+	const baseTarget = pane.getAgentArtifactTarget();
+	const canApplyAtRequest = canApplyAgentFixToEditor(state.query, baseTarget, context.connectionId);
+	try {
+		const schema = await loadAgentSchema(metadataService, state.query.connectionId);
+		const errorContext: SqlAgentErrorContext = state.errorContext;
+		const event = await agentService.start({
+			goal,
+			task: SqlAgentTaskKind.FixError,
+			mode: SqlAgentMode.SuggestOnly,
+			context: {
+				dialect: context.connectionKind ? getDialectForConnectionKind(context.connectionKind) : SqlDialect.Sqlite,
+				connectionId: state.query.connectionId,
+				sql: state.query.sql,
+				errorMessage: state.errorMessage,
+				errorContext,
+				userPrompt: goal,
+				schema
+			},
+			capabilities: [SqlCapability.AgentTool, SqlCapability.WorkspaceReadSql, SqlCapability.DatabaseReadMetadata]
+		});
+		await commandService.executeCommand('sql.agent.openPanel');
+		const isApplyStillAllowed = () => {
+			const currentContext = pane.getAssistantContext();
+			return (
+				editorService.activeEditorPane === pane &&
+				canApplyAgentFixToEditor(state.query, pane.getAgentArtifactTarget(), currentContext.connectionId)
+			);
+		};
+		const allowApply = canApplyAtRequest && isApplyStillAllowed();
+		await applyAgentAnswerDraft(
+			pane,
+			event,
+			quickInputService,
+			notificationService,
+			commandService,
+			baseTarget,
+			allowApply,
+			isApplyStillAllowed
+		);
+	} catch (error) {
+		notificationService.error(toActionErrorMessage(error));
+	}
 }
 
 function toActionErrorMessage(error: unknown): string {
@@ -425,6 +502,7 @@ async function openAiResult(accessor: ServicesAccessor, kind: SqlAiTaskKind): Pr
 	const notificationService = accessor.get(INotificationService);
 	const pane = editorService.activeEditorPane;
 	const editorContext = pane instanceof SqlEditorPane ? pane.getAssistantContext() : undefined;
+	const baseTarget = pane instanceof SqlEditorPane ? pane.getAgentArtifactTarget() : undefined;
 	const dialect = editorContext?.connectionKind
 		? getDialectForConnectionKind(editorContext.connectionKind)
 		: SqlDialect.Sqlite;
@@ -470,14 +548,11 @@ async function openAiResult(accessor: ServicesAccessor, kind: SqlAiTaskKind): Pr
 	});
 
 	if (response.sql?.trim() && pane instanceof SqlEditorPane) {
-		const target = pane.getAgentArtifactTarget();
-		if (target) {
-			const artifact = createSqlAgentArtifact({
+		if (baseTarget) {
+			const artifact = createSqlAgentArtifactForTarget({
 				artifactId: `artifact-${Date.now()}`,
 				runId: `ai-draft-${Date.now()}`,
-				editorId: target.editorId,
-				baseVersionId: target.versionId,
-				baseSql: target.sql,
+				target: baseTarget,
 				content: response.sql
 			});
 			const choice = await quickInputService.pick(
@@ -510,6 +585,7 @@ registerAction2(OpenWorkspaceAction);
 registerAction2(ListPluginsAction);
 registerAction2(AiAssistantAction);
 registerAction2(AiExplainErrorAction);
+registerAction2(AiFixErrorAction);
 registerAction2(AiGenerateQueryAction);
 registerAction2(AiOptimizeQueryAction);
 registerAction2(SchemaGenerateQueryAction);

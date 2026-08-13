@@ -91,6 +91,7 @@ impl<G: AgentModelGateway> SuggestOnlyAgentLoop<G> {
         if let Err(error) = record_schema_context_budget(run, context) {
             return fail_run(run, error);
         }
+        let model_context = context.redacted_for_model();
 
         let mut evidence_refs = Vec::new();
         let mut warnings = Vec::new();
@@ -101,7 +102,7 @@ impl<G: AgentModelGateway> SuggestOnlyAgentLoop<G> {
             let request = AgentModelRequest {
                 run_id: run.run_id.clone(),
                 task,
-                context: context.clone(),
+                context: model_context.clone(),
                 evidence_refs: evidence_refs.clone(),
             };
             let raw_response = match self.gateway.generate(&request) {
@@ -215,6 +216,7 @@ impl<G: AgentModelGateway, E: ReadOnlyAgentToolExecutor> ReadOnlyAgentLoop<G, E>
         if let Err(error) = record_schema_context_budget(run, context) {
             return fail_run(run, error);
         }
+        let model_context = context.redacted_for_model();
 
         let mut evidence_refs = Vec::new();
         let mut warnings = Vec::new();
@@ -226,7 +228,7 @@ impl<G: AgentModelGateway, E: ReadOnlyAgentToolExecutor> ReadOnlyAgentLoop<G, E>
             let request = AgentModelRequest {
                 run_id: run.run_id.clone(),
                 task,
-                context: context.clone(),
+                context: model_context.clone(),
                 evidence_refs: evidence_refs.clone(),
             };
             let raw_response = match self.gateway.generate(&request) {
@@ -388,7 +390,10 @@ mod tests {
 
     use super::super::domain::{AgentBudget, AgentMode};
     use super::super::evidence::AgentEvidenceStore;
-    use super::super::model::{AgentModelRequest, AgentModelSchemaTable};
+    use super::super::model::{
+        AgentModelErrorContext, AgentModelRequest, AgentModelSchemaTable,
+        DeterministicAgentModelGateway,
+    };
     use super::super::policy::{AgentCapability, AgentCapabilitySet, AgentPolicy, AgentTool};
     use super::*;
 
@@ -541,6 +546,86 @@ mod tests {
         assert_eq!(result.state, AgentRunState::Completed);
         assert_eq!(result.query_call_count, 0);
         assert_eq!(run.usage.model_turns, 1);
+    }
+
+    #[test]
+    fn deterministic_fix_error_completes_in_suggest_only_mode_without_query_calls() {
+        let mut loop_runtime = SuggestOnlyAgentLoop::new(
+            DeterministicAgentModelGateway,
+            policy(),
+            Arc::new(AgentEvidenceStore::default()),
+        );
+        let mut run = run(AgentBudget::default());
+        let context = AgentModelContext {
+            sql: Some("SELECT totl FROM orders".to_string()),
+            error_context: Some(AgentModelErrorContext {
+                code: Some("no_such_column".to_string()),
+                message: "no such column: totl".to_string(),
+                detail: None,
+            }),
+            schema: vec![AgentModelSchemaTable {
+                schema: Some("main".to_string()),
+                name: "orders".to_string(),
+                columns: vec!["id".to_string(), "total".to_string()],
+            }],
+            ..AgentModelContext::default()
+        };
+
+        let result = loop_runtime
+            .run(&mut run, AgentTaskKind::FixError, &context)
+            .unwrap();
+
+        assert_eq!(result.state, AgentRunState::Completed);
+        assert_eq!(result.query_call_count, 0);
+        assert_eq!(run.usage.tool_calls, 0);
+        assert_eq!(
+            result.answer.and_then(|answer| answer.sql).as_deref(),
+            Some("SELECT total FROM orders")
+        );
+    }
+
+    #[test]
+    fn model_request_redacts_sensitive_database_error_text() {
+        let mut loop_runtime = SuggestOnlyAgentLoop::new(
+            ScriptedGateway::new([final_json()]),
+            policy(),
+            Arc::new(AgentEvidenceStore::default()),
+        );
+        let mut run = run(AgentBudget::default());
+        let context = AgentModelContext {
+            error_message: Some(
+                "legacy databaseUrl=postgresql://alice:url-secret@db.internal/app".to_string(),
+            ),
+            error_context: Some(AgentModelErrorContext {
+                code: Some("query_failed".to_string()),
+                message: "no such column: totl; token=token-canary".to_string(),
+                detail: Some(
+                    "password=hunter2; host=db.internal; Authorization: Bearer bearer-canary"
+                        .to_string(),
+                ),
+            }),
+            ..AgentModelContext::default()
+        };
+
+        loop_runtime
+            .run(&mut run, AgentTaskKind::FixError, &context)
+            .unwrap();
+
+        let serialized = serde_json::to_string(&loop_runtime.gateway.requests[0]).unwrap();
+        for secret in [
+            "url-secret",
+            "db.internal",
+            "token-canary",
+            "hunter2",
+            "bearer-canary",
+        ] {
+            assert!(
+                !serialized.contains(secret),
+                "model request leaked {secret}"
+            );
+        }
+        assert!(serialized.contains("[REDACTED]"));
+        assert!(serialized.contains("no such column: totl"));
     }
 
     #[test]

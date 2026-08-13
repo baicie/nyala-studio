@@ -51,16 +51,19 @@ export const enum SqlEditorRunningState {
 export interface SqlEditorExecutionControllerState {
 	readonly state: SqlEditorRunningState;
 	readonly editorId: string;
+	readonly editorVersionId?: number;
 	readonly executionId?: string;
 	readonly connectionId?: string;
 	readonly startedAt?: number;
 	readonly sql?: string;
 	readonly source?: SqlEditorExecutionSource;
+	readonly statementCount?: number;
 	readonly canCancel: boolean;
 }
 
 export interface SqlEditorExecutionInput {
 	readonly editorId: string;
+	readonly editorVersionId?: number;
 	readonly connectionId?: string;
 	readonly fullSql: string;
 	readonly selectedSql?: string;
@@ -121,12 +124,19 @@ export class SqlEditorExecutionController {
 		const startedAt = this.now();
 		const runId = this.nextRunId++;
 		const executionId = createSqlEditorExecutionId();
+		const statements =
+			input.source === SqlEditorExecutionSource.Statement
+				? [payload.sql]
+				: splitSqlStatements(payload.sql).map(statement => statement.sql);
+		const statementCount = statements.length;
 
 		const started: SqlEditorQueryStartedEvent = {
 			editorId: input.editorId,
+			editorVersionId: input.editorVersionId,
 			connectionId: payload.connectionId,
 			sql: payload.sql,
 			source: payload.source,
+			statementCount,
 			startedAt,
 			executionId
 		};
@@ -143,21 +153,17 @@ export class SqlEditorExecutionController {
 		this.currentState = {
 			state: SqlEditorRunningState.Running,
 			editorId: input.editorId,
+			editorVersionId: input.editorVersionId,
 			executionId,
 			connectionId: payload.connectionId,
 			startedAt,
 			sql: payload.sql,
 			source: payload.source,
+			statementCount,
 			canCancel: run.canCancel
 		};
 
 		try {
-			const statements =
-				input.source === SqlEditorExecutionSource.Statement
-					? [payload.sql]
-					: splitSqlStatements(payload.sql).map(statement => statement.sql);
-			const statementCount = statements.length;
-
 			for (const [statementIndex, statement] of statements.entries()) {
 				const statementStartedAt = statementIndex === 0 ? startedAt : this.now();
 
@@ -272,12 +278,7 @@ export class SqlEditorExecutionController {
 		}
 
 		const cancelled: SqlEditorQueryCancelledEvent = {
-			editorId: run.started.editorId,
-			connectionId: run.started.connectionId,
-			sql: run.started.sql,
-			source: run.started.source,
-			startedAt: run.started.startedAt,
-			executionId: run.executionId,
+			...run.started,
 			completedAt: this.now(),
 			message: result.message,
 			statementResults: [...run.statementResults]

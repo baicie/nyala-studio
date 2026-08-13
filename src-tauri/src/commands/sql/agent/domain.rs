@@ -7,10 +7,11 @@
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, LazyLock,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use super::super::types::SqlCommandError;
@@ -81,6 +82,7 @@ impl AgentRunState {
 pub enum AgentTaskKind {
     Assistant,
     ExplainError,
+    FixError,
     GenerateQuery,
     OptimizeQuery,
 }
@@ -615,6 +617,28 @@ pub(crate) fn redact_json_value(value: serde_json::Value) -> serde_json::Value {
         }
         other => other,
     }
+}
+
+pub(crate) fn redact_sensitive_text(value: &str) -> String {
+    static PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+        [
+            r"(?is)-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?(?:-----END [^-\r\n]*PRIVATE KEY-----|\z)",
+            r#"(?i)\b[a-z][a-z0-9+.-]*://[^\s<>\"']+"#,
+            r"(?i)\bbearer\s+[a-z0-9._~+/=-]+",
+            r"(?i)'[^'\r\n]*'@'[^'\r\n]*'",
+            r#"(?i)\b(?:server\s+at|server\s+host|host(?:name)?)\s+(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\r\n,;]+)"#,
+            r#"(?i)\b(?:password|passwd|pwd|secret|token|api[_ -]?key|authorization|connection[_ -]?string|database[_ -]?url|host(?:name)?|server)\s*[:=]\s*(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\r\n,;]+)"#,
+        ]
+        .into_iter()
+        .map(|pattern| Regex::new(pattern).expect("static redaction pattern must compile"))
+        .collect()
+    });
+
+    PATTERNS
+        .iter()
+        .fold(value.to_string(), |redacted, pattern| {
+            pattern.replace_all(&redacted, "[REDACTED]").into_owned()
+        })
 }
 
 fn is_sensitive_key(key: &str) -> bool {

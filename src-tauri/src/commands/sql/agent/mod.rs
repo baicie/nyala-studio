@@ -23,8 +23,8 @@ pub use evidence::{
 };
 #[allow(unused_imports)]
 pub use model::{
-    AgentFinalResponse, AgentModelContext, AgentModelGateway, AgentModelRequest,
-    AgentModelResponse, DeterministicAgentModelGateway,
+    AgentFinalResponse, AgentModelContext, AgentModelErrorContext, AgentModelGateway,
+    AgentModelRequest, AgentModelResponse, DeterministicAgentModelGateway,
 };
 #[allow(unused_imports)]
 pub use policy::{

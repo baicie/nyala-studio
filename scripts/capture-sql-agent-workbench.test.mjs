@@ -40,6 +40,17 @@ test('native SQL Agent capture is embedded-only and fail-closed', async () => {
 	assert.match(source, /createEmbeddedWebdriverSession/);
 	assert.match(source, /identifyEmbeddedWebview/);
 	assert.match(source, /identifyEmbeddedWebview\(session\.capabilities, platform\)/);
+	assert.match(source, /serveFrontendDist\(frontendDist\)/);
+	assert.match(source, /\/session\/\$\{sessionId\}\/url/);
+	assert.match(source, /waitForFrontendNavigation\(frontendServer\.url\)/);
+	assert.match(source, /document\.readyState/);
+	assert.match(source, /title === 'Nyala Studio'/);
+	assert.match(source, /execute\/sync/);
+	assert.match(source, /syncEval\(expression\)/);
+	assert.match(source, /syncScript\(script\)/);
+	assert.match(source, /dispatchCommand\('sql\.agent\.openPanel'\)/);
+	assert.doesNotMatch(source, /\/wdio\/eval/);
+	assert.match(source, /kind: 'local-dist-server'/);
 	assert.match(source, /engine: 'embedded-unverified'/);
 	assert.match(source, /sql\.agent\.openPanel/);
 	assert.match(source, /\/session\/\$\{sessionId\}\/actions/);
@@ -56,6 +67,7 @@ test('native SQL Agent capture help is available without launching a binary', as
 	]);
 	assert.match(stdout, /Webdriver-enabled Nyala debug binary/);
 	assert.match(stdout, /--platform/);
+	assert.match(stdout, /--frontend-dist/);
 	assert.match(stdout, /--screenshot-dir/);
 });
 

@@ -170,6 +170,26 @@ export function unwrapWebdriverValue(payload) {
 	return payload?.value?.value ?? payload?.value;
 }
 
+/**
+ * WebDriver's window rect is expressed in physical pixels by the embedded
+ * Tauri plugin, while the Workbench contract is expressed in CSS pixels.
+ */
+export function scaleCssViewportToPhysicalWindowRect(cssViewport, devicePixelRatio) {
+	const width = Number(cssViewport?.width);
+	const height = Number(cssViewport?.height);
+	const dpr = Number(devicePixelRatio);
+	if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+		throw new Error(`CSS viewport must have positive finite dimensions, got ${JSON.stringify(cssViewport)}`);
+	}
+	if (!Number.isFinite(dpr) || dpr <= 0) {
+		throw new Error(`devicePixelRatio must be a positive finite number, got ${devicePixelRatio}`);
+	}
+	return {
+		width: Math.max(1, Math.round(width * dpr)),
+		height: Math.max(1, Math.round(height * dpr))
+	};
+}
+
 export function parseLoopbackDriverUrl(value) {
 	const endpoint = new URL(value);
 	if (endpoint.protocol !== 'http:' || !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(endpoint.hostname)) {

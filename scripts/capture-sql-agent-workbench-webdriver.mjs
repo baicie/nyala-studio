@@ -4,10 +4,12 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import {
 	createEmbeddedWebdriverSession,
 	identifyEmbeddedWebview,
 	launchTauriEmbeddedWebdriver,
+	scaleCssViewportToPhysicalWindowRect,
 	unwrapWebdriverValue,
 	webdriverRequest
 } from './tauri-embedded-webdriver.mjs';
@@ -16,13 +18,18 @@ import {
 	createAgentWorkbenchSnapshotExpression,
 	validateAgentWorkbenchSnapshot
 } from './sql-agent-workbench-visual-contract.mjs';
+import { serveFrontendDist } from './serve-frontend-dist.mjs';
 
-const cli = parseArgs(process.argv.slice(2));
-if (cli.help === 'true') {
+const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const isMain = process.argv[1] ? resolve(process.argv[1]) === fileURLToPath(import.meta.url) : false;
+
+const cli = isMain ? parseArgs(process.argv.slice(2)) : {};
+if (isMain && cli.help === 'true') {
 	process.stdout.write(`Usage: node scripts/capture-sql-agent-workbench-webdriver.mjs [options]
   --app-binary <path>       Webdriver-enabled Nyala debug binary
   --platform <name>         macos or windows
   --driver-url <url>        Embedded WebDriver endpoint (default: http://127.0.0.1:4445)
+  --frontend-dist <path>    Built frontend directory (default: ./dist)
   --output <path>           Evidence JSON destination
   --screenshot-dir <path>   Screenshot destination
   --app-log <path>          Captured native application log
@@ -36,6 +43,7 @@ const appBinary = cli['app-binary'] ? resolve(cli['app-binary']) : undefined;
 const platform =
 	cli.platform ?? (process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : '');
 const driverUrl = String(cli['driver-url'] ?? 'http://127.0.0.1:4445').replace(/\/$/, '');
+const frontendDist = resolve(cli['frontend-dist'] ?? join(repositoryRoot, 'dist'));
 const outputPath = resolve(cli.output ?? 'sql-agent-native-evidence.json');
 const screenshotDir = resolve(cli['screenshot-dir'] ?? join(dirname(outputPath), 'screenshots'));
 const startupTimeoutMs = parseBoundedInteger(
@@ -54,19 +62,24 @@ const requestedViewports = [
 	{ id: 'desktop', width: 1440, height: 900 },
 	{ id: 'narrow', width: 390, height: 844 }
 ];
+const keyboardMode = 'webdriver-actions-synthetic';
+const keyboardLimitation =
+	'tauri-plugin-wdio-webdriver 1.3.0 dispatches W3C /actions keys as synthetic DOM KeyboardEvent values; native system Tab traversal and screen-reader keyboard behavior are not claimed.';
 
-if (!appBinary) throw new Error('--app-binary is required.');
-if (!['macos', 'windows'].includes(platform)) {
-	throw new Error(`--platform must be macos or windows, got ${platform || 'empty'}`);
+if (isMain) {
+	if (!appBinary) throw new Error('--app-binary is required.');
+	if (!['macos', 'windows'].includes(platform)) {
+		throw new Error(`--platform must be macos or windows, got ${platform || 'empty'}`);
+	}
+	await run();
 }
-
-await run();
 
 async function run() {
 	const artifacts = [];
 	let sessionId;
 	let appHost;
 	let temporaryRoot;
+	let frontendServer;
 	let identity = {
 		driverProvider: 'embedded',
 		nativeWebView: false,
@@ -79,6 +92,7 @@ async function run() {
 		await mkdir(screenshotDir, { recursive: true });
 		await mkdir(dirname(outputPath), { recursive: true });
 		temporaryRoot = await mkdtemp(join(process.env.RUNNER_TEMP ?? tmpdir(), 'nyala-agent-webdriver-'));
+		frontendServer = await serveFrontendDist(frontendDist);
 		appHost = await launchTauriEmbeddedWebdriver({
 			appBinary,
 			driverUrl,
@@ -94,37 +108,44 @@ async function run() {
 			pageLoad: scriptTimeoutMs,
 			script: scriptTimeoutMs
 		});
+		await webdriverRequest(driverUrl, `/session/${sessionId}/url`, 'POST', { url: frontendServer.url });
+		await waitForFrontendNavigation(frontendServer.url);
 		await waitForExpression(
 			`Boolean(globalThis.__sidex_commandService) && Boolean(document.querySelector('.monaco-workbench')) && !document.querySelector('#nyala-splash')`,
 			'Workbench boot'
 		);
 
 		for (const requestedViewport of requestedViewports) {
-			await setWindowSize(requestedViewport);
+			const viewportSizing = await setWindowSize(requestedViewport);
 			if (requestedViewport.id === 'narrow') {
-				await directEval(
-					`globalThis.__sidex_commandService.executeCommand('workbench.action.closeSidebar').then(() => true)`
-				);
+				await dispatchCommand('workbench.action.closeSidebar');
 			}
-			await directEval(`globalThis.__sidex_commandService.executeCommand('sql.agent.openPanel').then(() => true)`);
+			await dispatchCommand('sql.agent.openPanel');
 			await waitForExpression(
 				`Boolean(document.querySelector('.sql-agent-view')) && document.querySelector('.sql-agent-view').getClientRects().length > 0`,
 				`${requestedViewport.id} SQL Agent panel`
 			);
-			await directEval(`new Promise(resolve => setTimeout(() => resolve(true), 350))`);
+			await delay(350);
 
-			const tabOrder = await collectTabOrder();
-			const snapshot = await directEval(createAgentWorkbenchSnapshotExpression());
+			const tabEvidence = await collectTabOrder();
+			const tabOrder = tabEvidence.order;
+			const snapshot = await syncEval(createAgentWorkbenchSnapshotExpression());
 			const viewport = {
 				id: requestedViewport.id,
 				width: snapshot.viewportWidth,
-				height: snapshot.viewportHeight
+				height: snapshot.viewportHeight,
+				devicePixelRatio: snapshot.devicePixelRatio
 			};
 			const screenshotName = `sql-agent-${platform}-${requestedViewport.id}.png`;
 			const screenshot = await captureScreenshot(join(screenshotDir, screenshotName));
 			const checks = [
 				...validateAgentWorkbenchSnapshot(snapshot, viewport, tabOrder),
 				validateRequestedViewport(requestedViewport, viewport),
+				{
+					id: 'native-keyboard-evidence',
+					passed: tabEvidence.keyboardMode === 'native',
+					reason: `${tabEvidence.keyboardMode}: ${tabEvidence.limitation}`
+				},
 				{
 					id: 'screenshot-size',
 					passed: screenshot.width >= 300 && screenshot.height >= 300,
@@ -138,6 +159,10 @@ async function run() {
 			];
 			artifacts.push({
 				requestedViewport,
+				requestedCssViewport: viewportSizing.requestedCssViewport,
+				requestedPhysicalRect: viewportSizing.requestedPhysicalRect,
+				devicePixelRatio: viewportSizing.devicePixelRatio,
+				appliedWindowRect: viewportSizing.appliedWindowRect,
 				viewport,
 				status: checks.every(check => check.passed) ? 'ready' : 'blocked',
 				screenshot: screenshotName,
@@ -145,6 +170,8 @@ async function run() {
 				screenshotSha256: screenshot.sha256,
 				snapshot,
 				tabOrder,
+				keyboardMode: tabEvidence.keyboardMode,
+				keyboardLimitation: tabEvidence.limitation,
 				checks
 			});
 		}
@@ -156,58 +183,134 @@ async function run() {
 				? `${identity.engine} recorded desktop and narrow SQL Agent Workbench evidence.`
 				: `${identity.engine} did not satisfy every SQL Agent Workbench check.`,
 			identity,
+			frontendSource: { kind: 'local-dist-server', url: frontendServer.url },
 			artifacts
 		});
 		if (!ready) process.exitCode = 1;
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
 		process.stderr.write(`SQL Agent native evidence blocked: ${reason}\n`);
-		await writeEvidence({ status: 'blocked', reason, identity, artifacts });
+		await writeEvidence({
+			status: 'blocked',
+			reason,
+			identity,
+			frontendSource: frontendServer ? { kind: 'local-dist-server', url: frontendServer.url } : undefined,
+			artifacts
+		});
 		process.exitCode = 1;
 	} finally {
 		if (sessionId) {
 			await webdriverRequest(driverUrl, `/session/${sessionId}`, 'DELETE').catch(() => undefined);
 		}
 		await appHost?.stop();
+		await frontendServer?.close();
 		if (temporaryRoot) await rm(temporaryRoot, { recursive: true, force: true });
 	}
 
-	async function directEval(expression) {
-		const done = 'arguments[arguments.length - 1]';
-		const payload = await webdriverRequest(
-			driverUrl,
-			'/wdio/eval',
-			'POST',
-			{
-				script: `Promise.resolve().then(() => (${expression})).then(value => ${done}({ ok: true, value, undef: value === undefined })).catch(error => ${done}({ ok: false, error: String(error?.stack || error) }));`,
-				window_label: 'main',
-				timeout_ms: scriptTimeoutMs
-			},
-			{ timeoutMs: scriptTimeoutMs + 5_000 }
+	async function syncEval(expression) {
+		return unwrapWebdriverValue(
+			await webdriverRequest(driverUrl, `/session/${sessionId}/execute/sync`, 'POST', {
+				script: `return (${expression});`,
+				args: []
+			})
 		);
-		if (payload.error) throw new Error(`Embedded direct eval failed: ${payload.error}`);
-		return payload.value;
+	}
+
+	async function syncScript(script) {
+		return unwrapWebdriverValue(
+			await webdriverRequest(driverUrl, `/session/${sessionId}/execute/sync`, 'POST', {
+				script,
+				args: []
+			})
+		);
+	}
+
+	async function dispatchCommand(commandId) {
+		const result = await syncScript(`
+			globalThis.__nyalaNativeCaptureCommandError = '';
+			try {
+				const commandResult = globalThis.__sidex_commandService.executeCommand(${JSON.stringify(commandId)});
+				if (commandResult && typeof commandResult.then === 'function') {
+					commandResult.catch(error => {
+						globalThis.__nyalaNativeCaptureCommandError = String(error?.stack || error);
+					});
+				}
+				return { started: true };
+			} catch (error) {
+				return { started: false, error: String(error?.stack || error) };
+			}
+		`);
+		if (!result?.started) {
+			throw new Error(`Workbench command ${commandId} failed to start: ${result?.error || 'unknown error'}`);
+		}
+	}
+
+	async function commandError() {
+		return syncEval('globalThis.__nyalaNativeCaptureCommandError || ""');
 	}
 
 	async function waitForExpression(expression, label) {
 		const deadline = Date.now() + scriptTimeoutMs;
+		let lastError = '';
 		while (Date.now() < deadline) {
-			if (await directEval(expression)) return;
+			try {
+				if (await syncEval(expression)) return;
+			} catch (error) {
+				lastError = error instanceof Error ? error.message : String(error);
+			}
 			await delay(100);
 		}
-		throw new Error(`Timed out waiting for ${label}.`);
+		throw new Error(`Timed out waiting for ${label}${lastError ? ` (${lastError})` : ''}.`);
+	}
+
+	async function waitForFrontendNavigation(expectedUrl) {
+		const deadline = Date.now() + scriptTimeoutMs;
+		let lastState = 'navigation has not reached the local frontend';
+		while (Date.now() < deadline) {
+			try {
+				const [urlPayload, titlePayload, readyStatePayload] = await Promise.all([
+					webdriverRequest(driverUrl, `/session/${sessionId}/url`),
+					webdriverRequest(driverUrl, `/session/${sessionId}/title`),
+					webdriverRequest(driverUrl, `/session/${sessionId}/execute/sync`, 'POST', {
+						script: 'return document.readyState',
+						args: []
+					})
+				]);
+				const currentUrl = unwrapWebdriverValue(urlPayload);
+				const title = unwrapWebdriverValue(titlePayload);
+				const readyState = unwrapWebdriverValue(readyStatePayload);
+				lastState = `${currentUrl || 'unknown'} title=${title || 'empty'} readyState=${readyState || 'unknown'}`;
+				if (currentUrl === expectedUrl && readyState === 'complete' && title === 'Nyala Studio') {
+					// Let WebKit finish the final document-to-Workbench handoff before the
+					// first async direct-eval request; otherwise it can be reclaimed.
+					await delay(250);
+					return;
+				}
+			} catch (error) {
+				lastState = error instanceof Error ? error.message : String(error);
+			}
+			await delay(100);
+		}
+		throw new Error(`Timed out waiting for frontend navigation: ${lastState}`);
 	}
 
 	async function setWindowSize(viewport) {
-		await webdriverRequest(driverUrl, `/session/${sessionId}/window/rect`, 'POST', {
-			width: viewport.width,
-			height: viewport.height
-		});
+		const devicePixelRatio = Number(await syncEval('window.devicePixelRatio'));
+		const requestedPhysicalRect = scaleCssViewportToPhysicalWindowRect(viewport, devicePixelRatio);
+		const appliedWindowRect = unwrapWebdriverValue(
+			await webdriverRequest(driverUrl, `/session/${sessionId}/window/rect`, 'POST', requestedPhysicalRect)
+		);
 		await delay(250);
+		return {
+			requestedCssViewport: { width: viewport.width, height: viewport.height },
+			requestedPhysicalRect,
+			devicePixelRatio,
+			appliedWindowRect
+		};
 	}
 
 	async function collectTabOrder() {
-		await directEval(`document.querySelector('[aria-label="Agent prompt"]')?.focus(); true`);
+		await syncScript(`document.querySelector('[aria-label="Agent prompt"]')?.focus(); return true;`);
 		const order = [await activeAriaLabel()];
 		for (let index = 0; index < 3; index += 1) {
 			await webdriverRequest(driverUrl, `/session/${sessionId}/actions`, 'POST', {
@@ -224,11 +327,11 @@ async function run() {
 			});
 			order.push(await activeAriaLabel());
 		}
-		return order;
+		return { order, keyboardMode, limitation: keyboardLimitation };
 	}
 
 	async function activeAriaLabel() {
-		return directEval(`document.activeElement?.getAttribute('aria-label') || ''`);
+		return syncEval(`document.activeElement?.getAttribute('aria-label') || ''`);
 	}
 
 	async function captureScreenshot(path) {
@@ -259,7 +362,7 @@ function validateRequestedViewport(requested, actual) {
 	};
 }
 
-async function writeEvidence({ status, reason, identity, artifacts }) {
+async function writeEvidence({ status, reason, identity, frontendSource, artifacts }) {
 	const report = {
 		version: 1,
 		generatedAt: new Date().toISOString(),
@@ -267,11 +370,14 @@ async function writeEvidence({ status, reason, identity, artifacts }) {
 		status,
 		reason,
 		...identity,
+		...(frontendSource ? { frontendSource } : {}),
 		artifacts,
 		limitations: [
 			'Native automation validates the embedded Workbench DOM, keyboard order, ARIA labels, layout, and screenshots.',
+			keyboardLimitation,
 			'A real VoiceOver or Narrator walkthrough remains manual and is not claimed by this evidence.'
-		]
+		],
+		keyboardMode
 	};
 	await mkdir(dirname(outputPath), { recursive: true });
 	await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');

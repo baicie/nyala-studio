@@ -288,7 +288,7 @@ mod tests {
     #[test]
     fn expired_evidence_is_pruned_without_sleeping() {
         let started = Instant::now();
-        let store = AgentEvidenceStore::new(Duration::from_millis(10), 4, 4096);
+        let store = AgentEvidenceStore::new(Duration::from_mins(1), 4, 4096);
         let reference = store
             .append_at(
                 "run-1",
@@ -305,7 +305,7 @@ mod tests {
         );
         {
             let mut entries = store.entries.lock().unwrap();
-            prune_expired(&mut entries, started + Duration::from_millis(11), store.ttl);
+            prune_expired(&mut entries, started + Duration::from_secs(61), store.ttl);
         }
         assert!(store.get(&reference.evidence_id).is_none());
     }

@@ -710,10 +710,11 @@ UI 规则：
   - Record：[`A4 Workbench Verification`](./sql-mvp-phases/phase-a4-workbench-verification.md)（2026-08-12，browser QA pending）。
   - Acceptance：stale editor 不覆盖、已有 Phase 06 commands 不回归。
   - Verify：artifact tests + `test:sql-editor` + `test:sql-advanced`。
-- [ ] A4.2：最后接 Agent Panel、Schema/Result actions。
-  - Progress：Panel shell 与 typed run projection 已实现；Schema/Result actions 和 browser QA 仍待完成。
+- [x] A4.2：最后接 Agent Panel、Schema/Result/Fix actions。
+  - Record：[`A4 Workbench Verification`](./sql-mvp-phases/phase-a4-workbench-verification.md)（2026-08-13；actions、Panel 与 Chromium automation 已完成）。
   - Acceptance：全状态可见、键盘可达、dispose/cancel 行为清晰。
   - Verify：contribution tests + Playwright desktop/narrow viewport screenshots。
+- [ ] Checkpoint W：完成 macOS 原生 viewport/键盘、Windows WebView2 与真实 VoiceOver/Narrator 走查。
 
 ## 17. Code Style
 

@@ -35,6 +35,23 @@ test('normalizeSqlAgentStartRequest trims goal and deduplicates canonical capabi
 	assert.deepEqual(normalized.capabilities, [SqlCapability.AgentTool]);
 });
 
+test('normalizeSqlAgentStartRequest preserves and trims structured error context', () => {
+	const normalized = normalizeSqlAgentStartRequest({
+		...request,
+		task: SqlAgentTaskKind.FixError,
+		context: {
+			dialect: SqlDialect.Sqlite,
+			errorMessage: ' legacy ',
+			errorContext: { code: ' sqlite_error ', message: ' no such column ', detail: ' detail ' }
+		}
+	});
+	assert.deepEqual(normalized.context.errorContext, {
+		code: 'sqlite_error',
+		message: 'no such column',
+		detail: 'detail'
+	});
+});
+
 test('normalizeSqlAgentStartRequest rejects malformed task, dialect, and capability', () => {
 	assert.throws(() => normalizeSqlAgentStartRequest({ ...request, task: 'unknown' as never }), /task/);
 	assert.throws(
