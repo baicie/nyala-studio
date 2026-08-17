@@ -32,8 +32,16 @@ test('SQL Agent artifact applies only to its captured editor version and content
 	assert.deepEqual(result, { applied: true, sql: 'SELECT 2;' });
 });
 
-test('SQL Agent artifact refuses stale editor content without overwriting it', () => {
+test('SQL Agent artifact refuses stale editor identity, version, or baseline text', () => {
 	const source = artifact();
+	assert.equal(
+		getSqlAgentArtifactStaleReason(source, {
+			editorId: 'editor-2',
+			versionId: 7,
+			sql: 'SELECT 1;'
+		}),
+		'editor'
+	);
 	assert.equal(
 		getSqlAgentArtifactStaleReason(source, {
 			editorId: 'editor-1',
@@ -43,12 +51,12 @@ test('SQL Agent artifact refuses stale editor content without overwriting it', (
 		'version'
 	);
 	assert.equal(
-		applySqlAgentArtifact(source, {
+		getSqlAgentArtifactStaleReason(source, {
 			editorId: 'editor-1',
 			versionId: 7,
 			sql: 'SELECT user_edited;'
-		}).applied,
-		false
+		}),
+		'content'
 	);
 });
 

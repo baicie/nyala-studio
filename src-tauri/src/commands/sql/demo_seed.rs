@@ -23,6 +23,9 @@ use rusqlite::Connection;
 
 use super::types::SqlCommandError;
 
+/// Reserved connection id for the built-in Demo database.
+pub const DEMO_PROFILE_ID: &str = "demo-sqlite";
+
 /// Inline schema + seed data for the demo database.
 ///
 /// `NOT EXISTS` keeps later runs idempotent without deleting or rewriting

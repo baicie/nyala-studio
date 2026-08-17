@@ -17,6 +17,7 @@ use super::domain::{AgentMode, AgentToolCall};
 use super::result_policy::{MAX_SAMPLE_MAX_BYTES, MAX_SAMPLE_MAX_ROWS};
 
 const MAX_AGENT_TOOL_ARGUMENT_BYTES: usize = 32 * 1024;
+const MAX_INDEX_LIST_TABLES: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 pub enum AgentCapability {
@@ -117,6 +118,14 @@ impl AgentCapabilitySet {
         self.capabilities.contains(&capability)
     }
 
+    pub fn intersection(&self, allowed: &Self) -> Self {
+        Self::from_capabilities(
+            self.capabilities
+                .intersection(&allowed.capabilities)
+                .copied(),
+        )
+    }
+
     pub fn wire_names(&self) -> Vec<&'static str> {
         self.capabilities
             .iter()
@@ -136,6 +145,8 @@ pub enum AgentTool {
     TableDescribe,
     #[serde(rename = "relation.search")]
     RelationSearch,
+    #[serde(rename = "index.list")]
+    IndexList,
     #[serde(rename = "sql.parse")]
     SqlParse,
     #[serde(rename = "sql.validate")]
@@ -159,6 +170,7 @@ impl AgentTool {
             "schema.search" => Ok(Self::SchemaSearch),
             "table.describe" => Ok(Self::TableDescribe),
             "relation.search" => Ok(Self::RelationSearch),
+            "index.list" => Ok(Self::IndexList),
             "sql.parse" => Ok(Self::SqlParse),
             "sql.validate" => Ok(Self::SqlValidate),
             "sql.explain" => Ok(Self::SqlExplain),
@@ -179,6 +191,7 @@ impl AgentTool {
             Self::SchemaSearch => "schema.search",
             Self::TableDescribe => "table.describe",
             Self::RelationSearch => "relation.search",
+            Self::IndexList => "index.list",
             Self::SqlParse => "sql.parse",
             Self::SqlValidate => "sql.validate",
             Self::SqlExplain => "sql.explain",
@@ -192,7 +205,7 @@ impl AgentTool {
     fn required_capability(self) -> AgentCapability {
         match self {
             Self::WorkspaceCurrent => AgentCapability::WorkspaceReadSql,
-            Self::SchemaSearch | Self::TableDescribe | Self::RelationSearch => {
+            Self::SchemaSearch | Self::TableDescribe | Self::RelationSearch | Self::IndexList => {
                 AgentCapability::DatabaseReadMetadata
             }
             Self::SqlParse | Self::SqlValidate => AgentCapability::AgentTool,
@@ -213,6 +226,7 @@ impl AgentTool {
                     | Self::SchemaSearch
                     | Self::TableDescribe
                     | Self::RelationSearch
+                    | Self::IndexList
                     | Self::SqlParse
                     | Self::SqlValidate
             )
@@ -272,6 +286,9 @@ impl AgentPolicy {
                 format!("Agent tool arguments exceed {MAX_AGENT_TOOL_ARGUMENT_BYTES} bytes"),
             ));
         }
+        if tool == AgentTool::IndexList {
+            validate_index_list_arguments(&call.arguments)?;
+        }
         Ok(AgentAuthorizedTool {
             run_id: call.run_id.clone(),
             call_id: call.call_id.clone(),
@@ -293,7 +310,8 @@ impl AgentPolicy {
         if self.mode != AgentMode::ReadOnly
             || !matches!(
                 tool,
-                AgentTool::SqlExplain
+                AgentTool::IndexList
+                    | AgentTool::SqlExplain
                     | AgentTool::SqlExecuteReadonly
                     | AgentTool::ResultInspect
                     | AgentTool::ResultSample
@@ -342,6 +360,9 @@ fn validate_read_only_arguments(
     tool: AgentTool,
     arguments: &serde_json::Value,
 ) -> Result<(), SqlCommandError> {
+    if tool == AgentTool::IndexList {
+        return validate_index_list_arguments(arguments);
+    }
     if matches!(tool, AgentTool::ResultInspect | AgentTool::ResultSample) {
         let result_ref = arguments
             .get("resultRef")
@@ -438,6 +459,72 @@ fn validate_read_only_arguments(
     Ok(())
 }
 
+fn validate_index_list_arguments(arguments: &serde_json::Value) -> Result<(), SqlCommandError> {
+    let connection_id = arguments
+        .get("connectionId")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.contains('\0'))
+        .ok_or_else(|| {
+            SqlCommandError::new("invalid_input", "index.list requires a connectionId")
+        })?;
+    let _ = connection_id;
+    let dialect = arguments
+        .get("dialect")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| SqlCommandError::new("invalid_input", "index.list requires a dialect"))?;
+    if dialect != "sqlite" {
+        return Err(SqlCommandError::new(
+            "validation",
+            "index.list supports SQLite only",
+        ));
+    }
+    let schema = arguments
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.contains('\0'))
+        .ok_or_else(|| SqlCommandError::new("invalid_input", "index.list requires a schema"))?;
+    if schema != "main" {
+        return Err(SqlCommandError::new(
+            "validation",
+            "index.list only supports the SQLite 'main' schema",
+        ));
+    }
+    let tables = arguments
+        .get("tables")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| SqlCommandError::new("invalid_input", "index.list requires tables"))?;
+    if tables.is_empty() || tables.len() > MAX_INDEX_LIST_TABLES {
+        return Err(SqlCommandError::new(
+            "invalid_input",
+            format!("index.list tables must contain between 1 and {MAX_INDEX_LIST_TABLES} entries"),
+        ));
+    }
+    for table in tables {
+        let name = table
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && !value.contains('\0'))
+            .ok_or_else(|| {
+                SqlCommandError::new("invalid_input", "index.list table requires a name")
+            })?;
+        let _ = name;
+        if table
+            .get("schema")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|table_schema| table_schema.trim() != schema)
+        {
+            return Err(SqlCommandError::new(
+                "validation",
+                "index.list table schema must match the requested schema",
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,6 +545,22 @@ mod tests {
         assert_eq!(set.capabilities.len(), 2);
         assert_eq!(set.wire_names(), vec!["agent.tool", "workspace.readSql"]);
         assert!(AgentCapabilitySet::from_wire(vec!["agent.all".to_string()]).is_err());
+    }
+
+    #[test]
+    fn capability_intersection_cannot_add_a_backend_grant() {
+        let requested = AgentCapabilitySet::from_capabilities([
+            AgentCapability::AgentTool,
+            AgentCapability::DatabaseReadMetadata,
+        ]);
+        let backend_grant = AgentCapabilitySet::from_capabilities([
+            AgentCapability::AgentTool,
+            AgentCapability::WorkspaceReadSql,
+        ]);
+
+        let effective = requested.intersection(&backend_grant);
+
+        assert_eq!(effective.wire_names(), vec!["agent.tool"]);
     }
 
     #[test]
@@ -567,6 +670,95 @@ mod tests {
             ))
             .unwrap_err();
         assert!(write_error.to_string().contains("read-only SQLite"));
+    }
+
+    #[test]
+    fn index_list_requires_metadata_capability_and_bounded_sqlite_scope() {
+        let arguments = json!({
+            "connectionId": "workspace",
+            "dialect": "sqlite",
+            "schema": "main",
+            "tables": [{"schema": "main", "name": "users"}]
+        });
+        let missing_capability = AgentPolicy::new(
+            AgentMode::ReadOnly,
+            AgentCapabilitySet::from_capabilities([AgentCapability::DatabaseExplain]),
+        )
+        .authorize_read_only(&call("index.list", arguments.clone()))
+        .unwrap_err();
+        assert!(missing_capability
+            .to_string()
+            .contains("database.readMetadata"));
+
+        let policy = AgentPolicy::new(
+            AgentMode::ReadOnly,
+            AgentCapabilitySet::from_capabilities([AgentCapability::DatabaseReadMetadata]),
+        );
+        let authorized = policy
+            .authorize_read_only(&call("index.list", arguments))
+            .expect("authorize bounded SQLite index metadata");
+        assert_eq!(authorized.tool, AgentTool::IndexList);
+        assert_eq!(
+            authorized.required_capability,
+            AgentCapability::DatabaseReadMetadata
+        );
+
+        for invalid in [
+            json!({
+                "connectionId": "workspace",
+                "dialect": "mysql",
+                "schema": "main",
+                "tables": [{"name": "users"}]
+            }),
+            json!({
+                "connectionId": "workspace",
+                "dialect": "sqlite",
+                "schema": "temp",
+                "tables": [{"name": "users"}]
+            }),
+            json!({
+                "connectionId": "workspace",
+                "dialect": "sqlite",
+                "schema": "main",
+                "tables": []
+            }),
+            json!({
+                "connectionId": "workspace",
+                "dialect": "sqlite",
+                "schema": "main",
+                "tables": [{"schema": "other", "name": "users"}]
+            }),
+        ] {
+            assert!(policy
+                .authorize_read_only(&call("index.list", invalid))
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn suggest_only_policy_authorizes_index_list_without_query_capability() {
+        let policy = AgentPolicy::new(
+            AgentMode::SuggestOnly,
+            AgentCapabilitySet::from_capabilities([AgentCapability::DatabaseReadMetadata]),
+        );
+
+        let authorized = policy
+            .authorize(&call(
+                "index.list",
+                json!({
+                    "connectionId": "workspace",
+                    "dialect": "sqlite",
+                    "schema": "main",
+                    "tables": [{"name": "users"}]
+                }),
+            ))
+            .expect("authorize metadata-only index list");
+
+        assert_eq!(authorized.tool, AgentTool::IndexList);
+        assert_eq!(
+            authorized.required_capability,
+            AgentCapability::DatabaseReadMetadata
+        );
     }
 
     #[test]

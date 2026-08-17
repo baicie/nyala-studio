@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+	runSqlConnectionsRefreshCommand,
 	refreshDataSourcesAfterConnection,
 	openNewSqlDataSourceForm,
 	openSavedSqlDataSourceForm,
@@ -81,6 +82,51 @@ test('connection success refreshes and reveals the data source', async () => {
 			args: [{ revealConnectionId: 'mysql-prod' }]
 		}
 	]);
+});
+
+test('existing-view-only refresh never opens or focuses Data Sources', async () => {
+	let refreshCalls = 0;
+	let revealCalls = 0;
+	let openCalls = 0;
+
+	await runSqlConnectionsRefreshCommand(
+		{
+			getExistingView: () => ({
+				refresh: async () => {
+					refreshCalls++;
+				},
+				refreshAndRevealConnection: async () => {
+					revealCalls++;
+				}
+			}),
+			openAndFocusView: async () => {
+				openCalls++;
+				return null;
+			}
+		},
+		{ existingViewOnly: true }
+	);
+
+	assert.equal(refreshCalls, 1);
+	assert.equal(revealCalls, 0);
+	assert.equal(openCalls, 0);
+});
+
+test('existing-view-only refresh is a no-op when Data Sources was not instantiated', async () => {
+	let openCalls = 0;
+
+	await runSqlConnectionsRefreshCommand(
+		{
+			getExistingView: () => null,
+			openAndFocusView: async () => {
+				openCalls++;
+				return null;
+			}
+		},
+		{ existingViewOnly: true }
+	);
+
+	assert.equal(openCalls, 0);
 });
 
 test('saved MySQL data source routes through the connectors command', async () => {

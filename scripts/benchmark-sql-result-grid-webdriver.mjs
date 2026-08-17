@@ -1,18 +1,37 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { readFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+	convergeWindowRectForCssViewport,
 	createEmbeddedWebdriverSession,
 	identifyEmbeddedWebview,
 	launchTauriEmbeddedWebdriver,
 	unwrapWebdriverValue,
 	webdriverRequest
 } from './tauri-embedded-webdriver.mjs';
-import { hasVisiblePngDiversity, inspectPngPixels } from './sql-result-grid-visual-png.mjs';
+import {
+	createBalancedBenchmarkPlan,
+	EXECUTION_ORDER,
+	isBenchmarkResultForRun,
+	MEASUREMENT_CONTRACT_VERSION,
+	SCROLL_COMMIT_BOUNDARY
+} from './sql-result-grid-benchmark-contract.mjs';
+import {
+	hasVisiblePngDiversity,
+	inspectPngPixels,
+	validatePngViewportDimensions
+} from './sql-result-grid-visual-png.mjs';
+import {
+	createSqlResultGridRunMarkerBytes,
+	inspectSqlResultGridRunMarker,
+	SQL_RESULT_GRID_RUN_MARKER_VERSION
+} from './sql-result-grid-run-marker.mjs';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const defaultOutput = join(repositoryRoot, 'platform-evidence.json');
@@ -29,6 +48,11 @@ if (cli.help === 'true') {
   --output <path>        Evidence JSON destination
   --screenshot-dir <dir> Screenshot destination
   --app-log <path>       Captured native application log
+  --repository <owner/name> GitHub repository provenance
+  --source-revision <sha> Tested Git commit provenance
+  --source-ref <ref>     Tested Git ref provenance
+  --workflow-run-id <id> GitHub Actions run provenance
+  --workflow-run-attempt <n> GitHub Actions attempt provenance
   --script-timeout-ms <n> WebDriver script budget (default: 120000)
 `);
 	process.exit(0);
@@ -65,6 +89,7 @@ const workloads = [
 const renderers = ['native', 'workbench-table', 'zeus'];
 const selectedWorkloads = selectValues(cli.workload, workloads, 'workload');
 const selectedRenderers = selectValues(cli.renderer, renderers, 'renderer');
+const baseProvenance = createEvidenceProvenance(cli);
 
 if (!appBinary && !['safari', 'edge'].includes(browser)) {
 	throw new Error(`browser must be safari or edge, got ${browser}`);
@@ -82,16 +107,22 @@ async function run() {
 	let temporaryRoot;
 	let appHost;
 	let benchmarkServer;
+	let provenance = baseProvenance;
 	let identity = {
 		driverProvider: appBinary ? 'embedded' : 'external',
 		nativeWebView: false,
 		nativeWebView2: false,
 		engine: appBinary ? 'embedded-unverified' : browser === 'safari' ? 'safari-webdriver' : 'msedgedriver',
-		browser
+		browser,
+		platformName: platform || undefined
 	};
 	try {
 		await mkdir(screenshotDir, { recursive: true });
 		await mkdir(dirname(outputPath), { recursive: true });
+		if (appBinary) provenance = { ...provenance, binarySha256: await sha256File(appBinary) };
+		if (selectedRenderers.includes('zeus')) {
+			provenance = { ...provenance, zeusBundleSha256: await sha256File(zeusBundle) };
+		}
 		temporaryRoot = await mkdtemp(join(process.env.RUNNER_TEMP ?? '/tmp', 'nyala-sql-webdriver-'));
 		const pagePath = join(temporaryRoot, 'benchmark.html');
 		const emitArgs = [
@@ -122,43 +153,83 @@ async function run() {
 		sessionId = session.sessionId;
 		await setSessionTimeouts(driverUrl, sessionId, scriptTimeoutMs);
 		if (appBinary) identity = identifyEmbeddedWebview(session.capabilities, platform);
-		for (const workload of selectedWorkloads) {
-			for (const renderer of selectedRenderers) {
-				for (let iteration = 1; iteration <= repeat; iteration += 1) {
-					const url = `${benchmarkServer.url}?${new URLSearchParams({
-						renderer,
-						rows: String(workload.rows),
-						columns: String(workload.columns),
-						wide: String(workload.wide),
-						width: String(workload.width),
-						height: String(workload.height)
-					})}`;
-					await setWindowSize(driverUrl, sessionId, workload.width, workload.height);
-					await webdriverRequest(driverUrl, `/session/${sessionId}/url`, 'POST', { url });
-					await waitForNavigation(driverUrl, sessionId, url);
-					const record = await waitForResult(driverUrl, sessionId, Boolean(appBinary));
-					const enriched = { ...record, workloadId: workload.id, renderer, iteration };
-					const visualReady = validateVisualProbe(record, workload);
-					if (record.status === 'ok' && !visualReady.passed) {
-						enriched.status = 'error';
-						enriched.reason = visualReady.reason;
-					}
-					if (iteration === 1 && enriched.status === 'ok') {
-						const screenshotName = `${platform || browser}-${workload.id}-${renderer}.png`;
-						const screenshotPath = join(screenshotDir, screenshotName);
-						const screenshotProbe = await saveScreenshot(driverUrl, sessionId, screenshotPath, workload);
-						screenshots.push(screenshotName);
-						enriched.screenshot = screenshotName;
-						enriched.screenshotProbe = screenshotProbe;
-						if (!screenshotProbe.passed) {
-							enriched.status = 'error';
-							enriched.reason = screenshotProbe.reason;
-						}
-					}
-					records.push(enriched);
-					process.stdout.write(`${workload.id}/${renderer} #${iteration}: ${formatRecord(enriched)}\n`);
+		const benchmarkPlan = createBalancedBenchmarkPlan(selectedWorkloads, selectedRenderers, repeat);
+		for (const { workload, renderer, iteration, executionOrdinal } of benchmarkPlan) {
+			const runToken = randomUUID();
+			const viewportCalibration = await calibrateCssViewport(driverUrl, sessionId, workload, Boolean(appBinary));
+			if (!viewportCalibration.viewportConverged) {
+				throw new Error(
+					`CSS viewport did not converge for ${workload.id}: observed ${viewportCalibration.observedCssViewport.width}x${viewportCalibration.observedCssViewport.height}`
+				);
+			}
+			const query = {
+				run: runToken,
+				renderer,
+				executionOrder: EXECUTION_ORDER,
+				executionOrdinal: String(executionOrdinal),
+				rows: String(workload.rows),
+				columns: String(workload.columns),
+				wide: String(workload.wide),
+				width: String(workload.width),
+				height: String(workload.height)
+			};
+			if (iteration === 1) {
+				query.screenshotRunMarker = Buffer.from(createSqlResultGridRunMarkerBytes(runToken)).toString('hex');
+			}
+			const url = `${benchmarkServer.url}?${new URLSearchParams(query)}`;
+			await webdriverRequest(driverUrl, `/session/${sessionId}/url`, 'POST', { url });
+			await waitForNavigation(driverUrl, sessionId, url);
+			const record = await waitForResult(driverUrl, sessionId, Boolean(appBinary), {
+				runToken,
+				renderer,
+				executionOrder: EXECUTION_ORDER,
+				executionOrdinal,
+				workload
+			});
+			const enriched = {
+				...record,
+				workloadId: workload.id,
+				renderer,
+				iteration,
+				executionOrder: EXECUTION_ORDER,
+				executionOrdinal,
+				viewportCalibration
+			};
+			const visualReady = validateVisualProbe(record, workload);
+			if (record.status === 'ok' && !visualReady.passed) {
+				enriched.status = 'error';
+				enriched.reason = visualReady.reason;
+			}
+			if (iteration === 1 && enriched.status === 'ok') {
+				const screenshotName = `${platform || browser}-${workload.id}-${renderer}-${runToken}.png`;
+				const screenshotPath = join(screenshotDir, screenshotName);
+				const screenshotProbe = {
+					...(await saveScreenshot(driverUrl, sessionId, screenshotPath, record.browserViewport, runToken)),
+					runToken,
+					viewport: record.browserViewport
+				};
+				screenshots.push({
+					file: screenshotName,
+					workloadId: workload.id,
+					renderer,
+					iteration,
+					runToken,
+					viewport: record.browserViewport,
+					bytes: screenshotProbe.bytes,
+					sha256: screenshotProbe.sha256,
+					runMarkerVersion: screenshotProbe.runMarkerVersion
+				});
+				enriched.screenshot = screenshotName;
+				enriched.screenshotProbe = screenshotProbe;
+				if (!screenshotProbe.passed) {
+					enriched.status = 'error';
+					enriched.reason = screenshotProbe.reason;
 				}
 			}
+			records.push(enriched);
+			process.stdout.write(
+				`${workload.id}/${renderer} #${iteration} [${executionOrdinal}/${benchmarkPlan.length}]: ${formatRecord(enriched)}\n`
+			);
 		}
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
@@ -169,6 +240,7 @@ async function run() {
 			reason,
 			label,
 			identity,
+			provenance,
 			records,
 			screenshots
 		});
@@ -195,6 +267,7 @@ async function run() {
 			: `${label} did not produce ${repeat} successful runs for every workload/renderer.`,
 		label,
 		identity,
+		provenance,
 		records,
 		screenshots
 	});
@@ -299,10 +372,61 @@ async function createExternalSession(baseUrl, browserName) {
 	return { sessionId };
 }
 
-async function setWindowSize(baseUrl, sessionId, width, height) {
-	await webdriverRequest(baseUrl, `/session/${sessionId}/window/rect`, 'POST', { width, height }).catch(
-		() => undefined
+async function calibrateCssViewport(baseUrl, sessionId, workload, embedded) {
+	return convergeWindowRectForCssViewport(
+		{ width: workload.width, height: workload.height },
+		async requestedWindowRect => {
+			const appliedPayload = await webdriverRequest(baseUrl, `/session/${sessionId}/window/rect`, 'POST', {
+				width: requestedWindowRect.width,
+				height: requestedWindowRect.height
+			});
+			let appliedWindowRect = normalizeWindowRect(unwrapWebdriverValue(appliedPayload));
+			if (!appliedWindowRect) {
+				const observedPayload = await webdriverRequest(baseUrl, `/session/${sessionId}/window/rect`);
+				appliedWindowRect = normalizeWindowRect(unwrapWebdriverValue(observedPayload));
+			}
+			if (!appliedWindowRect) throw new Error('WebDriver did not return an applied window rect.');
+			const observed = await readCssViewport(baseUrl, sessionId, embedded);
+			return {
+				appliedWindowRect,
+				observedCssViewport: { width: observed.width, height: observed.height }
+			};
+		},
+		{ maxAttempts: 4, tolerance: 1, initialWindowRect: { width: workload.width, height: workload.height } }
 	);
+}
+
+function normalizeWindowRect(value) {
+	if (!Number.isFinite(value?.width) || value.width <= 0 || !Number.isFinite(value?.height) || value.height <= 0) {
+		return undefined;
+	}
+	return { width: value.width, height: value.height };
+}
+
+async function readCssViewport(baseUrl, sessionId, embedded) {
+	const viewport = embedded
+		? await evaluateViaDirectEval(
+				baseUrl,
+				'({ width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio })'
+			)
+		: unwrapWebdriverValue(
+				await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
+					script:
+						'return { width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio };',
+					args: []
+				})
+			);
+	if (
+		!Number.isFinite(viewport?.width) ||
+		viewport.width <= 0 ||
+		!Number.isFinite(viewport?.height) ||
+		viewport.height <= 0 ||
+		!Number.isFinite(viewport?.devicePixelRatio) ||
+		viewport.devicePixelRatio <= 0
+	) {
+		throw new Error(`WebDriver returned an invalid CSS viewport: ${JSON.stringify(viewport)}`);
+	}
+	return viewport;
 }
 
 async function waitForNavigation(baseUrl, sessionId, expectedUrl) {
@@ -329,8 +453,9 @@ async function setSessionTimeouts(baseUrl, sessionId, scriptMs) {
 	});
 }
 
-async function waitForResult(baseUrl, sessionId, embedded) {
+async function waitForResult(baseUrl, sessionId, embedded, expected) {
 	const deadline = Date.now() + scriptTimeoutMs;
+	let lastMismatch;
 	while (Date.now() < deadline) {
 		const text = embedded
 			? await readBenchmarkResultViaDirectEval(baseUrl)
@@ -342,23 +467,31 @@ async function waitForResult(baseUrl, sessionId, embedded) {
 				);
 		if (typeof text === 'string' && text.trim()) {
 			const result = JSON.parse(text);
-			if (result.status === 'ok' || result.status === 'error' || result.status === 'unavailable') {
+			if (
+				(result.status === 'ok' || result.status === 'error' || result.status === 'unavailable') &&
+				isBenchmarkResultForRun(result, expected)
+			) {
 				return result;
 			}
+			lastMismatch = `Ignored stale or mismatched result for run ${expected.runToken}.`;
 		}
 		await new Promise(resolve => setTimeout(resolve, 100));
 	}
-	throw new Error('Timed out waiting for benchmark result.');
+	throw new Error(`Timed out waiting for benchmark result.${lastMismatch ? ` ${lastMismatch}` : ''}`);
 }
 
 async function readBenchmarkResultViaDirectEval(baseUrl) {
+	return evaluateViaDirectEval(baseUrl, "document.querySelector('#benchmark-result')?.textContent || ''");
+}
+
+async function evaluateViaDirectEval(baseUrl, expression) {
 	const done = 'arguments[arguments.length - 1]';
 	const payload = await webdriverRequest(
 		baseUrl,
 		'/wdio/eval',
 		'POST',
 		{
-			script: `try { ${done}({ ok: true, value: document.querySelector('#benchmark-result')?.textContent || '' }); } catch (error) { ${done}({ ok: false, error: String(error) }); }`,
+			script: `try { ${done}({ ok: true, value: (${expression}) }); } catch (error) { ${done}({ ok: false, error: String(error) }); }`,
 			window_label: 'main',
 			timeout_ms: scriptTimeoutMs
 		},
@@ -370,7 +503,7 @@ async function readBenchmarkResultViaDirectEval(baseUrl) {
 	return payload.value;
 }
 
-async function saveScreenshot(baseUrl, sessionId, path, workload) {
+async function saveScreenshot(baseUrl, sessionId, path, browserViewport, runToken) {
 	const payload = await webdriverRequest(baseUrl, `/session/${sessionId}/screenshot`, 'GET');
 	const image = unwrapWebdriverValue(payload);
 	if (typeof image !== 'string' || image.length === 0) {
@@ -378,34 +511,66 @@ async function saveScreenshot(baseUrl, sessionId, path, workload) {
 	}
 	const bytes = Buffer.from(image, 'base64');
 	await writeFile(path, bytes);
-	const pixels = inspectPngPixels(bytes);
-	const passed =
-		pixels.width >= Math.min(workload.width, 300) &&
-		pixels.height >= Math.min(workload.height, 300) &&
-		hasVisiblePngDiversity(pixels);
+	const runMarker = inspectSqlResultGridRunMarker(bytes, runToken, browserViewport);
+	const pixels = inspectPngPixels(bytes, { excludeRegions: runMarker.bounds ? [runMarker.bounds] : [] });
+	const dimensions = validatePngViewportDimensions(pixels, browserViewport);
+	const diverse = hasVisiblePngDiversity(pixels);
+	const passed = dimensions.passed && diverse && runMarker.passed;
 	return {
 		passed,
-		reason: passed ? 'screenshot pixels are visible and nonblank' : 'screenshot pixels are blank or undersized',
+		reason: passed
+			? 'screenshot dimensions, content pixels, and run marker are verified'
+			: `screenshot failed viewport, pixel diversity, or run marker checks (actual ${pixels.width}x${pixels.height}, expected ${formatDimension(dimensions.expectedWidth)}x${formatDimension(dimensions.expectedHeight)}; marker: ${runMarker.reason})`,
 		bytes: bytes.byteLength,
+		sha256: createHash('sha256').update(bytes).digest('hex'),
+		runMarkerVersion: SQL_RESULT_GRID_RUN_MARKER_VERSION,
 		...pixels
 	};
 }
 
-async function writeEvidence({ status, runs, reason, label, identity, records, screenshots }) {
+function formatDimension(value) {
+	return Number.isFinite(value) ? String(Math.round(value * 100) / 100) : 'invalid';
+}
+
+async function writeEvidence({ status, runs, reason, label, identity, provenance, records, screenshots }) {
 	const report = {
 		version: 2,
+		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
+		scrollCommitBoundary: SCROLL_COMMIT_BOUNDARY,
+		executionOrder: EXECUTION_ORDER,
 		generatedAt: new Date().toISOString(),
 		label,
 		status,
 		runs,
 		reason,
 		...identity,
+		provenance,
 		summary: summarize(records),
 		records,
 		screenshots
 	};
 	await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 	process.stdout.write(`Wrote ${outputPath}\n`);
+}
+
+function createEvidenceProvenance(options) {
+	const workflowRunAttempt = Number(options['workflow-run-attempt']);
+	return Object.fromEntries(
+		Object.entries({
+			repository: options.repository,
+			sourceRevision: options['source-revision'],
+			sourceRef: options['source-ref'],
+			workflowRunId: options['workflow-run-id'],
+			workflowRunAttempt:
+				Number.isInteger(workflowRunAttempt) && workflowRunAttempt > 0 ? workflowRunAttempt : undefined
+		}).filter(([, value]) => value !== undefined && value !== '')
+	);
+}
+
+async function sha256File(path) {
+	const hash = createHash('sha256');
+	for await (const chunk of createReadStream(path)) hash.update(chunk);
+	return hash.digest('hex');
 }
 
 function summarize(records) {

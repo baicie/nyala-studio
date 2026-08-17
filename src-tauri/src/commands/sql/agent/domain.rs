@@ -23,6 +23,7 @@ pub const DEFAULT_MAX_RESULT_ROWS: usize = 1_000;
 pub const DEFAULT_MAX_RESULT_BYTES: usize = 256 * 1024;
 pub const DEFAULT_MAX_WALL_CLOCK_MS: u64 = 60_000;
 pub const DEFAULT_MAX_TOKENS: usize = 32_000;
+pub const DEFAULT_AGENT_RUN_MAX_ENTRIES: usize = 256;
 
 const MAX_MODEL_TURNS: usize = 64;
 const MAX_TOOL_CALLS: usize = 128;
@@ -378,6 +379,7 @@ pub struct AgentRun {
     pub mode: AgentMode,
     pub budget: AgentBudget,
     pub state: AgentRunState,
+    pub revision: u64,
     pub usage: AgentBudgetUsage,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
@@ -389,6 +391,8 @@ pub struct AgentRun {
     cancellation: AgentCancellationToken,
     #[serde(skip)]
     started_at: Instant,
+    #[serde(skip)]
+    worker_active: bool,
 }
 
 impl AgentRun {
@@ -420,6 +424,7 @@ impl AgentRun {
             mode,
             budget,
             state: AgentRunState::Created,
+            revision: 0,
             usage: AgentBudgetUsage::default(),
             created_at_ms,
             updated_at_ms: created_at_ms,
@@ -429,6 +434,7 @@ impl AgentRun {
             evidence_refs: Vec::new(),
             cancellation: AgentCancellationToken::default(),
             started_at,
+            worker_active: false,
         })
     }
 
@@ -450,7 +456,7 @@ impl AgentRun {
             ));
         }
         self.state = next;
-        self.updated_at_ms = unix_now_ms();
+        self.touch();
         Ok(())
     }
 
@@ -459,7 +465,7 @@ impl AgentRun {
     pub fn mark_failed(&mut self) {
         if !self.state.is_terminal() {
             self.state = AgentRunState::Failed;
-            self.updated_at_ms = unix_now_ms();
+            self.touch();
         }
     }
 
@@ -472,7 +478,8 @@ impl AgentRun {
         }
         self.cancellation.cancel();
         self.state = AgentRunState::Cancelled;
-        self.updated_at_ms = unix_now_ms();
+        self.evidence_refs.clear();
+        self.touch();
         Ok(())
     }
 
@@ -486,10 +493,7 @@ impl AgentRun {
         match self.usage.check(&self.budget, self.started_at, now) {
             Ok(()) => Ok(()),
             Err(error) => {
-                if !self.state.is_terminal() {
-                    self.state = AgentRunState::Failed;
-                    self.updated_at_ms = unix_now_ms();
-                }
+                self.mark_failed();
                 Err(error)
             }
         }
@@ -503,6 +507,7 @@ impl AgentRun {
         let evidence_id = validate_identifier(&evidence_id, "evidence reference")?;
         if !self.evidence_refs.iter().any(|id| id == &evidence_id) {
             self.evidence_refs.push(evidence_id);
+            self.touch();
         }
         Ok(())
     }
@@ -510,6 +515,7 @@ impl AgentRun {
     pub fn record_turn(&mut self, turn: AgentTurn) -> Result<(), SqlCommandError> {
         self.usage.record_model_turn(&self.budget)?;
         self.turns.push(turn);
+        self.touch();
         Ok(())
     }
 
@@ -522,12 +528,25 @@ impl AgentRun {
         }
         self.usage.record_tool_call(&self.budget)?;
         self.tool_calls.push(call);
+        self.touch();
         Ok(())
+    }
+
+    fn touch(&mut self) {
+        self.revision = self.revision.saturating_add(1);
+        self.updated_at_ms = unix_now_ms();
     }
 }
 
 pub struct AgentRunStore {
     runs: std::sync::Mutex<std::collections::HashMap<String, AgentRun>>,
+    max_entries: usize,
+}
+
+#[derive(Debug)]
+pub enum AgentRunClaim {
+    Ready(AgentRun),
+    Cancelled(AgentRun),
 }
 
 impl Default for AgentRunStore {
@@ -538,12 +557,17 @@ impl Default for AgentRunStore {
 
 impl AgentRunStore {
     pub fn new() -> Self {
+        Self::with_capacity(DEFAULT_AGENT_RUN_MAX_ENTRIES)
+    }
+
+    pub fn with_capacity(max_entries: usize) -> Self {
         Self {
             runs: std::sync::Mutex::new(std::collections::HashMap::new()),
+            max_entries,
         }
     }
 
-    pub fn insert(&self, run: AgentRun) -> Result<(), SqlCommandError> {
+    pub fn insert(&self, run: AgentRun) -> Result<Option<String>, SqlCommandError> {
         let mut runs = self.runs.lock().expect("agent run store poisoned");
         if runs.contains_key(&run.run_id) {
             return Err(SqlCommandError::new(
@@ -551,8 +575,35 @@ impl AgentRunStore {
                 "agent run id is already in use",
             ));
         }
+        if self.max_entries == 0 {
+            return Err(SqlCommandError::new(
+                "invalid_input",
+                "agent run store capacity must be greater than zero",
+            ));
+        }
+        let evicted = if runs.len() >= self.max_entries {
+            let evicted = runs
+                .values()
+                .filter(|candidate| candidate.state.is_terminal() && !candidate.worker_active)
+                .min_by(|left, right| {
+                    left.updated_at_ms
+                        .cmp(&right.updated_at_ms)
+                        .then_with(|| left.run_id.cmp(&right.run_id))
+                })
+                .map(|candidate| candidate.run_id.clone());
+            let Some(evicted) = evicted else {
+                return Err(SqlCommandError::new(
+                    "invalid_input",
+                    "agent run store capacity exceeded",
+                ));
+            };
+            runs.remove(&evicted);
+            Some(evicted)
+        } else {
+            None
+        };
         runs.insert(run.run_id.clone(), run);
-        Ok(())
+        Ok(evicted)
     }
 
     pub fn replace(&self, run: AgentRun) -> Result<(), SqlCommandError> {
@@ -567,12 +618,68 @@ impl AgentRunStore {
         Ok(())
     }
 
+    pub fn replace_active(&self, run: AgentRun) -> Result<Option<AgentRun>, SqlCommandError> {
+        let mut runs = self.runs.lock().expect("agent run store poisoned");
+        let stored = runs
+            .get_mut(&run.run_id)
+            .ok_or_else(|| SqlCommandError::new("invalid_input", "agent run was not found"))?;
+        if stored.state.is_terminal() {
+            return Ok(None);
+        }
+        let worker_active = stored.worker_active;
+        let mut run = run;
+        run.worker_active = worker_active;
+        *stored = run;
+        Ok(Some(stored.clone()))
+    }
+
+    pub fn finish(&self, run: AgentRun) -> Result<(AgentRun, bool), SqlCommandError> {
+        let mut runs = self.runs.lock().expect("agent run store poisoned");
+        let stored = runs
+            .get_mut(&run.run_id)
+            .ok_or_else(|| SqlCommandError::new("invalid_input", "agent run was not found"))?;
+        if stored.state.is_terminal() {
+            stored.worker_active = false;
+            return Ok((stored.clone(), false));
+        }
+        if !run.state.is_terminal() {
+            stored.mark_failed();
+            stored.worker_active = false;
+            return Ok((stored.clone(), false));
+        }
+        let mut run = run;
+        run.worker_active = false;
+        *stored = run;
+        Ok((stored.clone(), true))
+    }
+
     pub fn get(&self, run_id: &str) -> Option<AgentRun> {
         self.runs
             .lock()
             .expect("agent run store poisoned")
             .get(run_id)
             .cloned()
+    }
+
+    pub fn claim(&self, run_id: &str) -> Result<AgentRunClaim, SqlCommandError> {
+        let mut runs = self.runs.lock().expect("agent run store poisoned");
+        let run = runs
+            .get_mut(run_id)
+            .ok_or_else(|| SqlCommandError::new("invalid_input", "agent run was not found"))?;
+        if run.state == AgentRunState::Cancelled {
+            return Ok(AgentRunClaim::Cancelled(run.clone()));
+        }
+        if run.state != AgentRunState::Created {
+            return Err(SqlCommandError::new(
+                "invalid_input",
+                "agent run has already started",
+            ));
+        }
+        run.worker_active = true;
+        run.transition(AgentRunState::BuildingContext)?;
+        let mut worker = run.clone();
+        worker.state = AgentRunState::Created;
+        Ok(AgentRunClaim::Ready(worker))
     }
 
     pub fn transition(
@@ -595,6 +702,20 @@ impl AgentRunStore {
             .ok_or_else(|| SqlCommandError::new("invalid_input", "agent run was not found"))?;
         run.cancel()?;
         Ok(run.clone())
+    }
+
+    pub fn fail_active(&self, run_id: &str) -> Result<(AgentRun, bool), SqlCommandError> {
+        let mut runs = self.runs.lock().expect("agent run store poisoned");
+        let run = runs
+            .get_mut(run_id)
+            .ok_or_else(|| SqlCommandError::new("invalid_input", "agent run was not found"))?;
+        if run.state.is_terminal() {
+            run.worker_active = false;
+            return Ok((run.clone(), false));
+        }
+        run.mark_failed();
+        run.worker_active = false;
+        Ok((run.clone(), true))
     }
 }
 
@@ -732,6 +853,12 @@ fn unix_now_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use super::super::evidence::AgentEvidenceStore;
+    use super::super::model::{AgentModelContext, DeterministicAgentModelGateway};
+    use super::super::policy::{AgentCapability, AgentCapabilitySet, AgentPolicy};
+    use super::super::runtime::SuggestOnlyAgentLoop;
     use super::*;
     use serde_json::json;
 
@@ -772,6 +899,19 @@ mod tests {
     }
 
     #[test]
+    fn run_revision_is_monotonic_when_updates_share_a_millisecond() {
+        let mut run = run();
+        assert_eq!(run.revision, 0);
+
+        run.transition(AgentRunState::BuildingContext).unwrap();
+        let building_revision = run.revision;
+        run.transition(AgentRunState::Reasoning).unwrap();
+
+        assert_eq!(building_revision, 1);
+        assert_eq!(run.revision, 2);
+    }
+
+    #[test]
     fn cancellation_is_terminal_and_token_is_shared() {
         let mut run = run();
         let token = run.cancellation_token();
@@ -779,6 +919,16 @@ mod tests {
         assert_eq!(run.state, AgentRunState::Cancelled);
         assert!(token.is_cancelled());
         assert!(run.cancel().is_err());
+    }
+
+    #[test]
+    fn cancellation_clears_references_to_ephemeral_evidence() {
+        let mut run = run();
+        run.attach_evidence("evidence-1").unwrap();
+
+        run.cancel().unwrap();
+
+        assert!(run.evidence_refs.is_empty());
     }
 
     #[test]
@@ -858,5 +1008,149 @@ mod tests {
             store.get("run-1").unwrap().state,
             AgentRunState::BuildingContext
         );
+    }
+
+    #[test]
+    fn claimed_worker_completes_through_the_real_suggest_only_loop() {
+        let store = AgentRunStore::new();
+        store.insert(run()).unwrap();
+        let AgentRunClaim::Ready(mut worker) = store.claim("run-1").unwrap() else {
+            panic!("created run should be claimable");
+        };
+        let policy = AgentPolicy::new(
+            AgentMode::SuggestOnly,
+            AgentCapabilitySet::from_capabilities([AgentCapability::AgentTool]),
+        );
+        let mut runtime = SuggestOnlyAgentLoop::new(
+            DeterministicAgentModelGateway,
+            policy,
+            Arc::new(AgentEvidenceStore::default()),
+        );
+
+        let result = runtime.run(
+            &mut worker,
+            AgentTaskKind::GenerateQuery,
+            &AgentModelContext::default(),
+        );
+
+        assert!(result.is_ok(), "claimed worker failed: {result:?}");
+        let (stored, accepted) = store.finish(worker).unwrap();
+        assert!(accepted);
+        assert_eq!(stored.state, AgentRunState::Completed);
+    }
+
+    #[test]
+    fn cancelled_store_run_rejects_late_progress_and_completion() {
+        let store = AgentRunStore::new();
+        let mut worker = AgentRun::new(
+            "run-race",
+            "inspect",
+            AgentMode::ReadOnly,
+            AgentBudget::default(),
+        )
+        .unwrap();
+        store.insert(worker.clone()).unwrap();
+        worker.transition(AgentRunState::BuildingContext).unwrap();
+        assert!(store.replace_active(worker.clone()).unwrap().is_some());
+        store.cancel("run-race").unwrap();
+        worker.transition(AgentRunState::Reasoning).unwrap();
+
+        assert!(store.replace_active(worker.clone()).unwrap().is_none());
+        worker.mark_failed();
+        let (stored, accepted) = store.finish(worker).unwrap();
+        assert!(!accepted);
+        assert_eq!(stored.state, AgentRunState::Cancelled);
+    }
+
+    #[test]
+    fn store_finish_converts_non_terminal_worker_to_failed() {
+        let store = AgentRunStore::new();
+        let worker = run();
+        store.insert(worker.clone()).unwrap();
+
+        let (stored, accepted) = store.finish(worker).unwrap();
+
+        assert!(!accepted);
+        assert_eq!(stored.state, AgentRunState::Failed);
+        assert!(stored.revision > 0);
+    }
+
+    #[test]
+    fn run_store_evicts_old_terminal_runs_but_never_active_runs() {
+        let store = AgentRunStore::with_capacity(1);
+        let mut completed = run();
+        completed
+            .transition(AgentRunState::BuildingContext)
+            .unwrap();
+        completed.transition(AgentRunState::Reasoning).unwrap();
+        completed.transition(AgentRunState::Completed).unwrap();
+        store.insert(completed).unwrap();
+
+        let replacement = AgentRun::new(
+            "run-2",
+            "inspect",
+            AgentMode::SuggestOnly,
+            AgentBudget::default(),
+        )
+        .unwrap();
+        let evicted = store.insert(replacement).unwrap();
+
+        assert_eq!(evicted.as_deref(), Some("run-1"));
+        assert!(store.get("run-1").is_none());
+        assert!(store.get("run-2").is_some());
+        let error = store
+            .insert(
+                AgentRun::new(
+                    "run-3",
+                    "inspect",
+                    AgentMode::SuggestOnly,
+                    AgentBudget::default(),
+                )
+                .unwrap(),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("capacity"));
+    }
+
+    #[test]
+    fn run_store_reports_no_eviction_while_below_capacity() {
+        let store = AgentRunStore::with_capacity(2);
+
+        let evicted = store.insert(run()).unwrap();
+
+        assert!(evicted.is_none());
+    }
+
+    #[test]
+    fn run_store_keeps_cancelled_claimed_run_until_worker_finishes() {
+        let store = AgentRunStore::with_capacity(1);
+        let claimed = AgentRun::new(
+            "run-claimed",
+            "inspect",
+            AgentMode::SuggestOnly,
+            AgentBudget::default(),
+        )
+        .unwrap();
+        store.insert(claimed).unwrap();
+        let AgentRunClaim::Ready(mut worker) = store.claim("run-claimed").unwrap() else {
+            panic!("created run should be claimable");
+        };
+        store.cancel("run-claimed").unwrap();
+        let replacement = AgentRun::new(
+            "run-replacement",
+            "inspect",
+            AgentMode::SuggestOnly,
+            AgentBudget::default(),
+        )
+        .unwrap();
+
+        let error = store.insert(replacement.clone()).unwrap_err();
+        assert!(error.to_string().contains("capacity"));
+        worker.mark_failed();
+        let (stored, accepted) = store.finish(worker).unwrap();
+        assert_eq!(stored.state, AgentRunState::Cancelled);
+        assert!(!accepted);
+        store.insert(replacement).unwrap();
+        assert!(store.get("run-claimed").is_none());
     }
 }

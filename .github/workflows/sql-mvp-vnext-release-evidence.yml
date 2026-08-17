@@ -1,0 +1,236 @@
+name: SQL MVP vNext Release Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      a4_attestation_run_id:
+        description: 'Successful SQL Agent Checkpoint W Attestation run ID for this revision'
+        required: true
+        type: string
+      z1_attestation_run_id:
+        description: 'Successful SQL Result Grid Z1 Gate Attestation run ID for this revision'
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: sql-mvp-vnext-release-evidence-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  verify-release-evidence:
+    name: Authenticate evidence and run R0
+    if: github.ref_protected == true && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    environment: sql-mvp-vnext-release
+    env:
+      A4_ATTESTATION_RUN_ID: ${{ inputs.a4_attestation_run_id }}
+      Z1_ATTESTATION_RUN_ID: ${{ inputs.z1_attestation_run_id }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Initialize release evidence directory
+        run: |
+          EVIDENCE_ROOT="$RUNNER_TEMP/sql-mvp-vnext-release-evidence"
+          echo "EVIDENCE_ROOT=$EVIDENCE_ROOT" >> "$GITHUB_ENV"
+          mkdir -p "$EVIDENCE_ROOT/a4" "$EVIDENCE_ROOT/z1"
+          node -e "const fs=require('node:fs');const p=process.env.RUNNER_TEMP+'/sql-mvp-vnext-release-evidence/phase-vnext-release-gate.json';fs.writeFileSync(p,JSON.stringify({version:3,generatedAt:new Date().toISOString(),sourceRevision:process.env.GITHUB_SHA,decision:'NO-GO',checks:[],blockers:['The authenticated R0 workflow did not complete.']},null,2)+'\n')"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Verify protected default-branch source
+        run: |
+          test "$GITHUB_REF_PROTECTED" = "true" || {
+            echo 'R0 requires a branch protected by GitHub rules.' >&2
+            exit 1
+          }
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" || {
+            echo 'R0 must run from the protected default branch.' >&2
+            exit 1
+          }
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA" || {
+            echo 'Default branch moved after dispatch; rerun R0 against the current revision.' >&2
+            exit 1
+          }
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Fetch attestation run metadata
+        env:
+          GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for run_id in "$A4_ATTESTATION_RUN_ID" "$Z1_ATTESTATION_RUN_ID"; do
+            case "$run_id" in
+              ''|*[!0-9]*) echo 'attestation run IDs must be positive integers' >&2; exit 1 ;;
+            esac
+          done
+          curl --fail-with-body --silent --show-error --location \
+            --header "Authorization: Bearer $GH_API_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$A4_ATTESTATION_RUN_ID" \
+            --output "$EVIDENCE_ROOT/a4-run-api.json"
+          curl --fail-with-body --silent --show-error --location \
+            --header "Authorization: Bearer $GH_API_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$A4_ATTESTATION_RUN_ID/artifacts?per_page=100" \
+            --output "$EVIDENCE_ROOT/a4-artifacts-api.json"
+          curl --fail-with-body --silent --show-error --location \
+            --header "Authorization: Bearer $GH_API_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$Z1_ATTESTATION_RUN_ID" \
+            --output "$EVIDENCE_ROOT/z1-run-api.json"
+          curl --fail-with-body --silent --show-error --location \
+            --header "Authorization: Bearer $GH_API_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$Z1_ATTESTATION_RUN_ID/artifacts?per_page=100" \
+            --output "$EVIDENCE_ROOT/z1-artifacts-api.json"
+
+      - id: a4-run
+        name: Verify A4 attestation run metadata
+        run: |
+          node scripts/verify-sql-agent-attestation-run.mjs \
+            --run-metadata "$EVIDENCE_ROOT/a4-run-api.json" \
+            --artifact-metadata "$EVIDENCE_ROOT/a4-artifacts-api.json" \
+            --output "$EVIDENCE_ROOT/a4-attestation-run.json" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$A4_ATTESTATION_RUN_ID" \
+            --expected-revision "$GITHUB_SHA" \
+            --expected-ref "$GITHUB_REF" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - id: z1-run
+        name: Verify Z1 attestation run metadata
+        run: |
+          node scripts/verify-sql-agent-attestation-run.mjs \
+            --run-metadata "$EVIDENCE_ROOT/z1-run-api.json" \
+            --artifact-metadata "$EVIDENCE_ROOT/z1-artifacts-api.json" \
+            --output "$EVIDENCE_ROOT/z1-attestation-run.json" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$Z1_ATTESTATION_RUN_ID" \
+            --expected-revision "$GITHUB_SHA" \
+            --expected-ref "$GITHUB_REF" \
+            --expected-workflow-name 'SQL Result Grid Z1 Gate Attestation' \
+            --expected-workflow-path .github/workflows/sql-result-grid-gate-attest.yml \
+            --expected-workflow-event workflow_dispatch \
+            --expected-artifact-name sql-result-grid-gate-attestation \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Download, digest-check, and extract attestation artifacts
+        env:
+          GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          A4_ARTIFACT_URL: ${{ steps.a4-run.outputs.artifact_url }}
+          A4_ARTIFACT_DIGEST: ${{ steps.a4-run.outputs.artifact_digest }}
+          Z1_ARTIFACT_URL: ${{ steps.z1-run.outputs.artifact_url }}
+          Z1_ARTIFACT_DIGEST: ${{ steps.z1-run.outputs.artifact_digest }}
+        run: |
+          download_verified_artifact() {
+            label="$1"
+            url="$2"
+            digest="$3"
+            destination="$4"
+            archive="$EVIDENCE_ROOT/${label}.zip"
+            entries="$EVIDENCE_ROOT/${label}-entries.txt"
+            curl --fail-with-body --silent --show-error --location \
+              --header "Authorization: Bearer $GH_API_TOKEN" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "$url" \
+              --output "$archive"
+            printf '%s  %s\n' "$digest" "$archive" | sha256sum --check --strict -
+            unzip -Z1 "$archive" > "$entries"
+            LABEL="$label" ENTRIES_FILE="$entries" node <<'NODE'
+          const fs = require('node:fs');
+          const entries = fs.readFileSync(process.env.ENTRIES_FILE, 'utf8').split(/\r?\n/).filter(Boolean);
+          if (entries.length === 0) throw new Error(`${process.env.LABEL} artifact archive is empty.`);
+          for (const entry of entries) {
+            if (entry.startsWith('/') || /^[A-Za-z]:/.test(entry) || entry.includes('\\') || entry.split('/').includes('..')) {
+              throw new Error(`Unsafe ${process.env.LABEL} artifact archive entry: ${entry}`);
+            }
+          }
+          NODE
+            unzip -q "$archive" -d "$destination"
+            rm "$archive" "$entries"
+          }
+          download_verified_artifact "A4" "$A4_ARTIFACT_URL" "$A4_ARTIFACT_DIGEST" "$EVIDENCE_ROOT/a4"
+          download_verified_artifact "Z1" "$Z1_ARTIFACT_URL" "$Z1_ARTIFACT_DIGEST" "$EVIDENCE_ROOT/z1"
+          for path in \
+            "$EVIDENCE_ROOT/a4/phase-a4-checkpoint-w.json" \
+            "$EVIDENCE_ROOT/a4/manual-attestation.json" \
+            "$EVIDENCE_ROOT/z1/phase-z1-gate.json" \
+            "$EVIDENCE_ROOT/z1/z1-gate-attestation.json" \
+            "$EVIDENCE_ROOT/z1/source/sql-result-grid-zeus-audit/data-grid-bundle.js"
+          do
+            test -f "$path" && test ! -L "$path" || {
+              echo "Authenticated release evidence is missing or unsafe: $path" >&2
+              exit 1
+            }
+          done
+
+      - id: release-gate
+        name: Run authenticated R0 release gate
+        continue-on-error: true
+        env:
+          NYALA_EXPECTED_SOURCE_REVISION: ${{ github.sha }}
+          NYALA_EXPECTED_REPOSITORY: ${{ github.repository }}
+          NYALA_EXPECTED_SOURCE_REF: ${{ github.ref }}
+          NYALA_A4_CHECKPOINT_W_GATE: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/a4/phase-a4-checkpoint-w.json
+          NYALA_A4_CHECKPOINT_W_MACOS_EVIDENCE: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/a4/sql-agent-native-macos/workbench-evidence.json
+          NYALA_A4_CHECKPOINT_W_WINDOWS_EVIDENCE: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/a4/sql-agent-native-windows/workbench-evidence.json
+          NYALA_A4_CHECKPOINT_W_MANUAL_ATTESTATION: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/a4/manual-attestation.json
+          NYALA_A4_CHECKPOINT_W_CAPTURE_RUN: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/a4/capture-run.json
+          NYALA_A4_CHECKPOINT_W_ATTESTATION_RUN_METADATA: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/a4-run-api.json
+          NYALA_A4_CHECKPOINT_W_ATTESTATION_ARTIFACT_METADATA: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/a4-artifacts-api.json
+          NYALA_Z1_GATE: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/z1/phase-z1-gate.json
+          NYALA_Z1_ATTESTATION: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/z1/z1-gate-attestation.json
+          NYALA_Z1_BENCHMARK: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/z1/source/sql-result-grid-zeus-audit/phase-z1-benchmark.json
+          NYALA_Z1_PLATFORM_EVIDENCE: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/z1/source/platform-evidence.json
+          NYALA_Z1_ZEUS_AUDIT: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/z1/source/sql-result-grid-zeus-audit/zeus-audit.json
+          NYALA_Z1_ZEUS_BUNDLE: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/z1/source/sql-result-grid-zeus-audit/data-grid-bundle.js
+          NYALA_Z1_PLATFORM_RUN: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/z1/platform-run.json
+          NYALA_Z1_ATTESTATION_RUN_METADATA: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/z1-run-api.json
+          NYALA_Z1_ATTESTATION_ARTIFACT_METADATA: ${{ runner.temp }}/sql-mvp-vnext-release-evidence/z1-artifacts-api.json
+        run: |
+          node scripts/verify-sql-mvp-vnext-release.mjs \
+            "$EVIDENCE_ROOT/phase-vnext-release-gate.json"
+
+      - name: Publish R0 summary
+        if: always()
+        run: |
+          echo '## SQL MVP vNext R0' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat "$EVIDENCE_ROOT/phase-vnext-release-gate.json" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload authenticated R0 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sql-mvp-vnext-release-evidence
+          path: |
+            ${{ runner.temp }}/sql-mvp-vnext-release-evidence/phase-vnext-release-gate.json
+            ${{ runner.temp }}/sql-mvp-vnext-release-evidence/a4-run-api.json
+            ${{ runner.temp }}/sql-mvp-vnext-release-evidence/a4-artifacts-api.json
+            ${{ runner.temp }}/sql-mvp-vnext-release-evidence/z1-run-api.json
+            ${{ runner.temp }}/sql-mvp-vnext-release-evidence/z1-artifacts-api.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+      - name: Enforce R0 decision
+        if: steps.release-gate.outcome == 'failure'
+        run: |
+          echo 'R0 remains NO-GO. Inspect the authenticated release evidence artifact.' >&2
+          exit 1

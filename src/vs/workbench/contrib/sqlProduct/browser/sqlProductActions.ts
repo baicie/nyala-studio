@@ -9,6 +9,7 @@ import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/c
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
+import { ISqlConnectionChangeService } from '../../../services/sql/common/sqlConnection.js';
 import { ISqlProductService } from '../../../services/sql/common/sqlProduct.js';
 import {
 	SQL_CONNECTIONS_FOCUS_COMMAND_ID,
@@ -20,9 +21,10 @@ import {
 	SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID,
 	SQL_PRODUCT_HOME_COMMAND_ID,
 	SQL_PRODUCT_NEW_QUERY_COMMAND_ID,
-	SQL_PRODUCT_OPEN_RESULTS_COMMAND_ID
+	SQL_PRODUCT_OPEN_RESULTS_COMMAND_ID,
+	type SqlProductDemoBootstrapCommandOptions
 } from '../common/sqlProduct.js';
-import { isSqlProductDemoBootstrapSupported } from '../common/sqlProductBootstrapModel.js';
+import { isSqlProductDemoBootstrapSupported, runSqlProductDemoBootstrap } from '../common/sqlProductBootstrapModel.js';
 import { ISqlProductPreferencesService } from '../common/sqlProductPreferencesService.js';
 import { SQL_PRODUCT_PREFERENCES_VIEW_ID } from './sqlProductPreferencesView.js';
 
@@ -108,24 +110,27 @@ class SqlProductBootstrapDemoAction extends Action2 {
 		});
 	}
 
-	override async run(accessor: ServicesAccessor): Promise<void> {
+	override async run(accessor: ServicesAccessor, options?: SqlProductDemoBootstrapCommandOptions): Promise<void> {
 		if (!isSqlProductDemoBootstrapSupported(isTauri())) {
 			return;
 		}
 
 		const commandService = accessor.get(ICommandService);
+		const connectionChangeService = accessor.get(ISqlConnectionChangeService);
 		const notificationService = accessor.get(INotificationService);
 		const productService = accessor.get(ISqlProductService);
 
 		try {
-			const result = await productService.bootstrapDemo();
-			await commandService.executeCommand(SQL_CONNECTIONS_REFRESH_COMMAND_ID, {
-				revealConnectionId: result.sampleConnectionId
-			});
-			notificationService.info(
-				result.reused
-					? `Demo SQLite connection opened: ${result.dbPath}`
-					: `Demo SQLite database created: ${result.dbPath}`
+			await runSqlProductDemoBootstrap(
+				{
+					bootstrapDemo: () => productService.bootstrapDemo(),
+					notifyConnectionsChanged: () => connectionChangeService.notifyConnectionsChanged(),
+					refreshConnections: async refreshOptions => {
+						await commandService.executeCommand(SQL_CONNECTIONS_REFRESH_COMMAND_ID, refreshOptions);
+					},
+					notifySuccess: message => notificationService.info(message)
+				},
+				options
 			);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);

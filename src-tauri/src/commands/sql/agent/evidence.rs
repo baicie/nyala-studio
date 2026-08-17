@@ -19,6 +19,7 @@ pub const DEFAULT_EVIDENCE_MAX_BYTES: usize = 512 * 1024;
 #[serde(rename_all = "snake_case")]
 pub enum AgentEvidenceKind {
     Schema,
+    Index,
     Analysis,
     Plan,
     Error,
@@ -34,6 +35,12 @@ pub enum AgentEvidenceSensitivity {
     Workspace,
     Sensitive,
 }
+
+pub type AgentEvidenceInput = (
+    AgentEvidenceKind,
+    AgentEvidenceSensitivity,
+    serde_json::Value,
+);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,6 +66,13 @@ pub struct AgentEvidence {
 struct StoredEvidence {
     evidence: AgentEvidence,
     inserted_at: Instant,
+    serialized_bytes: usize,
+}
+
+struct PreparedEvidence {
+    kind: AgentEvidenceKind,
+    sensitivity: AgentEvidenceSensitivity,
+    payload: serde_json::Value,
     serialized_bytes: usize,
 }
 
@@ -98,14 +112,23 @@ impl AgentEvidenceStore {
         sensitivity: AgentEvidenceSensitivity,
         payload: serde_json::Value,
     ) -> Result<AgentEvidenceRef, SqlCommandError> {
-        self.append_at(
+        self.append_batch_at(
             run_id,
-            kind,
-            sensitivity,
-            payload,
+            vec![(kind, sensitivity, payload)],
             Instant::now(),
             unix_now_ms(),
-        )
+        )?
+        .into_iter()
+        .next()
+        .ok_or_else(|| SqlCommandError::new("internal", "evidence append returned no reference"))
+    }
+
+    pub fn append_batch(
+        &self,
+        run_id: impl Into<String>,
+        evidence: Vec<AgentEvidenceInput>,
+    ) -> Result<Vec<AgentEvidenceRef>, SqlCommandError> {
+        self.append_batch_at(run_id, evidence, Instant::now(), unix_now_ms())
     }
 
     pub fn append_at(
@@ -117,6 +140,24 @@ impl AgentEvidenceStore {
         now: Instant,
         created_at_ms: u64,
     ) -> Result<AgentEvidenceRef, SqlCommandError> {
+        self.append_batch_at(
+            run_id,
+            vec![(kind, sensitivity, payload)],
+            now,
+            created_at_ms,
+        )?
+        .into_iter()
+        .next()
+        .ok_or_else(|| SqlCommandError::new("internal", "evidence append returned no reference"))
+    }
+
+    fn append_batch_at(
+        &self,
+        run_id: impl Into<String>,
+        evidence: Vec<AgentEvidenceInput>,
+        now: Instant,
+        created_at_ms: u64,
+    ) -> Result<Vec<AgentEvidenceRef>, SqlCommandError> {
         let run_id = run_id.into();
         let run_id = validate_id(&run_id, "evidence run id")?;
         if self.max_entries == 0 || self.max_bytes == 0 {
@@ -125,59 +166,97 @@ impl AgentEvidenceStore {
                 "evidence store capacity must be greater than zero",
             ));
         }
-        let payload = redact_json_value(payload);
-        let serialized_bytes = serde_json::to_vec(&payload)
-            .map_err(|error| SqlCommandError::new("invalid_input", error.to_string()))?
-            .len();
-        if serialized_bytes > self.max_bytes {
-            return Err(SqlCommandError::new(
-                "invalid_input",
-                format!("evidence exceeds {} byte budget", self.max_bytes),
-            ));
+        if evidence.is_empty() {
+            return Ok(Vec::new());
         }
+        let prepared = evidence
+            .into_iter()
+            .map(|(kind, sensitivity, payload)| {
+                let payload = redact_json_value(payload);
+                let serialized_bytes = serde_json::to_vec(&payload)
+                    .map_err(|error| SqlCommandError::new("invalid_input", error.to_string()))?
+                    .len();
+                if serialized_bytes > self.max_bytes {
+                    return Err(SqlCommandError::new(
+                        "invalid_input",
+                        format!("evidence exceeds {} byte budget", self.max_bytes),
+                    ));
+                }
+                Ok(PreparedEvidence {
+                    kind,
+                    sensitivity,
+                    payload,
+                    serialized_bytes,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let batch_bytes = prepared.iter().try_fold(0usize, |total, entry| {
+            total.checked_add(entry.serialized_bytes).ok_or_else(|| {
+                SqlCommandError::new("invalid_input", "evidence batch byte count overflow")
+            })
+        })?;
 
         let mut entries = self.entries.lock().expect("agent evidence store poisoned");
         prune_expired(&mut entries, now, self.ttl);
         let current_bytes: usize = entries.values().map(|entry| entry.serialized_bytes).sum();
-        if entries.len() >= self.max_entries
-            || current_bytes.saturating_add(serialized_bytes) > self.max_bytes
-        {
+        let next_entry_count = entries.len().checked_add(prepared.len()).ok_or_else(|| {
+            SqlCommandError::new("invalid_input", "evidence entry count overflow")
+        })?;
+        let next_byte_count = current_bytes.checked_add(batch_bytes).ok_or_else(|| {
+            SqlCommandError::new("invalid_input", "evidence store byte count overflow")
+        })?;
+        if next_entry_count > self.max_entries || next_byte_count > self.max_bytes {
             return Err(SqlCommandError::new(
                 "invalid_input",
                 "agent evidence store budget exceeded",
             ));
         }
 
-        let evidence_id = {
-            let mut next_id = self.next_id.lock().expect("agent evidence id poisoned");
-            *next_id = next_id.saturating_add(1);
-            format!("evidence-{}", *next_id)
-        };
+        let mut next_id = self.next_id.lock().expect("agent evidence id poisoned");
+        let batch_len = u64::try_from(prepared.len()).map_err(|_| {
+            SqlCommandError::new("invalid_input", "evidence batch entry count is too large")
+        })?;
+        let first_id = next_id.checked_add(1).ok_or_else(|| {
+            SqlCommandError::new("invalid_input", "agent evidence id space exhausted")
+        })?;
+        let final_id = next_id.checked_add(batch_len).ok_or_else(|| {
+            SqlCommandError::new("invalid_input", "agent evidence id space exhausted")
+        })?;
         let expires_at_ms =
             created_at_ms.saturating_add(u64::try_from(self.ttl.as_millis()).unwrap_or(u64::MAX));
-        let evidence = AgentEvidence {
-            evidence_id: evidence_id.clone(),
-            run_id: run_id.clone(),
-            kind,
-            sensitivity,
-            payload,
-            created_at_ms,
-            expires_at_ms,
-            serialized_bytes,
-        };
-        entries.insert(
-            evidence_id.clone(),
-            StoredEvidence {
-                evidence,
-                inserted_at: now,
-                serialized_bytes,
-            },
-        );
-        Ok(AgentEvidenceRef {
-            evidence_id,
-            run_id,
-            kind,
-        })
+        let mut references = Vec::with_capacity(prepared.len());
+        for (offset, prepared) in prepared.into_iter().enumerate() {
+            let offset = u64::try_from(offset).map_err(|_| {
+                SqlCommandError::new("invalid_input", "evidence batch entry count is too large")
+            })?;
+            let evidence_id = format!("evidence-{}", first_id + offset);
+            let reference = AgentEvidenceRef {
+                evidence_id: evidence_id.clone(),
+                run_id: run_id.clone(),
+                kind: prepared.kind,
+            };
+            let evidence = AgentEvidence {
+                evidence_id: evidence_id.clone(),
+                run_id: run_id.clone(),
+                kind: prepared.kind,
+                sensitivity: prepared.sensitivity,
+                payload: prepared.payload,
+                created_at_ms,
+                expires_at_ms,
+                serialized_bytes: prepared.serialized_bytes,
+            };
+            entries.insert(
+                evidence_id,
+                StoredEvidence {
+                    evidence,
+                    inserted_at: now,
+                    serialized_bytes: prepared.serialized_bytes,
+                },
+            );
+            references.push(reference);
+        }
+        *next_id = final_id;
+        Ok(references)
     }
 
     pub fn get(&self, evidence_id: &str) -> Option<AgentEvidence> {
@@ -202,6 +281,13 @@ impl AgentEvidenceStore {
                 .then_with(|| left.evidence_id.cmp(&right.evidence_id))
         });
         values
+    }
+
+    pub fn remove_for_run(&self, run_id: &str) -> usize {
+        let mut entries = self.entries.lock().expect("agent evidence store poisoned");
+        let before = entries.len();
+        entries.retain(|_, entry| entry.evidence.run_id != run_id);
+        before - entries.len()
     }
 
     pub fn prune(&self) -> usize {
@@ -286,6 +372,41 @@ mod tests {
     }
 
     #[test]
+    fn evidence_batch_rejection_does_not_store_a_partial_batch() {
+        let store = AgentEvidenceStore::new(Duration::from_mins(1), 1, 4096);
+
+        let error = store
+            .append_batch(
+                "run-1",
+                vec![
+                    (
+                        AgentEvidenceKind::ResultShape,
+                        AgentEvidenceSensitivity::Workspace,
+                        json!({"shape": {"rowCount": 1}}),
+                    ),
+                    (
+                        AgentEvidenceKind::Aggregate,
+                        AgentEvidenceSensitivity::Workspace,
+                        json!({"aggregate": {"rowCount": 1}}),
+                    ),
+                ],
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("budget exceeded"));
+        assert!(store.list_for_run("run-1").is_empty());
+        let reference = store
+            .append(
+                "run-1",
+                AgentEvidenceKind::Analysis,
+                AgentEvidenceSensitivity::Workspace,
+                json!({"ok": true}),
+            )
+            .unwrap();
+        assert_eq!(reference.evidence_id, "evidence-1");
+    }
+
+    #[test]
     fn expired_evidence_is_pruned_without_sleeping() {
         let started = Instant::now();
         let store = AgentEvidenceStore::new(Duration::from_mins(1), 4, 4096);
@@ -336,5 +457,24 @@ mod tests {
         let values = store.list_for_run("run-a");
         assert_eq!(values.len(), 1);
         assert_eq!(values[0].payload["order"], 2);
+    }
+
+    #[test]
+    fn remove_for_run_deletes_only_owned_evidence() {
+        let store = AgentEvidenceStore::new(Duration::from_mins(1), 8, 4096);
+        for run_id in ["run-a", "run-a", "run-b"] {
+            store
+                .append(
+                    run_id,
+                    AgentEvidenceKind::Analysis,
+                    AgentEvidenceSensitivity::Workspace,
+                    json!({"run": run_id}),
+                )
+                .unwrap();
+        }
+
+        assert_eq!(store.remove_for_run("run-a"), 2);
+        assert!(store.list_for_run("run-a").is_empty());
+        assert_eq!(store.list_for_run("run-b").len(), 1);
     }
 }

@@ -29,6 +29,7 @@ import { SqlEditorPane } from '../../sqlEditor/browser/sqlEditorPane.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { IViewsService } from '../../../services/views/common/viewsService.js';
 import {
 	createSqlAgentArtifactForTarget,
 	SqlAgentArtifactTarget
@@ -41,11 +42,10 @@ import {
 	SqlAgentTaskKind
 } from '../../../services/sql/common/sqlAgent.js';
 import { SqlCapability } from '../../../services/sql/common/sqlCapabilities.js';
-import { ISqlMetadataService } from '../../../services/sql/common/sqlMetadata.js';
 import { ISqlResultService } from '../../sqlResult/common/sqlResultService.js';
 import { getSqlResultPanelContentState, SqlResultStateKind } from '../../sqlResult/common/sqlResultModel.js';
 import { canApplyAgentFixToEditor } from '../common/sqlAgentFixContext.js';
-import { loadAgentSchema } from '../common/sqlAgentSchemaLoader.js';
+import { SQL_AGENT_VIEW_ID } from '../../sqlAgent/common/sqlAgentPanelModel.js';
 
 class ExplainPlanAction extends Action2 {
 	constructor() {
@@ -222,7 +222,7 @@ class AiOptimizeQueryAction extends Action2 {
 	}
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
-		await openAiResult(accessor, SqlAiTaskKind.OptimizeQuery);
+		await optimizeCurrentSql(accessor);
 	}
 }
 
@@ -242,8 +242,8 @@ class SchemaGenerateQueryAction extends Action2 {
 		const notificationService = accessor.get(INotificationService);
 		const quickInputService = accessor.get(IQuickInputService);
 		const agentService = accessor.get(ISqlAgentService);
-		const metadataService = accessor.get(ISqlMetadataService);
 		const commandService = accessor.get(ICommandService);
+		const viewsService = accessor.get(IViewsService);
 		const pane = editorService.activeEditorPane;
 		if (!(pane instanceof SqlEditorPane)) {
 			notificationService.info('Open a SQL Query editor before generating from schema.');
@@ -265,7 +265,6 @@ class SchemaGenerateQueryAction extends Action2 {
 		}
 
 		try {
-			const schema = await loadAgentSchema(metadataService, context.connectionId);
 			const event = await agentService.start({
 				goal: goal.trim(),
 				task: SqlAgentTaskKind.GenerateQuery,
@@ -275,12 +274,11 @@ class SchemaGenerateQueryAction extends Action2 {
 					connectionId: context.connectionId,
 					sql: context.sql,
 					selectedSql: context.selectedSql,
-					userPrompt: goal.trim(),
-					schema
+					userPrompt: goal.trim()
 				},
-				capabilities: [SqlCapability.AgentTool, SqlCapability.WorkspaceReadSql]
+				capabilities: [SqlCapability.AgentTool, SqlCapability.WorkspaceReadSql, SqlCapability.DatabaseReadMetadata]
 			});
-			await commandService.executeCommand('sql.agent.openPanel');
+			await revealSqlAgentPanel(viewsService);
 			await applyAgentAnswerDraft(pane, event, quickInputService, notificationService, commandService, artifactTarget);
 		} catch (error) {
 			notificationService.error(toActionErrorMessage(error));
@@ -303,10 +301,10 @@ class ResultAssistantAction extends Action2 {
 		const editorService = accessor.get(IEditorService);
 		const resultService = accessor.get(ISqlResultService);
 		const agentService = accessor.get(ISqlAgentService);
-		const commandService = accessor.get(ICommandService);
 		const quickInputService = accessor.get(IQuickInputService);
 		const notificationService = accessor.get(INotificationService);
-		const state = resultService.state;
+		const viewsService = accessor.get(IViewsService);
+		const state = getSqlResultPanelContentState(resultService.state, resultService.panelState);
 		if (state.kind !== SqlResultStateKind.Success && state.kind !== SqlResultStateKind.Error) {
 			notificationService.info('Run a SQL query before asking about its result.');
 			return;
@@ -343,7 +341,7 @@ class ResultAssistantAction extends Action2 {
 				},
 				capabilities: [SqlCapability.AgentTool, SqlCapability.WorkspaceReadSql]
 			});
-			await commandService.executeCommand('sql.agent.openPanel');
+			await revealSqlAgentPanel(viewsService);
 			if (event.error) {
 				notificationService.error(event.error.message);
 			}
@@ -365,6 +363,10 @@ function createResultShape(result: {
 		elapsedMs: result.elapsedMs,
 		truncated: result.truncated
 	};
+}
+
+async function revealSqlAgentPanel(viewsService: IViewsService): Promise<void> {
+	await viewsService.openView(SQL_AGENT_VIEW_ID, false);
 }
 
 export async function applyAgentAnswerDraft(
@@ -418,14 +420,88 @@ export async function applyAgentAnswerDraft(
 	await commandService.executeCommand(SQL_NEW_QUERY_COMMAND_ID, { initialSql: sql });
 }
 
+async function optimizeCurrentSql(accessor: ServicesAccessor): Promise<void> {
+	const editorService = accessor.get(IEditorService);
+	const agentService = accessor.get(ISqlAgentService);
+	const commandService = accessor.get(ICommandService);
+	const quickInputService = accessor.get(IQuickInputService);
+	const notificationService = accessor.get(INotificationService);
+	const viewsService = accessor.get(IViewsService);
+	const pane = editorService.activeEditorPane;
+	if (!(pane instanceof SqlEditorPane)) {
+		notificationService.info('Open a SQL Query editor before optimizing SQL.');
+		return;
+	}
+
+	const context = pane.getAssistantContext();
+	const baseTarget = pane.getAgentArtifactTarget();
+	if (!context.connectionId) {
+		notificationService.info('Select an explicitly read-only SQLite connection before optimizing SQL.');
+		return;
+	}
+	if (!baseTarget || !baseTarget.sql.trim()) {
+		notificationService.info('Enter a SQLite query before optimizing SQL.');
+		return;
+	}
+	const dialect = context.connectionKind ? getDialectForConnectionKind(context.connectionKind) : SqlDialect.Sqlite;
+	if (dialect !== SqlDialect.Sqlite) {
+		notificationService.info('Optimize Query currently supports Stable SQLite connections only.');
+		return;
+	}
+
+	const goal = 'Optimize the current SQLite query using typed index and plan evidence.';
+	try {
+		const event = await agentService.start({
+			goal,
+			task: SqlAgentTaskKind.OptimizeQuery,
+			mode: SqlAgentMode.ReadOnly,
+			context: {
+				dialect,
+				connectionId: context.connectionId,
+				editorId: baseTarget.editorId,
+				editorVersionId: baseTarget.versionId,
+				sql: baseTarget.sql
+			},
+			capabilities: [SqlCapability.AgentTool, SqlCapability.DatabaseReadMetadata, SqlCapability.DatabaseExplain]
+		});
+		await revealSqlAgentPanel(viewsService);
+		if (event.error) {
+			notificationService.error(event.error.message);
+			return;
+		}
+		const isApplyStillAllowed = () => {
+			const currentTarget = pane.getAgentArtifactTarget();
+			return (
+				editorService.activeEditorPane === pane &&
+				pane.getAssistantContext().connectionId === context.connectionId &&
+				currentTarget?.editorId === baseTarget.editorId &&
+				currentTarget?.versionId === baseTarget.versionId &&
+				currentTarget?.sql === baseTarget.sql
+			);
+		};
+		await applyAgentAnswerDraft(
+			pane,
+			event,
+			quickInputService,
+			notificationService,
+			commandService,
+			baseTarget,
+			isApplyStillAllowed(),
+			isApplyStillAllowed
+		);
+	} catch (error) {
+		notificationService.error(toActionErrorMessage(error));
+	}
+}
+
 async function fixSqlResultError(accessor: ServicesAccessor): Promise<void> {
 	const editorService = accessor.get(IEditorService);
 	const resultService = accessor.get(ISqlResultService);
 	const agentService = accessor.get(ISqlAgentService);
-	const metadataService = accessor.get(ISqlMetadataService);
 	const commandService = accessor.get(ICommandService);
 	const quickInputService = accessor.get(IQuickInputService);
 	const notificationService = accessor.get(INotificationService);
+	const viewsService = accessor.get(IViewsService);
 	const state = getSqlResultPanelContentState(resultService.state, resultService.panelState);
 	if (state.kind !== SqlResultStateKind.Error) {
 		notificationService.info('Run a SQL query that fails before asking Agent to fix it.');
@@ -445,11 +521,10 @@ async function fixSqlResultError(accessor: ServicesAccessor): Promise<void> {
 		notificationService.info('Restore the failed query connection before asking Agent to fix SQL.');
 		return;
 	}
-	const goal = 'Fix the failed SQL using the supplied error and schema columns.';
+	const goal = 'Fix the failed SQL using its structured error and the connected database schema.';
 	const baseTarget = pane.getAgentArtifactTarget();
 	const canApplyAtRequest = canApplyAgentFixToEditor(state.query, baseTarget, context.connectionId);
 	try {
-		const schema = await loadAgentSchema(metadataService, state.query.connectionId);
 		const errorContext: SqlAgentErrorContext = state.errorContext;
 		const event = await agentService.start({
 			goal,
@@ -458,15 +533,15 @@ async function fixSqlResultError(accessor: ServicesAccessor): Promise<void> {
 			context: {
 				dialect: context.connectionKind ? getDialectForConnectionKind(context.connectionKind) : SqlDialect.Sqlite,
 				connectionId: state.query.connectionId,
+				editorId: state.query.editorId,
+				editorVersionId: state.query.editorVersionId,
 				sql: state.query.sql,
-				errorMessage: state.errorMessage,
 				errorContext,
-				userPrompt: goal,
-				schema
+				userPrompt: goal
 			},
 			capabilities: [SqlCapability.AgentTool, SqlCapability.WorkspaceReadSql, SqlCapability.DatabaseReadMetadata]
 		});
-		await commandService.executeCommand('sql.agent.openPanel');
+		await revealSqlAgentPanel(viewsService);
 		const isApplyStillAllowed = () => {
 			const currentContext = pane.getAssistantContext();
 			return (

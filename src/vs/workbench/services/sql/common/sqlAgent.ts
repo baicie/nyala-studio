@@ -27,6 +27,21 @@ export const enum SqlAgentMode {
 	AllowWritesWithApproval = 'allow_writes_with_approval'
 }
 
+/** Keep this wire contract aligned with Rust's `AgentRunState`. */
+export const SQL_AGENT_RUN_STATES = [
+	'created',
+	'building_context',
+	'reasoning',
+	'awaiting_tool',
+	'awaiting_approval',
+	'executing_tool',
+	'completed',
+	'failed',
+	'cancelled'
+] as const;
+
+export type SqlAgentRunState = (typeof SQL_AGENT_RUN_STATES)[number];
+
 export interface SqlAgentBudget {
 	readonly maxModelTurns: number;
 	readonly maxToolCalls: number;
@@ -66,6 +81,9 @@ export interface SqlAgentModelContext {
 	readonly dialect: SqlDialect;
 	/** Opaque local connection id; never contains credentials or a URL. */
 	readonly connectionId?: string;
+	/** Opaque Workbench editor identity used only to correlate a stale-safe draft. */
+	readonly editorId?: string;
+	readonly editorVersionId?: number;
 	readonly sql?: string;
 	readonly selectedSql?: string;
 	readonly errorMessage?: string;
@@ -114,7 +132,9 @@ export interface SqlAgentRun {
 	readonly goal: string;
 	readonly mode: SqlAgentMode;
 	readonly budget: SqlAgentBudget;
-	readonly state: string;
+	readonly state: SqlAgentRunState;
+	/** Backend-owned monotonic version used to reject stale cross-queue events. */
+	readonly revision: number;
 	readonly usage: SqlAgentRunUsage;
 	readonly createdAtMs: number;
 	readonly updatedAtMs: number;
@@ -129,11 +149,77 @@ export interface SqlAgentAnswer {
 	readonly sql?: string;
 }
 
+export type SqlAgentOptimizePlanVerdict =
+	'structurally_improved' | 'equivalent' | 'structurally_regressed' | 'uncertain';
+
+export type SqlAgentOptimizePlanUncertaintyReason =
+	| 'missing_original'
+	| 'missing_rewritten'
+	| 'index_metadata_unavailable'
+	| 'original_incomplete'
+	| 'rewritten_incomplete'
+	| 'connection_mismatch'
+	| 'dialect_mismatch'
+	| 'metadata_revision_mismatch'
+	| 'normalization_version_mismatch'
+	| 'unsupported_operation'
+	| 'topology_mismatch'
+	| 'unranked_access_change'
+	| 'mixed_structural_signals';
+
+export interface SqlAgentOptimizePlanSummary {
+	readonly scanCount: number;
+	readonly indexSearchCount: number;
+	readonly joinInputCount: number;
+	readonly temporaryBtreeCount: number;
+	readonly unknownCount: number;
+}
+
+export type SqlAgentOptimizePlanLoopRole =
+	{ readonly kind: 'single' } | { readonly kind: 'join'; readonly position: number };
+
+export type SqlAgentOptimizePlanAccessClass = 'scan' | 'index_search';
+
+export type SqlAgentOptimizeTemporaryBTreePurpose =
+	'order_by' | 'right_part_of_order_by' | 'group_by' | 'distinct' | 'compound_query' | 'other';
+
+export type SqlAgentOptimizePlanStructuralChange =
+	| {
+			readonly kind: 'access_mode';
+			readonly target: string;
+			readonly loop_role: SqlAgentOptimizePlanLoopRole;
+			readonly before: SqlAgentOptimizePlanAccessClass;
+			readonly after: SqlAgentOptimizePlanAccessClass;
+	  }
+	| {
+			readonly kind: 'temporary_b_tree_count';
+			readonly purpose: SqlAgentOptimizeTemporaryBTreePurpose;
+			readonly before: number;
+			readonly after: number;
+	  };
+
+export interface SqlAgentOptimizePlanComparison {
+	readonly verdict: SqlAgentOptimizePlanVerdict;
+	readonly uncertaintyReason?: SqlAgentOptimizePlanUncertaintyReason;
+	readonly original?: SqlAgentOptimizePlanSummary;
+	readonly rewritten?: SqlAgentOptimizePlanSummary;
+	readonly changes: readonly SqlAgentOptimizePlanStructuralChange[];
+	readonly performanceVerified: boolean;
+}
+
+/** Backend-owned terminal evidence for a deterministic Optimize run. */
+export interface SqlAgentOptimizeEvidence {
+	readonly indexMetadataAvailable: boolean;
+	readonly comparison: SqlAgentOptimizePlanComparison;
+	readonly semanticsVerified: boolean;
+}
+
 export interface SqlAgentLoopResult {
 	readonly runId: string;
-	readonly state: string;
+	readonly state: SqlAgentRunState;
 	readonly answer?: SqlAgentAnswer;
 	readonly evidenceRefs: readonly string[];
+	readonly optimizeEvidence?: SqlAgentOptimizeEvidence;
 	readonly warnings: readonly string[];
 	readonly partial: boolean;
 	readonly queryCallCount: number;
@@ -200,6 +286,10 @@ export function isSqlAgentMode(value: unknown): value is SqlAgentMode {
 		value === SqlAgentMode.ReadOnly ||
 		value === SqlAgentMode.AllowWritesWithApproval
 	);
+}
+
+export function isSqlAgentRunState(value: unknown): value is SqlAgentRunState {
+	return typeof value === 'string' && (SQL_AGENT_RUN_STATES as readonly string[]).includes(value);
 }
 
 export type SqlAgentRunEventEmitter = Emitter<SqlAgentRunEvent>;

@@ -2,10 +2,18 @@
  * SQL Studio Next - Product bootstrap pure model.
  *--------------------------------------------------------------------------------------------*/
 
-import { SQL_CONNECTIONS_FOCUS_COMMAND_ID } from '../../sqlConnections/common/sqlConnections.js';
+import {
+	SQL_CONNECTIONS_FOCUS_COMMAND_ID,
+	type SqlConnectionsRefreshCommandOptions
+} from '../../sqlConnections/common/sqlConnections.js';
 import { SQL_RESULT_OPEN_COMMAND_ID } from '../../sqlResult/common/sqlResult.js';
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
-import { SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID, SQL_PRODUCT_WELCOME_VIEW_ID } from './sqlProduct.js';
+import type { SqlDemoBootstrapResult } from '../../../services/sql/common/sqlTypes.js';
+import {
+	SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID,
+	SQL_PRODUCT_WELCOME_VIEW_ID,
+	type SqlProductDemoBootstrapCommandOptions
+} from './sqlProduct.js';
 import { DEFAULT_SQL_PRODUCT_PREFERENCES, SqlProductPreferences } from './sqlProductPreferences.js';
 
 export const enum SqlProductStartupCommandKind {
@@ -28,6 +36,32 @@ export interface SqlProductBootstrapOptions {
 	readonly force?: boolean;
 }
 
+export interface SqlProductDemoBootstrapRunner {
+	bootstrapDemo(): Promise<SqlDemoBootstrapResult>;
+	notifyConnectionsChanged(): void;
+	refreshConnections(options: SqlConnectionsRefreshCommandOptions): Promise<void>;
+	notifySuccess(message: string): void;
+}
+
+export async function runSqlProductDemoBootstrap(
+	runner: SqlProductDemoBootstrapRunner,
+	options: SqlProductDemoBootstrapCommandOptions = {}
+): Promise<SqlDemoBootstrapResult> {
+	const result = await runner.bootstrapDemo();
+	runner.notifyConnectionsChanged();
+
+	if (options.silent) {
+		await runner.refreshConnections({ existingViewOnly: true });
+		return result;
+	}
+
+	await runner.refreshConnections({ revealConnectionId: result.sampleConnectionId });
+	runner.notifySuccess(
+		result.reused ? `Demo SQLite connection opened: ${result.dbPath}` : `Demo SQLite database created: ${result.dbPath}`
+	);
+	return result;
+}
+
 export function shouldRunSqlProductBootstrap(options: SqlProductBootstrapOptions): boolean {
 	if (options.force) {
 		return true;
@@ -42,17 +76,19 @@ export function isSqlProductDemoBootstrapSupported(isNativeRuntime: boolean): bo
 }
 
 export function createSqlProductStartupPlan(options: SqlProductBootstrapOptions): SqlProductStartupCommand[] {
-	if (!shouldRunSqlProductBootstrap(options)) {
-		return [];
-	}
-
+	const shouldRunOnboarding = shouldRunSqlProductBootstrap(options);
 	const preferences = options.preferences ?? DEFAULT_SQL_PRODUCT_PREFERENCES;
 	const commands: SqlProductStartupCommand[] = [];
 
-	commands.push({
+	const bootstrapDemo: SqlProductStartupCommand = {
 		kind: SqlProductStartupCommandKind.BootstrapDemo,
 		commandId: SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID
-	});
+	};
+	commands.push(shouldRunOnboarding ? bootstrapDemo : { ...bootstrapDemo, args: [{ silent: true }] });
+
+	if (!shouldRunOnboarding) {
+		return commands;
+	}
 
 	if (preferences.restoreSqlLayoutOnStartup) {
 		commands.push({

@@ -2,12 +2,18 @@ pub mod bridge;
 pub mod core_adapter;
 pub mod domain;
 pub mod evidence;
+pub mod explore;
+pub mod index_context;
 pub mod model;
+pub mod optimize;
+pub mod plan;
 pub mod policy;
 pub mod read_only;
+pub mod relation_context;
 pub mod result_policy;
 pub mod runtime;
 pub mod schema_context;
+pub mod suggest_only;
 
 #[allow(unused_imports)]
 pub use domain::{
@@ -22,10 +28,15 @@ pub use evidence::{
     AgentEvidenceStore,
 };
 #[allow(unused_imports)]
+pub use explore::{LocalReadOnlyCompositeAgentToolExecutor, LocalReadOnlyExploreAgentToolExecutor};
+#[allow(unused_imports)]
 pub use model::{
     AgentFinalResponse, AgentModelContext, AgentModelErrorContext, AgentModelGateway,
     AgentModelRequest, AgentModelResponse, DeterministicAgentModelGateway,
+    DeterministicSchemaGenerateAgentModelGateway,
 };
+#[allow(unused_imports)]
+pub use optimize::{DeterministicOptimizeAgentModelGateway, OptimizeAgentLoop};
 #[allow(unused_imports)]
 pub use policy::{
     AgentAuthorizedTool, AgentCapability, AgentCapabilitySet, AgentPolicy, AgentTool,
@@ -43,6 +54,9 @@ pub use result_policy::{
 };
 #[allow(unused_imports)]
 pub use runtime::{
-    AgentLoopResult, AgentToolExecution, ReadOnlyAgentLoop, ReadOnlyAgentToolExecutor,
-    SuggestOnlyAgentLoop,
+    AgentLoopResult, AgentOptimizeEvidence, AgentToolExecution, ReadOnlyAgentLoop,
+    ReadOnlyAgentToolExecutor, SuggestOnlyAgentLoop, SuggestOnlyAgentToolExecution,
+    SuggestOnlyAgentToolExecutor,
 };
+#[allow(unused_imports)]
+pub use suggest_only::LocalSuggestOnlyAgentToolExecutor;

@@ -23,15 +23,23 @@ import { IViewDescriptorService } from '../../../common/views.js';
 import {
 	ISqlAgentService,
 	SqlAgentMode,
+	SqlAgentModelContext,
 	SqlAgentTaskKind,
 	SqlAgentRunEvent
 } from '../../../services/sql/common/sqlAgent.js';
-import { SqlCapability } from '../../../services/sql/common/sqlCapabilities.js';
 import { getDialectForConnectionKind, SqlDialect } from '../../../services/sql/common/sqlDialect.js';
 import { SqlEditorPane } from '../../sqlEditor/browser/sqlEditorPane.js';
-import { getSqlAgentPanelStatus, projectSqlAgentRunEvent } from '../common/sqlAgentPanelModel.js';
+import { ISqlResultService } from '../../sqlResult/common/sqlResultService.js';
+import { getSqlResultPanelContentState, SqlResultStateKind } from '../../sqlResult/common/sqlResultModel.js';
+import {
+	getSqlAgentPanelCapabilities,
+	getSqlAgentPanelActiveRunId,
+	getSqlAgentPanelStatus,
+	projectSqlAgentRunEvent,
+	SQL_AGENT_VIEW_ID
+} from '../common/sqlAgentPanelModel.js';
 
-export const SQL_AGENT_VIEW_ID = 'nyala.sqlAgent.view';
+export { SQL_AGENT_VIEW_ID } from '../common/sqlAgentPanelModel.js';
 export const SQL_AGENT_VIEWLET_ID = 'nyala.sqlAgent.panel';
 
 export class SqlAgentView extends ViewPane {
@@ -45,6 +53,7 @@ export class SqlAgentView extends ViewPane {
 	private cancelButton!: HTMLButtonElement;
 	private statusElement!: HTMLElement;
 	private answerElement!: HTMLElement;
+	private answerSqlElement!: HTMLElement;
 	private evidenceElement!: HTMLOListElement;
 	private activityElement!: HTMLOListElement;
 	private warningsElement!: HTMLOListElement;
@@ -62,6 +71,7 @@ export class SqlAgentView extends ViewPane {
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
 		@ISqlAgentService private readonly agentService: ISqlAgentService,
+		@ISqlResultService private readonly resultService: ISqlResultService,
 		@IEditorService private readonly editorService: IEditorService,
 		@INotificationService private readonly notificationService: INotificationService
 	) {
@@ -97,6 +107,8 @@ export class SqlAgentView extends ViewPane {
 
 		this.statusElement = append(view, $('.sql-agent-status', { role: 'status', 'aria-live': 'polite' }));
 		this.answerElement = append(view, $('.sql-agent-answer', { role: 'article' }));
+		this.answerSqlElement = append(view, $('pre.sql-agent-sql-draft', { 'aria-label': 'Agent SQL draft' }));
+		this.answerSqlElement.hidden = true;
 		this.evidenceElement = append(
 			view,
 			$('ol.sql-agent-evidence', { 'aria-label': 'Agent evidence' })
@@ -193,9 +205,20 @@ export class SqlAgentView extends ViewPane {
 			return;
 		}
 		const context = pane.getAssistantContext();
+		const artifactTarget = pane.getAgentArtifactTarget();
 		const goal = this.promptElement.value.trim() || 'Review the current SQL';
 		const mode = this.modeElement.value as SqlAgentMode;
+		const task = this.taskElement.value as SqlAgentTaskKind;
 		const dialect = context.connectionKind ? getDialectForConnectionKind(context.connectionKind) : SqlDialect.Sqlite;
+		if (
+			mode === SqlAgentMode.ReadOnly &&
+			(task === SqlAgentTaskKind.GenerateQuery || task === SqlAgentTaskKind.FixError)
+		) {
+			this.setStatus(
+				`${task === SqlAgentTaskKind.GenerateQuery ? 'Generate query' : 'Fix error'} requires Suggest only.`
+			);
+			return;
+		}
 		if (mode === SqlAgentMode.ReadOnly && dialect !== SqlDialect.Sqlite) {
 			this.setStatus('Read only Agent tools currently support SQLite connections only.');
 			return;
@@ -204,34 +227,75 @@ export class SqlAgentView extends ViewPane {
 			this.setStatus('Select an explicitly read-only SQLite connection first.');
 			return;
 		}
-		const capabilities =
-			mode === SqlAgentMode.ReadOnly
-				? [
-						SqlCapability.DatabaseExecuteRead,
-						SqlCapability.DatabaseExplain,
-						SqlCapability.DatabaseReadResultShape,
-						SqlCapability.DatabaseReadResultSample
-					]
-				: [SqlCapability.AgentTool, SqlCapability.WorkspaceReadSql];
+		if (task === SqlAgentTaskKind.GenerateQuery && !context.connectionId) {
+			this.setStatus('Select a database connection before generating from schema.');
+			return;
+		}
+		if (task === SqlAgentTaskKind.OptimizeQuery && mode !== SqlAgentMode.ReadOnly) {
+			this.setStatus('Optimize query requires Read only.');
+			return;
+		}
+		if (task === SqlAgentTaskKind.OptimizeQuery && (!artifactTarget || !artifactTarget.sql.trim())) {
+			this.setStatus('Enter a SQLite query before optimizing SQL.');
+			return;
+		}
+
+		let requestContext: SqlAgentModelContext = {
+			dialect,
+			connectionId: context.connectionId,
+			sql: context.sql,
+			selectedSql: context.selectedSql,
+			userPrompt: goal
+		};
+		if (task === SqlAgentTaskKind.OptimizeQuery && artifactTarget) {
+			requestContext = {
+				dialect,
+				connectionId: context.connectionId,
+				editorId: artifactTarget.editorId,
+				editorVersionId: artifactTarget.versionId,
+				sql: artifactTarget.sql
+			};
+		} else if (task === SqlAgentTaskKind.FixError) {
+			const result = getSqlResultPanelContentState(this.resultService.state, this.resultService.panelState);
+			if (result.kind !== SqlResultStateKind.Error) {
+				this.setStatus('Run a SQL query that fails before asking Agent to fix it.');
+				return;
+			}
+			if (
+				!context.editorId ||
+				context.editorId !== result.query.editorId ||
+				!context.connectionId ||
+				context.connectionId !== result.query.connectionId ||
+				context.versionId !== result.query.editorVersionId ||
+				context.sql !== result.query.sql
+			) {
+				this.setStatus('Restore the editor and connection that produced the SQL error before fixing it.');
+				return;
+			}
+			requestContext = {
+				dialect,
+				connectionId: result.query.connectionId,
+				editorId: result.query.editorId,
+				editorVersionId: result.query.editorVersionId,
+				sql: result.query.sql,
+				errorContext: result.errorContext,
+				userPrompt: goal
+			};
+		}
+		const capabilities = getSqlAgentPanelCapabilities(mode, task, Boolean(requestContext.connectionId));
 
 		this.setBusy(true);
 		try {
 			const event = await this.agentService.start({
 				goal,
-				task: this.taskElement.value as SqlAgentTaskKind,
+				task,
 				mode,
-				context: {
-					dialect,
-					connectionId: context.connectionId,
-					sql: context.sql,
-					selectedSql: context.selectedSql,
-					userPrompt: goal
-				},
+				context: requestContext,
 				capabilities
 			});
 			this.applyRunEvent(event);
 		} catch (error) {
-			this.setBusy(false);
+			this.setBusy(Boolean(this.activeRunId));
 			const message = error instanceof Error ? error.message : String(error);
 			this.setStatus(`Error: ${message}`);
 			this.notificationService.error(message);
@@ -254,16 +318,19 @@ export class SqlAgentView extends ViewPane {
 
 	private applyRunEvent(event: SqlAgentRunEvent): void {
 		const projection = projectSqlAgentRunEvent(event);
-		this.activeRunId =
-			projection.state === 'completed' || projection.state === 'failed' || projection.state === 'cancelled'
-				? undefined
-				: projection.runId;
+		this.activeRunId = getSqlAgentPanelActiveRunId(projection);
 		this.setBusy(Boolean(this.activeRunId));
 		this.setStatus(`${getSqlAgentPanelStatus(projection)} · ${projection.usageLabel}`);
 		this.answerElement.textContent = projection.answerTitle
 			? `${projection.answerTitle}\n\n${projection.answerContent ?? ''}`
 			: '';
+		const answerSql = projection.answerSql?.trim() ?? '';
+		this.answerSqlElement.textContent = answerSql;
+		this.answerSqlElement.hidden = answerSql.length === 0;
 		clearNode(this.evidenceElement);
+		for (const line of projection.optimizeEvidenceLines) {
+			append(this.evidenceElement, $('li', undefined, line));
+		}
 		for (const reference of projection.evidenceRefs) {
 			append(this.evidenceElement, $('li', undefined, reference));
 		}
@@ -282,6 +349,8 @@ export class SqlAgentView extends ViewPane {
 		this.setBusy(false);
 		this.setStatus('Ready.');
 		this.answerElement.textContent = '';
+		this.answerSqlElement.textContent = '';
+		this.answerSqlElement.hidden = true;
 		clearNode(this.evidenceElement);
 		clearNode(this.activityElement);
 		clearNode(this.warningsElement);

@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+webdriver = []
+
 [dependencies]
 tokio = { workspace = true }
 serde = { workspace = true }

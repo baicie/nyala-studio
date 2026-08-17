@@ -1,4 +1,4 @@
-name: SQL Agent Native Workbench Evidence
+name: SQL Agent Native Workbench Capture
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: sql-agent-native-${{ github.ref }}
+  group: sql-agent-native-capture-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -30,13 +30,14 @@ jobs:
     name: macOS WKWebView SQL Agent evidence
     runs-on: ${{ inputs.macos_runner }}
     timeout-minutes: 120
-    env:
-      EVIDENCE_DIR: ${{ runner.temp }}/sql-agent-macos-evidence
     steps:
       - name: Initialize fail-closed evidence directory
         run: |
+          EVIDENCE_DIR="$RUNNER_TEMP/sql-agent-macos-evidence"
+          export EVIDENCE_DIR
+          echo "EVIDENCE_DIR=$EVIDENCE_DIR" >> "$GITHUB_ENV"
           mkdir -p "$EVIDENCE_DIR/screenshots"
-          node -e "const fs=require('node:fs');const p=process.env.EVIDENCE_DIR+'/workbench-evidence.json';fs.writeFileSync(p,JSON.stringify({version:1,status:'blocked',reason:'Native Agent runner did not complete.',driverProvider:'embedded',nativeWebView:false,nativeWebView2:false,engine:'embedded-unverified',platformName:'macos',artifacts:[]},null,2)+'\\n')"
+          node -e "const fs=require('node:fs');const p=process.env.EVIDENCE_DIR+'/workbench-evidence.json';const provenance={repository:process.env.GITHUB_REPOSITORY,sourceRevision:process.env.GITHUB_SHA,sourceRef:process.env.GITHUB_REF,workflowRunId:process.env.GITHUB_RUN_ID,workflowRunAttempt:Number(process.env.GITHUB_RUN_ATTEMPT)};fs.writeFileSync(p,JSON.stringify({version:2,status:'blocked',automatedSurfaceStatus:'blocked',checkpointDecision:'BLOCKED',reason:'Native Agent runner did not complete.',driverProvider:'embedded',nativeWebView:false,nativeWebView2:false,engine:'embedded-unverified',browser:'unknown',platformName:'macos',provenance,webdriverOwnership:{portSource:'os-assigned',runNonceVerified:false},manualGates:{nativeKeyboard:'pending',screenReader:'pending'},artifacts:[]},null,2)+'\\n')"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -68,7 +69,12 @@ jobs:
             --platform macos \
             --output "$EVIDENCE_DIR/workbench-evidence.json" \
             --screenshot-dir "$EVIDENCE_DIR/screenshots" \
-            --app-log "$EVIDENCE_DIR/nyala-app.log"
+            --app-log "$EVIDENCE_DIR/nyala-app.log" \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-revision "$GITHUB_SHA" \
+            --source-ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
       - name: Upload macOS Agent evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -76,20 +82,21 @@ jobs:
           name: sql-agent-native-macos
           path: ${{ runner.temp }}/sql-agent-macos-evidence
           if-no-files-found: error
+          overwrite: true
           retention-days: 14
 
   windows-agent:
     name: Windows WebView2 SQL Agent evidence
     runs-on: ${{ inputs.windows_runner }}
     timeout-minutes: 120
-    env:
-      EVIDENCE_DIR: ${{ runner.temp }}\sql-agent-windows-evidence
     steps:
       - name: Initialize fail-closed evidence directory
         shell: pwsh
         run: |
+          $env:EVIDENCE_DIR = Join-Path $env:RUNNER_TEMP 'sql-agent-windows-evidence'
+          "EVIDENCE_DIR=$env:EVIDENCE_DIR" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           New-Item -ItemType Directory -Force -Path "$env:EVIDENCE_DIR\screenshots" | Out-Null
-          node -e "const fs=require('node:fs');const p=process.env.EVIDENCE_DIR+'\\workbench-evidence.json';fs.writeFileSync(p,JSON.stringify({version:1,status:'blocked',reason:'Native Agent runner did not complete.',driverProvider:'embedded',nativeWebView:false,nativeWebView2:false,engine:'embedded-unverified',platformName:'windows',artifacts:[]},null,2)+'\n')"
+          node -e "const fs=require('node:fs');const p=process.env.EVIDENCE_DIR+'\\workbench-evidence.json';const provenance={repository:process.env.GITHUB_REPOSITORY,sourceRevision:process.env.GITHUB_SHA,sourceRef:process.env.GITHUB_REF,workflowRunId:process.env.GITHUB_RUN_ID,workflowRunAttempt:Number(process.env.GITHUB_RUN_ATTEMPT)};fs.writeFileSync(p,JSON.stringify({version:2,status:'blocked',automatedSurfaceStatus:'blocked',checkpointDecision:'BLOCKED',reason:'Native Agent runner did not complete.',driverProvider:'embedded',nativeWebView:false,nativeWebView2:false,engine:'embedded-unverified',browser:'unknown',platformName:'windows',provenance,webdriverOwnership:{portSource:'os-assigned',runNonceVerified:false},manualGates:{nativeKeyboard:'pending',screenReader:'pending'},artifacts:[]},null,2)+'\n')"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -123,7 +130,12 @@ jobs:
             --platform windows `
             --output "$env:EVIDENCE_DIR\workbench-evidence.json" `
             --screenshot-dir "$env:EVIDENCE_DIR\screenshots" `
-            --app-log "$env:EVIDENCE_DIR\nyala-app.log"
+            --app-log "$env:EVIDENCE_DIR\nyala-app.log" `
+            --repository "$env:GITHUB_REPOSITORY" `
+            --source-revision "$env:GITHUB_SHA" `
+            --source-ref "$env:GITHUB_REF" `
+            --workflow-run-id "$env:GITHUB_RUN_ID" `
+            --workflow-run-attempt "$env:GITHUB_RUN_ATTEMPT"
       - name: Upload Windows Agent evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -131,4 +143,5 @@ jobs:
           name: sql-agent-native-windows
           path: ${{ runner.temp }}\sql-agent-windows-evidence
           if-no-files-found: error
+          overwrite: true
           retention-days: 14

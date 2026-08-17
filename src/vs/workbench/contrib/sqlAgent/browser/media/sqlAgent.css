@@ -74,6 +74,18 @@
 	border: 1px solid var(--vscode-panel-border);
 }
 
+.sql-agent-sql-draft {
+	margin: 0;
+	max-height: 220px;
+	overflow: auto;
+	padding: 6px;
+	white-space: pre;
+	font-family: var(--monaco-monospace-font);
+	font-size: var(--monaco-monospace-font-size);
+	background: var(--vscode-textCodeBlock-background);
+	border: 1px solid var(--vscode-panel-border);
+}
+
 .sql-agent-evidence,
 .sql-agent-activity,
 .sql-agent-warnings {

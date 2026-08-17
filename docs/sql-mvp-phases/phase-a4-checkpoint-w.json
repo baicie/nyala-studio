@@ -1,0 +1,94 @@
+{
+	"version": 2,
+	"generatedAt": "2026-08-16T12:24:42.320Z",
+	"decision": "NO-GO",
+	"checks": [
+		{
+			"id": "capture-run-metadata",
+			"passed": false,
+			"reason": "capture run metadata path was not provided"
+		},
+		{
+			"id": "macos-native-identity",
+			"passed": false,
+			"reason": "macOS WKWebView: macOS native evidence path was not provided"
+		},
+		{
+			"id": "windows-native-identity",
+			"passed": false,
+			"reason": "Windows WebView2: Windows native evidence path was not provided"
+		},
+		{
+			"id": "macos-automated-surface",
+			"passed": false,
+			"reason": "macOS WKWebView: macOS native evidence path was not provided"
+		},
+		{
+			"id": "windows-automated-surface",
+			"passed": false,
+			"reason": "Windows WebView2: Windows native evidence path was not provided"
+		},
+		{
+			"id": "provenance-match",
+			"passed": false,
+			"reason": "expected repository is unavailable; expected sourceRevision is unavailable; expected sourceRef is unavailable; expected workflowRunId is unavailable; expected workflowRunAttempt is unavailable"
+		},
+		{
+			"id": "manual-attestation",
+			"passed": false,
+			"reason": "manual attestation path was not provided"
+		},
+		{
+			"id": "macos-native-keyboard",
+			"passed": false,
+			"reason": "macOS WKWebView: real keyboard focus order, Start/Cancel reachability, and no-focus-trap attestation are required"
+		},
+		{
+			"id": "macos-voiceover",
+			"passed": false,
+			"reason": "macOS WKWebView: real VoiceOver labels, state changes, and no-focus-trap attestation are required"
+		},
+		{
+			"id": "windows-native-keyboard",
+			"passed": false,
+			"reason": "Windows WebView2: real keyboard focus order, Start/Cancel reachability, and no-focus-trap attestation are required"
+		},
+		{
+			"id": "windows-narrator",
+			"passed": false,
+			"reason": "Windows WebView2: real Narrator labels, state changes, and no-focus-trap attestation are required"
+		}
+	],
+	"blockers": [
+		"capture run metadata path was not provided",
+		"macOS WKWebView: macOS native evidence path was not provided",
+		"Windows WebView2: Windows native evidence path was not provided",
+		"macOS WKWebView: macOS native evidence path was not provided",
+		"Windows WebView2: Windows native evidence path was not provided",
+		"expected repository is unavailable; expected sourceRevision is unavailable; expected sourceRef is unavailable; expected workflowRunId is unavailable; expected workflowRunAttempt is unavailable",
+		"manual attestation path was not provided",
+		"macOS WKWebView: real keyboard focus order, Start/Cancel reachability, and no-focus-trap attestation are required",
+		"macOS WKWebView: real VoiceOver labels, state changes, and no-focus-trap attestation are required",
+		"Windows WebView2: real keyboard focus order, Start/Cancel reachability, and no-focus-trap attestation are required",
+		"Windows WebView2: real Narrator labels, state changes, and no-focus-trap attestation are required"
+	],
+	"inputs": {
+		"macos": null,
+		"windows": null,
+		"manual": null,
+		"captureRun": null,
+		"expected": {}
+	},
+	"inputDigests": {
+		"macos": null,
+		"windows": null,
+		"manual": null,
+		"captureRun": null
+	},
+	"evidence": {
+		"captureRun": null,
+		"macos": null,
+		"windows": null,
+		"manual": null
+	}
+}

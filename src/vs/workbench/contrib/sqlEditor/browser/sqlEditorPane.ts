@@ -22,7 +22,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
-import { ISqlConnectionService } from '../../../services/sql/common/sqlConnection.js';
+import { ISqlConnectionChangeService, ISqlConnectionService } from '../../../services/sql/common/sqlConnection.js';
 import { ISqlQueryService } from '../../../services/sql/common/sqlQuery.js';
 import { SqlConnection, SqlConnectionKind } from '../../../services/sql/common/sqlTypes.js';
 import { SqlEditorInput } from '../common/sqlEditorInput.js';
@@ -32,6 +32,7 @@ import {
 	findSqlStatementAtOffset,
 	getSqlEditorStatusLabel,
 	getSqlEditorToolbarState,
+	SqlEditorConnectionRefreshCoordinator,
 	SqlEditorExecutionSource
 } from '../common/sqlEditorModel.js';
 import { SqlEditorExecutionController, SqlEditorRunningState } from '../common/sqlEditorExecutionController.js';
@@ -78,6 +79,7 @@ export class SqlEditorPane extends EditorPane {
 	private editor: ICodeEditor | undefined;
 	private currentInput: SqlEditorInput | undefined;
 	private currentConnections: SqlConnection[] = [];
+	private readonly connectionRefreshCoordinator = new SqlEditorConnectionRefreshCoordinator<SqlConnection>();
 	private running = false;
 	private dirty = false;
 	private readonly executionController: SqlEditorExecutionController;
@@ -95,10 +97,19 @@ export class SqlEditorPane extends EditorPane {
 		@ISqlQueryService private readonly sqlQueryService: ISqlQueryService,
 		@ISqlEditorEventService private readonly sqlEditorEventService: ISqlEditorEventService,
 		@ISqlEditorDraftService private readonly draftService: ISqlEditorDraftService,
-		@ISqlProductPreferencesService private readonly preferencesService: ISqlProductPreferencesService
+		@ISqlProductPreferencesService private readonly preferencesService: ISqlProductPreferencesService,
+		@ISqlConnectionChangeService connectionChangeService: ISqlConnectionChangeService
 	) {
 		super(SqlEditorPane.ID, group, telemetryService, themeService, storageService);
 		this.executionController = new SqlEditorExecutionController(sqlQueryService);
+		this._register(
+			connectionChangeService.onDidChangeConnections(() => {
+				if (!this.currentInput || !this.connectionSelect) {
+					return;
+				}
+				this.refreshConnections(this.currentInput, true).catch(error => this.showError(error));
+			})
+		);
 	}
 
 	protected override createEditor(parent: HTMLElement): void {
@@ -243,12 +254,23 @@ export class SqlEditorPane extends EditorPane {
 	}
 
 	override clearInput(): void {
+		this.connectionRefreshCoordinator.invalidate();
+		this.currentConnections = [];
+		if (this.connectionSelect) {
+			this.connectionSelect.value = '';
+		}
 		this.modelDisposables.clear();
 		this.editor?.setModel(null);
 		this.currentInput = undefined;
 		this.dirty = false;
 		this.updateToolbarState();
 		super.clearInput();
+	}
+
+	override dispose(): void {
+		this.connectionRefreshCoordinator.invalidate();
+		this.currentInput = undefined;
+		super.dispose();
 	}
 
 	override layout(dimension: Dimension): void {
@@ -534,26 +556,36 @@ export class SqlEditorPane extends EditorPane {
 		}
 	}
 
-	private async refreshConnections(input: SqlEditorInput): Promise<void> {
-		if (!canLoadSqlEditorConnections(isTauri())) {
-			this.currentConnections = [];
-		} else {
-			try {
-				this.currentConnections = await this.sqlConnectionService.listConnections();
-			} catch (error) {
-				this.currentConnections = [];
-				this.showError(error);
+	private async refreshConnections(input: SqlEditorInput, preserveCurrentSelection = false): Promise<void> {
+		const result = await this.connectionRefreshCoordinator.load(
+			() =>
+				canLoadSqlEditorConnections(isTauri()) ? this.sqlConnectionService.listConnections() : Promise.resolve([]),
+			{
+				inputConnectionId: input.connectionId,
+				preserveCurrentSelection,
+				getCurrentSelection: () => this.connectionSelect?.value
 			}
+		);
+		if (!result) {
+			return;
 		}
+
+		this.currentConnections = result.connections;
 
 		clearNode(this.connectionSelect);
 
-		if (this.currentConnections.length === 0) {
+		if (!result.succeeded || this.currentConnections.length === 0) {
 			const option = document.createElement('option');
 			option.value = '';
 			option.textContent = 'No connection';
 			this.connectionSelect.appendChild(option);
 			this.connectionSelect.disabled = true;
+			if (result.succeeded) {
+				this.updateReadyStatus();
+			} else {
+				this.showError(result.error);
+			}
+			this.updateToolbarState();
 			return;
 		}
 
@@ -566,13 +598,9 @@ export class SqlEditorPane extends EditorPane {
 			this.connectionSelect.appendChild(option);
 		}
 
-		const preferredConnectionId = input.connectionId;
-
-		if (preferredConnectionId && this.currentConnections.some(connection => connection.id === preferredConnectionId)) {
-			this.connectionSelect.value = preferredConnectionId;
-		} else {
-			this.connectionSelect.value = this.currentConnections[0].id;
-		}
+		this.connectionSelect.value = result.selectedConnectionId ?? this.currentConnections[0].id;
+		this.updateReadyStatus();
+		this.updateToolbarState();
 	}
 
 	private getSelectedConnectionId(): string | undefined {

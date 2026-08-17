@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
 
 const cli = parseArgs(process.argv.slice(2));
 const outputPath = resolve(cli.output ?? 'platform-evidence.json');
@@ -39,7 +39,8 @@ async function loadEvidence(filePath, label) {
 	try {
 		const value = JSON.parse(await readFile(filePath, 'utf8'));
 		if (!value || typeof value !== 'object') return blocked(label, 'platform evidence is not an object');
-		return { ...value, label };
+		const artifactDirectory = relative(dirname(outputPath), dirname(filePath)).split(sep).join('/');
+		return { ...value, label, artifactDirectory: artifactDirectory || '.' };
 	} catch (error) {
 		return blocked(
 			label,

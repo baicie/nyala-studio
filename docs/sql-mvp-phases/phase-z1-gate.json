@@ -1,62 +1,265 @@
 {
-  "version": 1,
-  "generatedAt": "2026-08-12T13:08:33.745Z",
-  "decision": "NO-GO",
-  "input": "/Users/liuzhiwei/Desktop/workspace/git-code/nyala-studio/docs/sql-mvp-phases/phase-z1-benchmark.json",
-  "benchmark": {
-    "repeat": 3,
-    "recordCount": 36,
-    "browser": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-  },
-  "thresholds": {
-    "oneKInteractionRegressionMax": 0.1,
-    "tenKPrimaryImprovementMin": 0.2,
-    "primaryMetric": "scrollP95Ms",
-    "gzipBudgetBytes": 30000
-  },
-  "metricChecks": [
-    {
-      "id": "1k-x-20 scroll interaction",
-      "passed": false,
-      "baseline": 0.19999999925494194,
-      "zeus": 8.5,
-      "regression": 41.50000015832484,
-      "reason": "1k-x-20 scroll interaction regression 4150.0% exceeds no regression over 10%"
-    },
-    {
-      "id": "10k-x-50-primary",
-      "passed": false,
-      "baseline": 0.599999999627471,
-      "zeus": 8.099999999627471,
-      "improvement": -12.500000007761022,
-      "reason": "10k-x-50 scroll p95 improvement -1250.0% is below 20%"
-    }
-  ],
-  "platformMetricChecks": [],
-  "dependencyCheck": {
-    "bundleGzipBytes": 24260,
-    "budgetBytes": 30000,
-    "passed": true,
-    "source": "phase-z1-spike-verification.md Z1.1 audit"
-  },
-  "platformEvidence": {
-    "macosWebKit": {
-      "label": "macOS WebKit",
-      "status": "blocked",
-      "runs": 0,
-      "reason": "spawnSync curl ETIMEDOUT"
-    },
-    "windowsWebView2": {
-      "label": "Windows WebView2",
-      "status": "blocked",
-      "runs": 0,
-      "reason": "msedgedriver is not available in this environment."
-    }
-  },
-  "reasons": [
-    "1k-x-20 scroll interaction regression 4150.0% exceeds no regression over 10%",
-    "10k-x-50 scroll p95 improvement -1250.0% is below 20%",
-    "macOS WebKit: spawnSync curl ETIMEDOUT (0/5 runs recorded)",
-    "Windows WebView2: msedgedriver is not available in this environment. (0/5 runs recorded)"
-  ]
+	"version": 2,
+	"generatedAt": "2026-08-16T18:04:21.685Z",
+	"sourceRevision": "63698263fa13cd9f114341bc04d360ed967d8c9b",
+	"decision": "NO-GO",
+	"input": "docs/sql-mvp-phases/phase-z1-benchmark.json",
+	"benchmark": {
+		"measurementContractVersion": 6,
+		"scrollCommitBoundary": "post-presentation-opportunity",
+		"executionOrder": "renderer-balanced-rotation-v1",
+		"repeat": 3,
+		"recordCount": 36,
+		"browser": "Google Chrome",
+		"sha256": "a0c595a945cddb3bc8825f16d4f05a69c813799c0488ee009efab3d91160fed9",
+		"provenance": {
+			"sourceRevision": "63698263fa13cd9f114341bc04d360ed967d8c9b",
+			"sourceTreeClean": false,
+			"zeusBundleSha256": "0dddde8f65195667d1bdd0f574f2ac3a4ffa1c5b019c8f1a13db5bd2fc0a6794"
+		}
+	},
+	"thresholds": {
+		"oneKInteractionRegressionMax": 0.1,
+		"tenKPrimaryImprovementMin": 0.2,
+		"primaryMetric": "scrollP95Ms",
+		"gzipBudgetBytes": 30000
+	},
+	"metricChecks": [
+		{
+			"id": "1k-x-20 scroll interaction",
+			"passed": true,
+			"baseline": 18.099999964237213,
+			"zeus": 18.399999976158142,
+			"regression": 0.016574586326722783,
+			"reason": "1k-x-20 scroll interaction passed with 1.7% regression against baseline"
+		},
+		{
+			"id": "10k-x-50-primary",
+			"passed": false,
+			"baseline": 19.80000001192093,
+			"zeus": 19.600000023841858,
+			"improvement": 0.010101009492861496,
+			"reason": "10k-x-50 scroll p95 improvement 1.0% is below 20%"
+		}
+	],
+	"benchmarkEvidenceChecks": [
+		{
+			"id": "chromium-benchmark-schema-version",
+			"passed": true,
+			"reason": "Chromium benchmark version 1 verified"
+		},
+		{
+			"id": "chromium-benchmark-measurement-contract-version",
+			"passed": true,
+			"reason": "Chromium benchmark measurement contract version 6 verified"
+		},
+		{
+			"id": "chromium-benchmark-scroll-commit-boundary",
+			"passed": true,
+			"reason": "Chromium benchmark scroll commit boundary post-presentation-opportunity verified"
+		},
+		{
+			"id": "chromium-benchmark-execution-order",
+			"passed": true,
+			"reason": "Chromium benchmark execution order renderer-balanced-rotation-v1 verified"
+		},
+		{
+			"id": "chromium-benchmark-record-contract",
+			"passed": true,
+			"reason": "Chromium benchmark has 36 unique raw records"
+		},
+		{
+			"id": "chromium-benchmark-summary-integrity",
+			"passed": true,
+			"reason": "Chromium benchmark summary matches raw records"
+		},
+		{
+			"id": "chromium-benchmark-provenance",
+			"passed": false,
+			"reason": "Chromium benchmark provenance mismatch (repository is missing or invalid, sourceRef is missing or invalid, workflowRunId is missing or invalid, workflowRunAttempt is missing or invalid, source tree is not clean)"
+		}
+	],
+	"platformMetricChecks": [],
+	"platformEvidenceChecks": [
+		{
+			"id": "macOS WebKit-schema-version",
+			"passed": false,
+			"reason": "macOS WebKit: platform evidence version is missing, expected 2"
+		},
+		{
+			"id": "macOS WebKit-measurement-contract-version",
+			"passed": false,
+			"reason": "macOS WebKit: measurement contract version is missing, expected 6"
+		},
+		{
+			"id": "macOS WebKit-scroll-commit-boundary",
+			"passed": false,
+			"reason": "macOS WebKit: scroll commit boundary is missing, expected post-presentation-opportunity"
+		},
+		{
+			"id": "macOS WebKit-execution-order",
+			"passed": false,
+			"reason": "macOS WebKit: execution order is missing, expected renderer-balanced-rotation-v1"
+		},
+		{
+			"id": "macOS WebKit-record-contract",
+			"passed": false,
+			"reason": "macOS WebKit: records are invalid (runs=0; expected exactly 5; record count is 0; expected 60; unique iteration tuple count is 0; expected 60; unique run token count is 0; expected 60)"
+		},
+		{
+			"id": "macOS WebKit-summary-integrity",
+			"passed": false,
+			"reason": "macOS WebKit: reported summary does not match raw records"
+		},
+		{
+			"id": "macOS WebKit-screenshot-integrity",
+			"passed": false,
+			"reason": "macOS WebKit: screenshot evidence is invalid (manifest count is 0; expected 12; platform artifact root is unavailable)"
+		},
+		{
+			"id": "Windows WebView2-schema-version",
+			"passed": false,
+			"reason": "Windows WebView2: platform evidence version is missing, expected 2"
+		},
+		{
+			"id": "Windows WebView2-measurement-contract-version",
+			"passed": false,
+			"reason": "Windows WebView2: measurement contract version is missing, expected 6"
+		},
+		{
+			"id": "Windows WebView2-scroll-commit-boundary",
+			"passed": false,
+			"reason": "Windows WebView2: scroll commit boundary is missing, expected post-presentation-opportunity"
+		},
+		{
+			"id": "Windows WebView2-execution-order",
+			"passed": false,
+			"reason": "Windows WebView2: execution order is missing, expected renderer-balanced-rotation-v1"
+		},
+		{
+			"id": "Windows WebView2-record-contract",
+			"passed": false,
+			"reason": "Windows WebView2: records are invalid (runs=0; expected exactly 5; record count is 0; expected 60; unique iteration tuple count is 0; expected 60; unique run token count is 0; expected 60)"
+		},
+		{
+			"id": "Windows WebView2-summary-integrity",
+			"passed": false,
+			"reason": "Windows WebView2: reported summary does not match raw records"
+		},
+		{
+			"id": "Windows WebView2-screenshot-integrity",
+			"passed": false,
+			"reason": "Windows WebView2: screenshot evidence is invalid (manifest count is 0; expected 12; platform artifact root is unavailable)"
+		}
+	],
+	"runIdentityChecks": [
+		{
+			"id": "global-run-token-uniqueness",
+			"passed": false,
+			"reason": "global run token uniqueness failed (record count is 36; expected 156; unique valid token count is 36; expected 156)"
+		}
+	],
+	"provenanceChecks": [
+		{
+			"id": "trusted-expected-workflow-provenance",
+			"passed": false,
+			"reason": "trusted expected workflow provenance is missing or invalid (repository:missing, sourceRevision:missing, sourceRef:missing, workflowRunId:missing, workflowRunAttempt:missing, repository:invalid, sourceRef:invalid, workflowRunId:invalid, workflowRunAttempt:invalid)"
+		},
+		{
+			"id": "macOS WebKit-provenance",
+			"passed": false,
+			"reason": "macOS WebKit: provenance mismatch (repository is missing or invalid, sourceRevision is missing or invalid, sourceRef is missing or invalid, workflowRunId is missing or invalid, workflowRunAttempt is missing or invalid, binarySha256 is missing or invalid, zeusBundleSha256 is missing or invalid, sourceRevision=missing (expected \"63698263fa13cd9f114341bc04d360ed967d8c9b\"))"
+		},
+		{
+			"id": "Windows WebView2-provenance",
+			"passed": false,
+			"reason": "Windows WebView2: provenance mismatch (repository is missing or invalid, sourceRevision is missing or invalid, sourceRef is missing or invalid, workflowRunId is missing or invalid, workflowRunAttempt is missing or invalid, binarySha256 is missing or invalid, zeusBundleSha256 is missing or invalid, sourceRevision=missing (expected \"63698263fa13cd9f114341bc04d360ed967d8c9b\"))"
+		},
+		{
+			"id": "platform-provenance-repository",
+			"passed": false,
+			"reason": "macOS WebKit and Windows WebView2 repository values do not match"
+		},
+		{
+			"id": "platform-provenance-sourceRevision",
+			"passed": false,
+			"reason": "macOS WebKit and Windows WebView2 sourceRevision values do not match"
+		},
+		{
+			"id": "platform-provenance-sourceRef",
+			"passed": false,
+			"reason": "macOS WebKit and Windows WebView2 sourceRef values do not match"
+		},
+		{
+			"id": "platform-provenance-workflowRunId",
+			"passed": false,
+			"reason": "macOS WebKit and Windows WebView2 workflowRunId values do not match"
+		},
+		{
+			"id": "platform-provenance-workflowRunAttempt",
+			"passed": false,
+			"reason": "macOS WebKit and Windows WebView2 workflowRunAttempt values do not match"
+		},
+		{
+			"id": "platform-provenance-zeusBundleSha256",
+			"passed": false,
+			"reason": "macOS WebKit and Windows WebView2 zeusBundleSha256 values do not match"
+		},
+		{
+			"id": "zeus-bundle-provenance",
+			"passed": false,
+			"reason": "Zeus bundle SHA-256 provenance does not match (dependency audit=missing, Chromium benchmark=\"0dddde8f65195667d1bdd0f574f2ac3a4ffa1c5b019c8f1a13db5bd2fc0a6794\", macOS WebKit=missing, Windows WebView2=missing)"
+		}
+	],
+	"dependencyCheck": {
+		"passed": false,
+		"budgetBytes": 30000,
+		"reason": "Zeus dependency audit evidence is missing"
+	},
+	"platformEvidence": {
+		"macosWebKit": {
+			"label": "macOS WebKit",
+			"status": "blocked",
+			"runs": 0,
+			"reason": "spawnSync curl ETIMEDOUT"
+		},
+		"windowsWebView2": {
+			"label": "Windows WebView2",
+			"status": "blocked",
+			"runs": 0,
+			"reason": "msedgedriver is not available in this environment."
+		}
+	},
+	"reasons": [
+		"10k-x-50 scroll p95 improvement 1.0% is below 20%",
+		"Chromium benchmark provenance mismatch (repository is missing or invalid, sourceRef is missing or invalid, workflowRunId is missing or invalid, workflowRunAttempt is missing or invalid, source tree is not clean)",
+		"macOS WebKit: platform evidence version is missing, expected 2",
+		"macOS WebKit: measurement contract version is missing, expected 6",
+		"macOS WebKit: scroll commit boundary is missing, expected post-presentation-opportunity",
+		"macOS WebKit: execution order is missing, expected renderer-balanced-rotation-v1",
+		"macOS WebKit: records are invalid (runs=0; expected exactly 5; record count is 0; expected 60; unique iteration tuple count is 0; expected 60; unique run token count is 0; expected 60)",
+		"macOS WebKit: reported summary does not match raw records",
+		"macOS WebKit: screenshot evidence is invalid (manifest count is 0; expected 12; platform artifact root is unavailable)",
+		"Windows WebView2: platform evidence version is missing, expected 2",
+		"Windows WebView2: measurement contract version is missing, expected 6",
+		"Windows WebView2: scroll commit boundary is missing, expected post-presentation-opportunity",
+		"Windows WebView2: execution order is missing, expected renderer-balanced-rotation-v1",
+		"Windows WebView2: records are invalid (runs=0; expected exactly 5; record count is 0; expected 60; unique iteration tuple count is 0; expected 60; unique run token count is 0; expected 60)",
+		"Windows WebView2: reported summary does not match raw records",
+		"Windows WebView2: screenshot evidence is invalid (manifest count is 0; expected 12; platform artifact root is unavailable)",
+		"global run token uniqueness failed (record count is 36; expected 156; unique valid token count is 36; expected 156)",
+		"trusted expected workflow provenance is missing or invalid (repository:missing, sourceRevision:missing, sourceRef:missing, workflowRunId:missing, workflowRunAttempt:missing, repository:invalid, sourceRef:invalid, workflowRunId:invalid, workflowRunAttempt:invalid)",
+		"macOS WebKit: provenance mismatch (repository is missing or invalid, sourceRevision is missing or invalid, sourceRef is missing or invalid, workflowRunId is missing or invalid, workflowRunAttempt is missing or invalid, binarySha256 is missing or invalid, zeusBundleSha256 is missing or invalid, sourceRevision=missing (expected \"63698263fa13cd9f114341bc04d360ed967d8c9b\"))",
+		"Windows WebView2: provenance mismatch (repository is missing or invalid, sourceRevision is missing or invalid, sourceRef is missing or invalid, workflowRunId is missing or invalid, workflowRunAttempt is missing or invalid, binarySha256 is missing or invalid, zeusBundleSha256 is missing or invalid, sourceRevision=missing (expected \"63698263fa13cd9f114341bc04d360ed967d8c9b\"))",
+		"macOS WebKit and Windows WebView2 repository values do not match",
+		"macOS WebKit and Windows WebView2 sourceRevision values do not match",
+		"macOS WebKit and Windows WebView2 sourceRef values do not match",
+		"macOS WebKit and Windows WebView2 workflowRunId values do not match",
+		"macOS WebKit and Windows WebView2 workflowRunAttempt values do not match",
+		"macOS WebKit and Windows WebView2 zeusBundleSha256 values do not match",
+		"Zeus bundle SHA-256 provenance does not match (dependency audit=missing, Chromium benchmark=\"0dddde8f65195667d1bdd0f574f2ac3a4ffa1c5b019c8f1a13db5bd2fc0a6794\", macOS WebKit=missing, Windows WebView2=missing)",
+		"macOS WebKit: spawnSync curl ETIMEDOUT (0/5 runs recorded)",
+		"Windows WebView2: msedgedriver is not available in this environment. (0/5 runs recorded)",
+		"Zeus dependency audit evidence is missing"
+	]
 }

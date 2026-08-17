@@ -24,6 +24,7 @@ test('merges platform evidence and preserves fail-closed entries', async () => {
 		const report = JSON.parse(await readFile(output, 'utf8'));
 		assert.equal(report.macosWebKit.status, 'ready');
 		assert.equal(report.macosWebKit.label, 'macOS WebKit');
+		assert.equal(report.macosWebKit.artifactDirectory, '.');
 		assert.equal(report.windowsWebView2.status, 'blocked');
 	} finally {
 		await rm(root, { recursive: true, force: true });

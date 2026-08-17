@@ -1,3 +1,4 @@
+use super::demo_seed::DEMO_PROFILE_ID;
 use super::driver::{is_persistable_connection, normalize_connection_input};
 use super::mysql_runtime::{
     execute_mysql_query, list_mysql_columns, list_mysql_databases, list_mysql_tables,
@@ -20,16 +21,26 @@ use rusqlite::types::ValueRef;
 use rusqlite::{Connection, InterruptHandle, OpenFlags};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex, MutexGuard,
+};
 use std::time::Instant;
 
 type ConnectionMap = HashMap<String, Arc<SqlConnectionHandle>>;
 type SavedConnectionMap = HashMap<String, SqlSavedConnection>;
 
+#[cfg(test)]
+struct PersistenceFlushPause {
+    reached: std::sync::mpsc::SyncSender<()>,
+    resume: std::sync::mpsc::Receiver<()>,
+}
+
 enum SqlRuntimeConnection {
     Sqlite {
-        conn: Mutex<Connection>,
+        conn: Box<Mutex<Connection>>,
         interrupt: InterruptHandle,
+        active_query_owner: Mutex<Option<ActiveAgentQueryOwner>>,
     },
     MySql {
         pool: Pool,
@@ -39,24 +50,72 @@ enum SqlRuntimeConnection {
 struct SqlConnectionHandle {
     info: SqlConnection,
     runtime: SqlRuntimeConnection,
+    retired: AtomicBool,
+}
+
+impl SqlConnectionHandle {
+    fn ensure_active(&self) -> Result<(), String> {
+        if self.retired.load(Ordering::Acquire) {
+            return Err(format!("connection '{}' is closed", self.info.id));
+        }
+        Ok(())
+    }
+
+    fn retire(&self) {
+        self.retired.store(true, Ordering::Release);
+        if let SqlRuntimeConnection::Sqlite {
+            conn, interrupt, ..
+        } = &self.runtime
+        {
+            loop {
+                interrupt.interrupt();
+
+                match conn.try_lock() {
+                    Ok(guard) => {
+                        drop(guard);
+                        break;
+                    }
+                    Err(std::sync::TryLockError::WouldBlock) => {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                    Err(std::sync::TryLockError::Poisoned(error)) => {
+                        drop(error.into_inner());
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub struct SqlConnectionStore {
+    lifecycle: Mutex<()>,
     connections: Mutex<ConnectionMap>,
     saved_connections: Mutex<SavedConnectionMap>,
     persistence_path: Mutex<Option<PathBuf>>,
+    #[cfg(test)]
+    lifecycle_attempts: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    persistence_flush_pause: Mutex<Option<PersistenceFlushPause>>,
 }
 
 impl SqlConnectionStore {
     pub fn new() -> Self {
         Self {
+            lifecycle: Mutex::new(()),
             connections: Mutex::new(HashMap::new()),
             saved_connections: Mutex::new(HashMap::new()),
             persistence_path: Mutex::new(None),
+            #[cfg(test)]
+            lifecycle_attempts: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            persistence_flush_pause: Mutex::new(None),
         }
     }
 
     pub fn initialize_persistence(&self, path: PathBuf) -> Result<(), String> {
+        let _lifecycle = self.lifecycle()?;
+
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|err| {
                 format!(
@@ -80,7 +139,8 @@ impl SqlConnectionStore {
     }
 
     #[allow(clippy::unused_self, clippy::needless_pass_by_value)]
-    pub fn test_connection(&self, input: SqlConnectionInput) -> SqlConnectionTestResult {
+    pub fn test_connection(&self, mut input: SqlConnectionInput) -> SqlConnectionTestResult {
+        enforce_builtin_runtime_policy(&mut input);
         match normalize_connection_input(&input) {
             Ok(connection) => {
                 let result = match connection.kind {
@@ -111,8 +171,14 @@ impl SqlConnectionStore {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    pub fn open_connection(&self, input: SqlConnectionInput) -> Result<SqlConnection, String> {
-        let connection = normalize_connection_input(&input)?;
+    pub fn open_connection(&self, mut input: SqlConnectionInput) -> Result<SqlConnection, String> {
+        enforce_builtin_runtime_policy(&mut input);
+        let _lifecycle = self.lifecycle()?;
+        self.open_connection_inner(&input)
+    }
+
+    fn open_connection_inner(&self, input: &SqlConnectionInput) -> Result<SqlConnection, String> {
+        let connection = normalize_connection_input(input)?;
 
         {
             let connections = self.connections()?;
@@ -123,16 +189,17 @@ impl SqlConnectionStore {
 
         let runtime = match connection.kind {
             SqlConnectionKind::Sqlite => {
-                let conn = open_sqlite_connection(&input)?;
+                let conn = open_sqlite_connection(input)?;
                 let interrupt = conn.get_interrupt_handle();
 
                 SqlRuntimeConnection::Sqlite {
-                    conn: Mutex::new(conn),
+                    conn: Box::new(Mutex::new(conn)),
                     interrupt,
+                    active_query_owner: Mutex::new(None),
                 }
             }
             SqlConnectionKind::MySql => {
-                let pool = open_mysql_pool(&input)?;
+                let pool = open_mysql_pool(input)?;
                 test_mysql_connection(&pool)?;
 
                 SqlRuntimeConnection::MySql { pool }
@@ -145,6 +212,7 @@ impl SqlConnectionStore {
         let handle = Arc::new(SqlConnectionHandle {
             info: connection.clone(),
             runtime,
+            retired: AtomicBool::new(false),
         });
 
         let mut connections = self.connections()?;
@@ -159,12 +227,22 @@ impl SqlConnectionStore {
 
     /// Replaces an open runtime connection with the same id. If opening the
     /// replacement fails, the previous runtime handle is restored.
-    pub fn replace_connection(&self, input: SqlConnectionInput) -> Result<SqlConnection, String> {
+    pub fn replace_connection(
+        &self,
+        mut input: SqlConnectionInput,
+    ) -> Result<SqlConnection, String> {
+        enforce_builtin_runtime_policy(&mut input);
+        let _lifecycle = self.lifecycle()?;
         let connection = normalize_connection_input(&input)?;
         let previous = self.connections()?.remove(&connection.id);
 
-        match self.open_connection(input) {
-            Ok(connection) => Ok(connection),
+        match self.open_connection_inner(&input) {
+            Ok(connection) => {
+                if let Some(previous) = previous {
+                    previous.retire();
+                }
+                Ok(connection)
+            }
             Err(error) => {
                 if let Some(previous) = previous {
                     self.connections()?.insert(connection.id, previous);
@@ -175,11 +253,18 @@ impl SqlConnectionStore {
     }
 
     pub fn close_connection(&self, connection_id: &str) -> Result<(), String> {
-        let mut connections = self.connections()?;
+        let _lifecycle = self.lifecycle()?;
+        self.close_connection_inner(connection_id)
+    }
 
-        if connections.remove(connection_id).is_none() {
-            return Err(format!("connection '{connection_id}' does not exist"));
-        }
+    fn close_connection_inner(&self, connection_id: &str) -> Result<(), String> {
+        let mut connections = self.connections()?;
+        let handle = connections
+            .remove(connection_id)
+            .ok_or_else(|| format!("connection '{connection_id}' does not exist"))?;
+        drop(connections);
+
+        handle.retire();
 
         Ok(())
     }
@@ -225,6 +310,7 @@ impl SqlConnectionStore {
 
     pub fn list_databases(&self, connection_id: &str) -> Result<Vec<SqlDatabase>, String> {
         let handle = self.connection(connection_id)?;
+        handle.ensure_active()?;
 
         match &handle.runtime {
             SqlRuntimeConnection::Sqlite { .. } => Ok(vec![SqlDatabase {
@@ -237,8 +323,10 @@ impl SqlConnectionStore {
     #[allow(clippy::needless_pass_by_value)]
     pub fn save_connection(
         &self,
-        request: SqlSaveConnectionRequest,
+        mut request: SqlSaveConnectionRequest,
     ) -> Result<SqlSavedConnection, String> {
+        enforce_builtin_runtime_policy(&mut request.input);
+        let _lifecycle = self.lifecycle()?;
         let connection = normalize_connection_input(&request.input)?;
 
         if !is_persistable_connection(&connection) {
@@ -266,7 +354,7 @@ impl SqlConnectionStore {
         };
 
         if request.open_now && !was_open {
-            self.open_connection(saved.to_input())?;
+            self.open_connection_inner(&saved.to_input())?;
         }
 
         let previous = {
@@ -288,7 +376,7 @@ impl SqlConnectionStore {
             }
 
             if request.open_now && !was_open {
-                let _ = self.close_connection(&saved.id);
+                let _ = self.close_connection_inner(&saved.id);
             }
 
             return Err(error);
@@ -303,11 +391,22 @@ impl SqlConnectionStore {
     /// same id is removed atomically with the runtime replacement.
     pub fn save_and_open_connection(
         &self,
-        input: SqlConnectionInput,
+        mut input: SqlConnectionInput,
         auto_connect: bool,
         persist: bool,
     ) -> Result<SqlConnection, String> {
-        let connection = normalize_connection_input(&input)?;
+        enforce_builtin_runtime_policy(&mut input);
+        let _lifecycle = self.lifecycle()?;
+        self.save_and_open_connection_inner(&input, auto_connect, persist)
+    }
+
+    fn save_and_open_connection_inner(
+        &self,
+        input: &SqlConnectionInput,
+        auto_connect: bool,
+        persist: bool,
+    ) -> Result<SqlConnection, String> {
+        let connection = normalize_connection_input(input)?;
 
         if persist && !is_persistable_connection(&connection) {
             return Err("in-memory SQLite connections cannot be saved".to_string());
@@ -329,7 +428,7 @@ impl SqlConnectionStore {
         });
 
         let previous_runtime = self.connections()?.remove(&connection.id);
-        let opened = match self.open_connection(input) {
+        let opened = match self.open_connection_inner(input) {
             Ok(connection) => connection,
             Err(error) => {
                 if let Some(previous_runtime) = previous_runtime {
@@ -351,7 +450,7 @@ impl SqlConnectionStore {
         let persistence_changed = persist || previous_saved.is_some();
         if persistence_changed {
             if let Err(error) = self.flush_saved_connections() {
-                let _ = self.close_connection(&opened.id);
+                let _ = self.close_connection_inner(&opened.id);
                 if let Some(previous_runtime) = previous_runtime {
                     self.connections()?
                         .insert(opened.id.clone(), previous_runtime);
@@ -368,7 +467,22 @@ impl SqlConnectionStore {
             }
         }
 
+        if let Some(previous_runtime) = previous_runtime {
+            previous_runtime.retire();
+        }
+
         Ok(opened)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn save_and_open_connection_without_builtin_policy(
+        &self,
+        input: &SqlConnectionInput,
+        auto_connect: bool,
+        persist: bool,
+    ) -> Result<SqlConnection, String> {
+        let _lifecycle = self.lifecycle()?;
+        self.save_and_open_connection_inner(input, auto_connect, persist)
     }
 
     pub fn list_saved_connections(&self) -> Result<Vec<SqlSavedConnection>, String> {
@@ -388,6 +502,7 @@ impl SqlConnectionStore {
         &self,
         request: SqlRemoveSavedConnectionRequest,
     ) -> Result<(), String> {
+        let _lifecycle = self.lifecycle()?;
         let connection_id = request.connection_id.trim();
 
         if connection_id.is_empty() {
@@ -416,7 +531,7 @@ impl SqlConnectionStore {
             };
 
             if is_open {
-                self.close_connection(connection_id)?;
+                self.close_connection_inner(connection_id)?;
             }
         }
 
@@ -424,6 +539,7 @@ impl SqlConnectionStore {
     }
 
     pub fn restore_saved_connections(&self) -> Result<SqlRestoreSavedConnectionsResult, String> {
+        let _lifecycle = self.lifecycle()?;
         let saved_connections = self.list_saved_connections()?;
 
         let mut opened = Vec::new();
@@ -445,7 +561,9 @@ impl SqlConnectionStore {
                 continue;
             }
 
-            match self.open_connection(saved.to_input()) {
+            let mut input = saved.to_input();
+            enforce_builtin_runtime_policy(&mut input);
+            match self.open_connection_inner(&input) {
                 Ok(connection) => opened.push(connection),
                 Err(error) => errors.push(SqlRestoreSavedConnectionError {
                     connection_id: saved.id,
@@ -459,6 +577,9 @@ impl SqlConnectionStore {
     }
 
     fn flush_saved_connections(&self) -> Result<(), String> {
+        #[cfg(test)]
+        self.wait_at_persistence_flush_pause_for_test();
+
         let path = self
             .persistence_path()?
             .clone()
@@ -474,6 +595,7 @@ impl SqlConnectionStore {
         match &handle.runtime {
             SqlRuntimeConnection::Sqlite { conn, .. } => {
                 let conn = conn.lock().map_err(|err| err.to_string())?;
+                handle.ensure_active()?;
 
                 let mut stmt = conn
                     .prepare(
@@ -518,6 +640,7 @@ impl SqlConnectionStore {
         match &handle.runtime {
             SqlRuntimeConnection::Sqlite { conn, .. } => {
                 let conn = conn.lock().map_err(|err| err.to_string())?;
+                handle.ensure_active()?;
 
                 let table_name = quote_sqlite_identifier(&request.table_name)?;
                 let sql = format!("PRAGMA table_info({table_name})");
@@ -579,19 +702,142 @@ impl SqlConnectionStore {
 
         match &handle.runtime {
             SqlRuntimeConnection::Sqlite { conn, .. } => {
-                Self::execute_sqlite_query(conn, sql, limit)
+                Self::execute_sqlite_query(handle.as_ref(), conn, sql, limit)
             }
-            SqlRuntimeConnection::MySql { pool } => execute_mysql_query(pool, sql, limit),
+            SqlRuntimeConnection::MySql { pool } => {
+                handle.ensure_active()?;
+                execute_mysql_query(pool, sql, limit)
+            }
         }
     }
 
+    pub(crate) fn execute_agent_query<F>(
+        &self,
+        request: &SqlExecuteQueryRequest,
+        run_id: &str,
+        call_id: &str,
+        mut cancellation_requested: F,
+    ) -> Result<SqlQueryResult, String>
+    where
+        F: FnMut() -> bool + Send + std::panic::RefUnwindSafe + 'static,
+    {
+        let sql = request.sql.trim();
+        if sql.is_empty() {
+            return Err("sql must not be empty".to_string());
+        }
+        if sql.len() > MAX_SQL_BYTES {
+            return Err(format!(
+                "sql length exceeds maximum of {MAX_SQL_BYTES} bytes"
+            ));
+        }
+        let owner = ActiveAgentQueryOwner::new(run_id, call_id)?;
+        let limit = normalize_limit(request.limit)?;
+        let handle = self.connection(&request.connection_id)?;
+        if !handle.info.read_only || sql_may_mutate_for_kind(sql, handle.info.kind) {
+            return Err(
+                "read-only connection only allows explicitly read-only statements".to_string(),
+            );
+        }
+
+        match &handle.runtime {
+            SqlRuntimeConnection::Sqlite {
+                conn,
+                active_query_owner,
+                ..
+            } => {
+                let conn = conn.lock().map_err(|err| err.to_string())?;
+                handle.ensure_active()?;
+                let _owner = ActiveQueryOwnerGuard::register(active_query_owner, owner)?;
+                if cancellation_requested() {
+                    return Err("agent query was cancelled before execution".to_string());
+                }
+                let _progress = SqliteProgressHandlerGuard::new(&conn, cancellation_requested);
+                Self::execute_sqlite_query_locked(&conn, sql, limit)
+            }
+            SqlRuntimeConnection::MySql { .. } => {
+                Err("Agent read-only tools support SQLite only".to_string())
+            }
+        }
+    }
+
+    pub(crate) fn cancel_agent_queries_for_run(&self, run_id: &str) -> Result<usize, String> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() || run_id.contains('\0') {
+            return Err("agent run id must not be blank or contain NUL".to_string());
+        }
+        let handles = self.connections()?.values().cloned().collect::<Vec<_>>();
+        let mut interrupted = 0;
+        for handle in handles {
+            let SqlRuntimeConnection::Sqlite {
+                interrupt,
+                active_query_owner,
+                ..
+            } = &handle.runtime
+            else {
+                continue;
+            };
+            let active = active_query_owner.lock().map_err(|err| err.to_string())?;
+            if active.as_ref().map(|owner| owner.run_id.as_str()) == Some(run_id) {
+                interrupt.interrupt();
+                interrupted += 1;
+            }
+        }
+        Ok(interrupted)
+    }
+
+    #[cfg(test)]
+    fn active_agent_query_owner(
+        &self,
+        connection_id: &str,
+    ) -> Result<Option<ActiveAgentQueryOwner>, String> {
+        let handle = self.connection(connection_id)?;
+        match &handle.runtime {
+            SqlRuntimeConnection::Sqlite {
+                active_query_owner, ..
+            } => active_query_owner
+                .lock()
+                .map(|owner| owner.clone())
+                .map_err(|err| err.to_string()),
+            SqlRuntimeConnection::MySql { .. } => Ok(None),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_sqlite_progress_handler_for_test<F>(
+        &self,
+        connection_id: &str,
+        handler: F,
+    ) -> Result<(), String>
+    where
+        F: FnMut() -> bool + Send + std::panic::RefUnwindSafe + 'static,
+    {
+        let handle = self.connection(connection_id)?;
+        let SqlRuntimeConnection::Sqlite { conn, .. } = &handle.runtime else {
+            return Err("test progress handlers support SQLite only".to_string());
+        };
+        let conn = conn.lock().map_err(|err| err.to_string())?;
+        handle.ensure_active()?;
+        conn.progress_handler(1_000, Some(handler));
+        Ok(())
+    }
+
     fn execute_sqlite_query(
+        handle: &SqlConnectionHandle,
         conn: &Mutex<Connection>,
         sql: &str,
         limit: usize,
     ) -> Result<SqlQueryResult, String> {
-        let started_at = Instant::now();
         let conn = conn.lock().map_err(|err| err.to_string())?;
+        handle.ensure_active()?;
+        Self::execute_sqlite_query_locked(&conn, sql, limit)
+    }
+
+    fn execute_sqlite_query_locked(
+        conn: &Connection,
+        sql: &str,
+        limit: usize,
+    ) -> Result<SqlQueryResult, String> {
+        let started_at = Instant::now();
 
         let mut stmt = conn
             .prepare(sql)
@@ -696,6 +942,13 @@ impl SqlConnectionStore {
         self.connections.lock().map_err(|err| err.to_string())
     }
 
+    fn lifecycle(&self) -> Result<MutexGuard<'_, ()>, String> {
+        #[cfg(test)]
+        self.lifecycle_attempts.fetch_add(1, Ordering::AcqRel);
+
+        self.lifecycle.lock().map_err(|err| err.to_string())
+    }
+
     fn saved_connections(&self) -> Result<MutexGuard<'_, SavedConnectionMap>, String> {
         self.saved_connections.lock().map_err(|err| err.to_string())
     }
@@ -709,6 +962,122 @@ impl SqlConnectionStore {
             .get(connection_id)
             .cloned()
             .ok_or_else(|| format!("connection '{connection_id}' does not exist"))
+    }
+
+    #[cfg(test)]
+    fn pause_next_persistence_flush_for_test(
+        &self,
+    ) -> (
+        std::sync::mpsc::Receiver<()>,
+        std::sync::mpsc::SyncSender<()>,
+    ) {
+        let (reached_tx, reached_rx) = std::sync::mpsc::sync_channel(1);
+        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+        let mut pause = self.persistence_flush_pause.lock().unwrap();
+        assert!(pause.is_none(), "persistence flush pause already installed");
+        *pause = Some(PersistenceFlushPause {
+            reached: reached_tx,
+            resume: resume_rx,
+        });
+        (reached_rx, resume_tx)
+    }
+
+    #[cfg(test)]
+    fn wait_at_persistence_flush_pause_for_test(&self) {
+        let pause = self.persistence_flush_pause.lock().unwrap().take();
+        if let Some(pause) = pause {
+            pause
+                .reached
+                .send(())
+                .expect("report persistence flush pause");
+            pause.resume.recv().expect("resume persistence flush");
+        }
+    }
+
+    #[cfg(test)]
+    fn lifecycle_attempts_for_test(&self) -> usize {
+        self.lifecycle_attempts.load(Ordering::Acquire)
+    }
+}
+
+fn enforce_builtin_runtime_policy(input: &mut SqlConnectionInput) {
+    if input
+        .id
+        .as_deref()
+        .is_some_and(|id| id.trim() == DEMO_PROFILE_ID)
+    {
+        input.read_only = true;
+        input.create_if_missing = false;
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActiveAgentQueryOwner {
+    run_id: String,
+    call_id: String,
+}
+
+impl ActiveAgentQueryOwner {
+    fn new(run_id: &str, call_id: &str) -> Result<Self, String> {
+        fn validated(value: &str, label: &str) -> Result<String, String> {
+            let value = value.trim();
+            if value.is_empty() || value.contains('\0') {
+                return Err(format!("{label} must not be blank or contain NUL"));
+            }
+            Ok(value.to_string())
+        }
+
+        Ok(Self {
+            run_id: validated(run_id, "agent query run id")?,
+            call_id: validated(call_id, "agent query call id")?,
+        })
+    }
+}
+
+struct ActiveQueryOwnerGuard<'a> {
+    owner: &'a Mutex<Option<ActiveAgentQueryOwner>>,
+}
+
+impl<'a> ActiveQueryOwnerGuard<'a> {
+    fn register(
+        owner: &'a Mutex<Option<ActiveAgentQueryOwner>>,
+        value: ActiveAgentQueryOwner,
+    ) -> Result<Self, String> {
+        let mut active = owner.lock().map_err(|err| err.to_string())?;
+        if active.is_some() {
+            return Err("SQLite connection already has an active owned query".to_string());
+        }
+        *active = Some(value);
+        drop(active);
+        Ok(Self { owner })
+    }
+}
+
+struct SqliteProgressHandlerGuard<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> SqliteProgressHandlerGuard<'a> {
+    fn new<F>(conn: &'a Connection, handler: F) -> Self
+    where
+        F: FnMut() -> bool + Send + std::panic::RefUnwindSafe + 'static,
+    {
+        conn.progress_handler(1_000, Some(handler));
+        Self { conn }
+    }
+}
+
+impl Drop for SqliteProgressHandlerGuard<'_> {
+    fn drop(&mut self) {
+        self.conn.progress_handler(0, None::<fn() -> bool>);
+    }
+}
+
+impl Drop for ActiveQueryOwnerGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.owner.lock() {
+            *active = None;
+        }
     }
 }
 
@@ -877,7 +1246,13 @@ fn elapsed_ms(started_at: Instant) -> u64 {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    use std::thread::JoinHandle;
+    use std::time::{Duration, Instant};
     use uuid::Uuid;
+
+    const LONG_RECURSIVE_QUERY: &str = "WITH RECURSIVE counter(value) AS (VALUES(0) UNION ALL SELECT value + 1 FROM counter WHERE value < 1000000000) SELECT sum(value) FROM counter";
 
     struct TempDb {
         path: std::path::PathBuf,
@@ -929,6 +1304,151 @@ mod tests {
     impl Drop for TempDb {
         fn drop(&mut self) {
             let _ = fs::remove_file(&self.path);
+        }
+    }
+
+    fn read_only_store(name: &str) -> (Arc<SqlConnectionStore>, TempDb) {
+        let db = TempDb::new(name);
+        let store = Arc::new(SqlConnectionStore::new());
+        store.open_connection(db.input("writer")).unwrap();
+        store.close_connection("writer").unwrap();
+        store.open_connection(db.read_only_input("reader")).unwrap();
+        (store, db)
+    }
+
+    fn wait_for_lifecycle_attempt(store: &SqlConnectionStore, previous_attempts: usize) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while store.lifecycle_attempts_for_test() <= previous_attempts {
+            assert!(
+                Instant::now() < deadline,
+                "connection lifecycle operation did not reach the serialized boundary"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    struct RunningAgentQuery {
+        started: mpsc::Receiver<()>,
+        result: mpsc::Receiver<Result<SqlQueryResult, String>>,
+        stop: Arc<AtomicBool>,
+        worker: Option<JoinHandle<()>>,
+    }
+
+    impl Drop for RunningAgentQuery {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Release);
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    struct RunningStoreQuery {
+        started: mpsc::Receiver<()>,
+        result: mpsc::Receiver<Result<SqlQueryResult, String>>,
+        stop: Arc<AtomicBool>,
+        worker: Option<JoinHandle<()>>,
+    }
+
+    impl Drop for RunningStoreQuery {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Release);
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    fn spawn_running_store_query(
+        store: Arc<SqlConnectionStore>,
+        connection_id: &str,
+    ) -> RunningStoreQuery {
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (result_tx, result_rx) = mpsc::sync_channel(1);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_in_query = Arc::clone(&stop);
+        let mut started_tx = Some(started_tx);
+        store
+            .install_sqlite_progress_handler_for_test(connection_id, move || {
+                if let Some(started_tx) = started_tx.take() {
+                    let _ = started_tx.send(());
+                }
+                stop_in_query.load(Ordering::Acquire)
+            })
+            .expect("install SQLite progress handler");
+
+        let connection_id = connection_id.to_string();
+        let worker = std::thread::spawn(move || {
+            let result = store.execute_query(SqlExecuteQueryRequest {
+                connection_id,
+                sql: LONG_RECURSIVE_QUERY.to_string(),
+                limit: Some(1),
+            });
+            let _ = result_tx.send(result);
+        });
+
+        RunningStoreQuery {
+            started: started_rx,
+            result: result_rx,
+            stop,
+            worker: Some(worker),
+        }
+    }
+
+    fn spawn_running_agent_query(
+        store: Arc<SqlConnectionStore>,
+        run_id: &'static str,
+    ) -> RunningAgentQuery {
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (result_tx, result_rx) = mpsc::sync_channel(1);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_in_query = Arc::clone(&stop);
+        let worker = std::thread::spawn(move || {
+            let mut cancellation_checks = 0;
+            let result = store.execute_agent_query(
+                &SqlExecuteQueryRequest {
+                    connection_id: "reader".to_string(),
+                    sql: LONG_RECURSIVE_QUERY.to_string(),
+                    limit: Some(1),
+                },
+                run_id,
+                "call-long",
+                move || {
+                    cancellation_checks += 1;
+                    if cancellation_checks == 2 {
+                        let _ = started_tx.send(());
+                    }
+                    stop_in_query.load(Ordering::Acquire)
+                },
+            );
+            let _ = result_tx.send(result);
+        });
+        RunningAgentQuery {
+            started: started_rx,
+            result: result_rx,
+            stop,
+            worker: Some(worker),
+        }
+    }
+
+    struct RunningUnownedQuery<'a> {
+        conn: &'a Mutex<Connection>,
+        resume: Option<mpsc::SyncSender<()>>,
+        stop: Arc<AtomicBool>,
+        result: mpsc::Receiver<Result<SqlQueryResult, String>>,
+        worker: Option<JoinHandle<()>>,
+    }
+
+    impl Drop for RunningUnownedQuery<'_> {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Release);
+            self.resume.take();
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+            if let Ok(conn) = self.conn.lock() {
+                conn.progress_handler(0, None::<fn() -> bool>);
+            }
         }
     }
 
@@ -1247,6 +1767,419 @@ mod tests {
     }
 
     #[test]
+    fn matching_agent_run_interrupts_running_query_and_connection_remains_usable() {
+        let (store, _db) = read_only_store("agent-interrupt");
+        let query = spawn_running_agent_query(Arc::clone(&store), "run-target");
+        query
+            .started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("agent query should enter the SQLite VM");
+
+        assert_eq!(store.cancel_agent_queries_for_run("run-target").unwrap(), 1);
+        let error = query
+            .result
+            .recv_timeout(Duration::from_secs(5))
+            .expect("interrupted query should return promptly")
+            .unwrap_err();
+        assert!(error.contains("interrupted"), "unexpected error: {error}");
+        assert!(store.active_agent_query_owner("reader").unwrap().is_none());
+
+        let follow_up = store
+            .execute_query(SqlExecuteQueryRequest {
+                connection_id: "reader".to_string(),
+                sql: "SELECT 1".to_string(),
+                limit: Some(1),
+            })
+            .unwrap();
+        assert_eq!(follow_up.rows[0][0], SqlCellValue::integer(1));
+    }
+
+    #[test]
+    fn mismatched_agent_run_does_not_interrupt_active_query() {
+        let (store, _db) = read_only_store("agent-owner-mismatch");
+        let query = spawn_running_agent_query(Arc::clone(&store), "run-owner");
+        query
+            .started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("agent query should enter the SQLite VM");
+
+        assert_eq!(store.cancel_agent_queries_for_run("run-other").unwrap(), 0);
+        assert!(matches!(
+            query.result.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+
+        assert_eq!(store.cancel_agent_queries_for_run("run-owner").unwrap(), 1);
+        let error = query
+            .result
+            .recv_timeout(Duration::from_secs(5))
+            .expect("cleanup interrupt should finish the query")
+            .unwrap_err();
+        assert!(error.contains("interrupted"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn agent_cancel_does_not_interrupt_unowned_query() {
+        let (store, _db) = read_only_store("agent-unowned-query");
+        let handle = store.connection("reader").unwrap();
+        let SqlRuntimeConnection::Sqlite { conn, .. } = &handle.runtime else {
+            panic!("test connection should be SQLite");
+        };
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (continued_tx, continued_rx) = mpsc::sync_channel(1);
+        let (resume_tx, resume_rx) = mpsc::sync_channel(0);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_in_query = Arc::clone(&stop);
+        let mut started_tx = Some(started_tx);
+        let mut continued_tx = Some(continued_tx);
+        conn.lock().unwrap().progress_handler(
+            1_000,
+            Some(move || {
+                if let Some(started_tx) = started_tx.take() {
+                    let _ = started_tx.send(());
+                    if resume_rx.recv().is_err() {
+                        return true;
+                    }
+                }
+                if let Some(continued_tx) = continued_tx.take() {
+                    let _ = continued_tx.send(());
+                }
+                stop_in_query.load(Ordering::Acquire)
+            }),
+        );
+        let store_for_query = Arc::clone(&store);
+        let (result_tx, result_rx) = mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            let result = store_for_query.execute_query(SqlExecuteQueryRequest {
+                connection_id: "reader".to_string(),
+                sql: LONG_RECURSIVE_QUERY.to_string(),
+                limit: Some(1),
+            });
+            let _ = result_tx.send(result);
+        });
+        let query = RunningUnownedQuery {
+            conn,
+            resume: Some(resume_tx),
+            stop,
+            result: result_rx,
+            worker: Some(worker),
+        };
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("ordinary query should enter the SQLite VM");
+
+        assert_eq!(
+            store.cancel_agent_queries_for_run("run-unrelated").unwrap(),
+            0
+        );
+        query
+            .resume
+            .as_ref()
+            .expect("query resume gate should be available")
+            .send(())
+            .expect("query should still be waiting inside the SQLite VM");
+        continued_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("unowned query should continue inside the SQLite VM");
+        assert!(matches!(
+            query.result.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+
+        query.stop.store(true, Ordering::Release);
+        let result = query
+            .result
+            .recv_timeout(Duration::from_secs(5))
+            .expect("test stop should finish the ordinary query");
+        let error = result.unwrap_err();
+        assert!(error.contains("interrupted"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn close_connection_interrupts_running_unowned_query() {
+        let (store, _db) = read_only_store("close-unowned-query");
+        let query = spawn_running_store_query(Arc::clone(&store), "reader");
+        query
+            .started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("ordinary query should enter the SQLite VM");
+
+        store.close_connection("reader").unwrap();
+        let error = query
+            .result
+            .recv_timeout(Duration::from_secs(5))
+            .expect("close should interrupt the detached query")
+            .unwrap_err();
+
+        assert!(error.contains("interrupted"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn close_connection_drains_and_rejects_query_waiting_on_old_runtime_lock() {
+        let (store, _db) = read_only_store("close-waiting-query");
+        let handle = store.connection("reader").unwrap();
+        let SqlRuntimeConnection::Sqlite { conn, .. } = &handle.runtime else {
+            panic!("test connection should be SQLite");
+        };
+        let connection_lock = conn.lock().unwrap();
+        let stale_handle = Arc::clone(&handle);
+        let (attempted_tx, attempted_rx) = mpsc::sync_channel(1);
+        let (query_result_tx, query_result_rx) = mpsc::sync_channel(1);
+        let query_worker = std::thread::spawn(move || {
+            let SqlRuntimeConnection::Sqlite { conn, .. } = &stale_handle.runtime else {
+                panic!("test connection should be SQLite");
+            };
+            attempted_tx.send(()).unwrap();
+            let result = SqlConnectionStore::execute_sqlite_query(
+                stale_handle.as_ref(),
+                conn,
+                "SELECT 1",
+                1,
+            );
+            query_result_tx.send(result).unwrap();
+        });
+        attempted_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("detached query should wait for the SQLite lock");
+
+        let close_store = Arc::clone(&store);
+        let (close_result_tx, close_result_rx) = mpsc::sync_channel(1);
+        let close_worker = std::thread::spawn(move || {
+            close_result_tx
+                .send(close_store.close_connection("reader"))
+                .unwrap();
+        });
+        let retirement_deadline = Instant::now() + Duration::from_secs(5);
+        while !handle.retired.load(Ordering::Acquire) {
+            assert!(
+                Instant::now() < retirement_deadline,
+                "close should publish retirement before draining SQLite"
+            );
+            std::thread::yield_now();
+        }
+        assert!(matches!(
+            close_result_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        drop(connection_lock);
+
+        let close_result = close_result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("close should finish after the SQLite lock is released");
+        let query_error = query_result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("detached query should finish after retirement")
+            .expect_err("detached query must not execute on a retired runtime");
+        close_worker.join().expect("join close worker");
+        query_worker.join().expect("join detached query worker");
+
+        assert!(
+            close_result.is_ok(),
+            "unexpected close error: {close_result:?}"
+        );
+        assert!(
+            query_error.contains("closed"),
+            "unexpected query error: {query_error}"
+        );
+    }
+
+    #[test]
+    fn close_connection_retries_interrupt_for_query_paused_before_sqlite_vm() {
+        let (store, _db) = read_only_store("close-pre-vm-query");
+        let handle = store.connection("reader").unwrap();
+        let SqlRuntimeConnection::Sqlite { conn, .. } = &handle.runtime else {
+            panic!("test connection should be SQLite");
+        };
+        let cleanup = Arc::new(AtomicBool::new(false));
+        let cleanup_in_query = Arc::clone(&cleanup);
+        conn.lock().unwrap().progress_handler(
+            1_000,
+            Some(move || cleanup_in_query.load(Ordering::Acquire)),
+        );
+        let stale_handle = Arc::clone(&handle);
+        let (active_tx, active_rx) = mpsc::sync_channel(1);
+        let (resume_tx, resume_rx) = mpsc::sync_channel(0);
+        let (query_result_tx, query_result_rx) = mpsc::sync_channel(1);
+        let query_worker = std::thread::spawn(move || {
+            let SqlRuntimeConnection::Sqlite { conn, .. } = &stale_handle.runtime else {
+                panic!("test connection should be SQLite");
+            };
+            let conn = conn.lock().unwrap();
+            stale_handle.ensure_active().unwrap();
+            active_tx.send(()).unwrap();
+            resume_rx.recv().unwrap();
+            let result =
+                SqlConnectionStore::execute_sqlite_query_locked(&conn, LONG_RECURSIVE_QUERY, 1);
+            query_result_tx.send(result).unwrap();
+        });
+        active_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("query should pass its active check before entering SQLite");
+
+        let close_store = Arc::clone(&store);
+        let (close_result_tx, close_result_rx) = mpsc::sync_channel(1);
+        let close_worker = std::thread::spawn(move || {
+            close_result_tx
+                .send(close_store.close_connection("reader"))
+                .unwrap();
+        });
+        let retirement_deadline = Instant::now() + Duration::from_secs(5);
+        while !handle.retired.load(Ordering::Acquire) {
+            assert!(
+                Instant::now() < retirement_deadline,
+                "close should publish retirement before draining SQLite"
+            );
+            std::thread::yield_now();
+        }
+        resume_tx
+            .send(())
+            .expect("resume query after the first interrupt was sent");
+
+        let early_query_result = query_result_rx.recv_timeout(Duration::from_millis(200));
+        let interrupted_without_cleanup = early_query_result.is_ok();
+        if !interrupted_without_cleanup {
+            cleanup.store(true, Ordering::Release);
+        }
+        let query_result = match early_query_result {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => query_result_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("cleanup should stop the query after a lost interrupt"),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("query worker disconnected before returning a result")
+            }
+        };
+        let close_result = close_result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("close should finish after the old query stops");
+        query_worker.join().expect("join pre-VM query worker");
+        close_worker.join().expect("join close worker");
+        let query_error = query_result.expect_err("retired query should be interrupted");
+
+        assert!(
+            interrupted_without_cleanup,
+            "retirement must retry an interrupt that arrived before the SQLite VM started"
+        );
+        assert!(
+            close_result.is_ok(),
+            "unexpected close error: {close_result:?}"
+        );
+        assert!(
+            query_error.contains("interrupted"),
+            "unexpected query error: {query_error}"
+        );
+    }
+
+    #[test]
+    fn replace_connection_interrupts_previous_runtime_query() {
+        let (store, db) = read_only_store("replace-running-query");
+        let query = spawn_running_store_query(Arc::clone(&store), "reader");
+        query
+            .started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("old runtime query should enter the SQLite VM");
+
+        store
+            .replace_connection(db.read_only_input("reader"))
+            .expect("replace SQLite runtime");
+        let error = query
+            .result
+            .recv_timeout(Duration::from_millis(200))
+            .expect("replacement should retire the old runtime query")
+            .expect_err("old runtime query should be interrupted");
+
+        assert!(error.contains("interrupted"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn save_and_open_connection_interrupts_previous_runtime_query() {
+        let (store, db) = read_only_store("save-open-running-query");
+        let query = spawn_running_store_query(Arc::clone(&store), "reader");
+        query
+            .started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("old runtime query should enter the SQLite VM");
+
+        store
+            .save_and_open_connection(db.read_only_input("reader"), false, false)
+            .expect("replace SQLite runtime without persistence");
+        let error = query
+            .result
+            .recv_timeout(Duration::from_millis(200))
+            .expect("save-and-open should retire the old runtime query")
+            .expect_err("old runtime query should be interrupted");
+
+        assert!(error.contains("interrupted"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn cancelled_agent_waiting_for_connection_lock_never_becomes_active_owner() {
+        let (store, _db) = read_only_store("agent-lock-wait");
+        let handle = store.connection("reader").unwrap();
+        let SqlRuntimeConnection::Sqlite { conn, .. } = &handle.runtime else {
+            panic!("test connection should be SQLite");
+        };
+        let connection_lock = conn.lock().unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancelled_for_query = Arc::clone(&cancelled);
+        let store_for_query = Arc::clone(&store);
+        let (attempted_tx, attempted_rx) = mpsc::sync_channel(1);
+        let (result_tx, result_rx) = mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            attempted_tx.send(()).unwrap();
+            let result = store_for_query.execute_agent_query(
+                &SqlExecuteQueryRequest {
+                    connection_id: "reader".to_string(),
+                    sql: LONG_RECURSIVE_QUERY.to_string(),
+                    limit: Some(1),
+                },
+                "run-waiting",
+                "call-waiting",
+                move || cancelled_for_query.load(Ordering::Acquire),
+            );
+            result_tx.send(result).unwrap();
+        });
+        attempted_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("agent query thread should start");
+
+        cancelled.store(true, Ordering::Release);
+        assert_eq!(
+            store.cancel_agent_queries_for_run("run-waiting").unwrap(),
+            0
+        );
+        assert!(store.active_agent_query_owner("reader").unwrap().is_none());
+        drop(connection_lock);
+
+        let error = result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("waiting query should observe cancellation")
+            .unwrap_err();
+        assert!(error.contains("cancelled before execution"));
+    }
+
+    #[test]
+    fn pre_cancelled_agent_query_is_rejected_before_sqlite_execution() {
+        let (store, _db) = read_only_store("agent-pre-cancel");
+
+        let error = store
+            .execute_agent_query(
+                &SqlExecuteQueryRequest {
+                    connection_id: "reader".to_string(),
+                    sql: "SELECT 1".to_string(),
+                    limit: Some(1),
+                },
+                "run-cancelled",
+                "call-cancelled",
+                || true,
+            )
+            .unwrap_err();
+
+        assert!(error.contains("cancelled before execution"));
+        assert!(store.active_agent_query_owner("reader").unwrap().is_none());
+    }
+
+    #[test]
     fn sql_may_mutate_detects_mutating_statements() {
         assert!(!sql_may_mutate("SELECT 1"));
         assert!(!sql_may_mutate(
@@ -1353,6 +2286,14 @@ mod tests {
             store.list_connections().unwrap()[0].database_path,
             Some(new_db.path.display().to_string())
         );
+        let result = store
+            .execute_query(SqlExecuteQueryRequest {
+                connection_id: "local".to_string(),
+                sql: "SELECT 1".to_string(),
+                limit: Some(1),
+            })
+            .expect("restored replacement runtime should remain active");
+        assert_eq!(result.rows[0][0], SqlCellValue::integer(1));
     }
 
     #[test]
@@ -1386,6 +2327,174 @@ mod tests {
         assert!(!persisted.contains("transient-secret"));
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn save_and_open_connection_restores_active_runtime_after_persistence_failure() {
+        let store = SqlConnectionStore::new();
+        let path = temp_json_file("save-and-open-persistence-failure");
+        store.initialize_persistence(path.clone()).unwrap();
+        let old_db = TempDb::new("save-and-open-persistence-old");
+        let new_db = TempDb::new("save-and-open-persistence-new");
+        store
+            .save_and_open_connection(old_db.input("local"), false, true)
+            .expect("persist original runtime");
+        std::fs::remove_file(&path).expect("remove persistence file");
+        std::fs::create_dir(&path).expect("block persistence path with directory");
+
+        let _error = store
+            .save_and_open_connection(new_db.input("local"), false, true)
+            .expect_err("replacement persistence should fail");
+        let restored = store
+            .execute_query(SqlExecuteQueryRequest {
+                connection_id: "local".to_string(),
+                sql: "SELECT 1".to_string(),
+                limit: Some(1),
+            })
+            .expect("previous runtime should be restored without retirement");
+        let _ = std::fs::remove_dir(path);
+
+        assert_eq!(restored.rows[0][0], SqlCellValue::integer(1));
+    }
+
+    #[test]
+    fn persistence_failure_then_concurrent_close_does_not_resurrect_previous_runtime() {
+        let store = Arc::new(SqlConnectionStore::new());
+        let path = temp_json_file("save-open-failure-concurrent-close");
+        store.initialize_persistence(path.clone()).unwrap();
+        let previous_db = TempDb::new("save-open-close-previous");
+        let transient_db = TempDb::new("save-open-close-transient");
+        store
+            .save_and_open_connection(previous_db.input("local"), false, true)
+            .expect("persist previous runtime");
+        let previous_handle = store.connection("local").unwrap();
+        std::fs::remove_file(&path).expect("remove persistence file");
+        std::fs::create_dir(&path).expect("block persistence path with directory");
+
+        let (flush_reached_rx, resume_flush_tx) = store.pause_next_persistence_flush_for_test();
+        let save_store = Arc::clone(&store);
+        let transient_input = transient_db.input("local");
+        let (save_result_tx, save_result_rx) = mpsc::sync_channel(1);
+        let save_worker = std::thread::spawn(move || {
+            save_result_tx
+                .send(save_store.save_and_open_connection(transient_input, false, true))
+                .unwrap();
+        });
+        flush_reached_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("replacement should pause before persistence");
+        let transient_handle = store.connection("local").unwrap();
+
+        let attempts_before_close = store.lifecycle_attempts_for_test();
+        let close_store = Arc::clone(&store);
+        let (close_result_tx, close_result_rx) = mpsc::sync_channel(1);
+        let close_worker = std::thread::spawn(move || {
+            close_result_tx
+                .send(close_store.close_connection("local"))
+                .unwrap();
+        });
+        wait_for_lifecycle_attempt(&store, attempts_before_close);
+        assert!(matches!(
+            close_result_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+
+        resume_flush_tx.send(()).expect("resume failed persistence");
+        let save_error = save_result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("save-and-open should return")
+            .expect_err("replacement persistence should fail");
+        let close_result = close_result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("close should run after rollback");
+        save_worker.join().expect("join save-and-open worker");
+        close_worker.join().expect("join close worker");
+        let _ = std::fs::remove_dir(path);
+
+        assert!(
+            save_error.contains("failed") || save_error.contains("directory"),
+            "unexpected persistence error: {save_error}"
+        );
+        assert!(
+            close_result.is_ok(),
+            "unexpected close error: {close_result:?}"
+        );
+        assert!(store.list_connections().unwrap().is_empty());
+        assert!(previous_handle.ensure_active().is_err());
+        assert!(transient_handle.ensure_active().is_err());
+    }
+
+    #[test]
+    fn persistence_failure_then_concurrent_replace_keeps_latest_runtime() {
+        let store = Arc::new(SqlConnectionStore::new());
+        let path = temp_json_file("save-open-failure-concurrent-replace");
+        store.initialize_persistence(path.clone()).unwrap();
+        let previous_db = TempDb::new("save-open-replace-previous");
+        let transient_db = TempDb::new("save-open-replace-transient");
+        let latest_db = TempDb::new("save-open-replace-latest");
+        store
+            .save_and_open_connection(previous_db.input("local"), false, true)
+            .expect("persist previous runtime");
+        let previous_handle = store.connection("local").unwrap();
+        std::fs::remove_file(&path).expect("remove persistence file");
+        std::fs::create_dir(&path).expect("block persistence path with directory");
+
+        let (flush_reached_rx, resume_flush_tx) = store.pause_next_persistence_flush_for_test();
+        let save_store = Arc::clone(&store);
+        let transient_input = transient_db.input("local");
+        let (save_result_tx, save_result_rx) = mpsc::sync_channel(1);
+        let save_worker = std::thread::spawn(move || {
+            save_result_tx
+                .send(save_store.save_and_open_connection(transient_input, false, true))
+                .unwrap();
+        });
+        flush_reached_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("replacement should pause before persistence");
+        let transient_handle = store.connection("local").unwrap();
+
+        let attempts_before_replace = store.lifecycle_attempts_for_test();
+        let replace_store = Arc::clone(&store);
+        let latest_input = latest_db.input("local");
+        let (replace_result_tx, replace_result_rx) = mpsc::sync_channel(1);
+        let replace_worker = std::thread::spawn(move || {
+            replace_result_tx
+                .send(replace_store.replace_connection(latest_input))
+                .unwrap();
+        });
+        wait_for_lifecycle_attempt(&store, attempts_before_replace);
+        assert!(matches!(
+            replace_result_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+
+        resume_flush_tx.send(()).expect("resume failed persistence");
+        save_result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("save-and-open should return")
+            .expect_err("replacement persistence should fail");
+        let replaced = replace_result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("replace should run after rollback")
+            .expect("latest runtime should open");
+        save_worker.join().expect("join save-and-open worker");
+        replace_worker.join().expect("join replace worker");
+        let _ = std::fs::remove_dir(path);
+
+        assert_eq!(
+            replaced.database_path,
+            Some(latest_db.path.display().to_string())
+        );
+        let query = store
+            .execute_query(SqlExecuteQueryRequest {
+                connection_id: "local".to_string(),
+                sql: "SELECT 1".to_string(),
+                limit: Some(1),
+            })
+            .expect("latest runtime should remain queryable");
+        assert_eq!(query.rows[0][0], SqlCellValue::integer(1));
+        assert!(previous_handle.ensure_active().is_err());
+        assert!(transient_handle.ensure_active().is_err());
     }
 
     #[test]
@@ -1531,6 +2640,37 @@ mod tests {
         assert_eq!(result.errors.len(), 0);
         assert_eq!(result.opened[0].id, "local");
         assert_eq!(restored.list_connections().unwrap().len(), 1);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn restore_saved_connections_forces_legacy_demo_runtime_read_only() {
+        let path = temp_json_file("restore-legacy-demo");
+        let store = SqlConnectionStore::new();
+        store.initialize_persistence(path.clone()).unwrap();
+        let db = TempDb::new("restore-legacy-demo-db");
+
+        store
+            .save_and_open_connection_without_builtin_policy(&db.input(DEMO_PROFILE_ID), true, true)
+            .unwrap();
+        store.close_connection(DEMO_PROFILE_ID).unwrap();
+
+        let result = store.restore_saved_connections().unwrap();
+        let mutation_error = store
+            .execute_query(SqlExecuteQueryRequest {
+                connection_id: DEMO_PROFILE_ID.to_string(),
+                sql: "UPDATE users SET name = 'Changed'".to_string(),
+                limit: None,
+            })
+            .unwrap_err();
+
+        assert!(result.errors.is_empty());
+        assert!(result.opened[0].read_only);
+        assert_eq!(
+            mutation_error,
+            "read-only connection only allows explicitly read-only statements"
+        );
 
         let _ = std::fs::remove_file(path);
     }

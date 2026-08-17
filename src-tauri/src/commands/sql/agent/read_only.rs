@@ -18,7 +18,10 @@ use super::super::types::{
     DEFAULT_QUERY_ROW_LIMIT, MAX_SQL_BYTES,
 };
 use super::super::SqlDialect;
+use super::domain::AgentCancellationToken;
 use super::evidence::{AgentEvidenceKind, AgentEvidenceSensitivity};
+use super::model::{AgentModelContext, AgentModelResultShape, AgentModelResultShapeColumn};
+use super::plan::{normalize_sqlite_plan, SqlitePlanIdentity};
 use super::policy::{AgentAuthorizedTool, AgentTool};
 use super::result_policy::{
     aggregate_result, inspect_result, sample_result, AgentResultStore, AgentSampleRequest,
@@ -27,6 +30,8 @@ use super::runtime::{AgentToolExecution, ReadOnlyAgentToolExecutor};
 
 const READ_ONLY_CONNECTION_REQUIRED: &str =
     "Agent read-only tools require an explicitly read-only SQLite connection";
+const RUN_CONNECTION_SCOPE_REQUIRED: &str =
+    "Agent read-only tool connectionId must match the run connection";
 const SQLITE_ONLY: &str = "Agent read-only tools support SQLite only";
 const MAX_PLAN_TEXT_BYTES: usize = 16 * 1024;
 
@@ -63,14 +68,132 @@ pub struct LocalSqlAgentQueryAdapter {
 pub struct LocalReadOnlyAgentToolExecutor {
     adapter: LocalSqlAgentQueryAdapter,
     results: AgentResultStore,
+    expected_connection_id: String,
+    cancellation: AgentCancellationToken,
 }
 
 impl LocalReadOnlyAgentToolExecutor {
-    pub fn new(store: Arc<SqlConnectionStore>) -> Self {
-        Self {
+    pub fn new(
+        store: Arc<SqlConnectionStore>,
+        expected_connection_id: impl Into<String>,
+        cancellation: AgentCancellationToken,
+    ) -> Result<Self, SqlCommandError> {
+        let expected_connection_id = expected_connection_id.into();
+        let expected_connection_id = expected_connection_id.trim();
+        if expected_connection_id.is_empty() {
+            return Err(SqlCommandError::new(
+                "invalid_input",
+                "Agent read-only run requires a connection id",
+            ));
+        }
+        Ok(Self {
             adapter: LocalSqlAgentQueryAdapter::new(store),
             results: AgentResultStore::default(),
+            expected_connection_id: expected_connection_id.to_string(),
+            cancellation,
+        })
+    }
+
+    fn validate_connection_scope(
+        &self,
+        request: &SqlAgentReadOnlyRequest,
+    ) -> Result<(), SqlCommandError> {
+        if request.connection_id.trim() != self.expected_connection_id {
+            return Err(SqlCommandError::new(
+                "validation",
+                RUN_CONNECTION_SCOPE_REQUIRED,
+            ));
         }
+        Ok(())
+    }
+
+    pub(crate) fn execute_explain_with_identity(
+        &mut self,
+        authorized: &AgentAuthorizedTool,
+        identity: SqlitePlanIdentity,
+    ) -> Result<AgentToolExecution, SqlCommandError> {
+        if authorized.tool != AgentTool::SqlExplain {
+            return Err(SqlCommandError::new(
+                "invalid_input",
+                "typed plan identity is only valid for sql.explain",
+            ));
+        }
+        self.execute_explain(authorized, Some(identity))
+    }
+
+    fn execute_explain(
+        &mut self,
+        authorized: &AgentAuthorizedTool,
+        identity: Option<SqlitePlanIdentity>,
+    ) -> Result<AgentToolExecution, SqlCommandError> {
+        let request = read_only_request(&authorized.arguments)?;
+        self.validate_connection_scope(&request)?;
+        let response = self.adapter.explain_owned(
+            &request,
+            &authorized.run_id,
+            &authorized.call_id,
+            &self.cancellation,
+        )?;
+        if identity
+            .as_ref()
+            .is_some_and(|identity| identity.connection_id != response.connection_id)
+        {
+            return Err(SqlCommandError::new(
+                "validation",
+                "SQLite plan identity does not match the explained connection",
+            ));
+        }
+        let normalized_plan = identity
+            .map(|identity| normalize_sqlite_plan(identity, &response.plan))
+            .transpose()?;
+        let normalized_incomplete = normalized_plan
+            .as_ref()
+            .is_some_and(|plan| !plan.is_complete());
+        let normalized_bytes = normalized_plan
+            .as_ref()
+            .map_or(0, |plan| plan.returned_byte_count);
+        let (plan_text, text_truncated) = format_plan_text(&response.plan);
+        let result_bytes = plan_text
+            .len()
+            .checked_add(normalized_bytes)
+            .ok_or_else(|| {
+                SqlCommandError::new("internal", "SQLite explain evidence byte count overflow")
+            })?;
+        let partial = response.plan.truncated || text_truncated || normalized_incomplete;
+        let mut warnings = Vec::new();
+        if text_truncated {
+            warnings
+                .push("SQLite explain text was truncated by the evidence byte cap.".to_string());
+        }
+        if normalized_incomplete {
+            warnings.push(
+                "SQLite normalized plan is incomplete and cannot support a structural verdict."
+                    .to_string(),
+            );
+        }
+        Ok(AgentToolExecution {
+            evidence: vec![(
+                AgentEvidenceKind::Plan,
+                AgentEvidenceSensitivity::Workspace,
+                serde_json::json!({
+                    "analysis": response.analysis,
+                    "planText": plan_text,
+                    "normalizedPlan": &normalized_plan,
+                }),
+            )],
+            schema: None,
+            relation_context: None,
+            analysis: None,
+            index_context: None,
+            normalized_plan,
+            result_ref: None,
+            result_shape: None,
+            warnings,
+            query_call_count: 1,
+            result_rows: 0,
+            result_bytes,
+            partial,
+        })
     }
 }
 
@@ -79,15 +202,23 @@ impl ReadOnlyAgentToolExecutor for LocalReadOnlyAgentToolExecutor {
     fn execute(
         &mut self,
         authorized: &AgentAuthorizedTool,
+        _context: &AgentModelContext,
     ) -> Result<AgentToolExecution, SqlCommandError> {
         match authorized.tool {
             AgentTool::SqlExecuteReadonly => {
                 let request = read_only_request(&authorized.arguments)?;
-                let response = self.adapter.execute_readonly(&request)?;
+                self.validate_connection_scope(&request)?;
+                let response = self.adapter.execute_readonly_owned(
+                    &request,
+                    &authorized.run_id,
+                    &authorized.call_id,
+                    &self.cancellation,
+                )?;
                 let result_ref = self.results.insert(response.result.clone())?;
                 let shape = inspect_result(&response.result);
                 let result_bytes = shape.result_bytes;
                 let aggregate = aggregate_result(&response.result);
+                let model_result_shape = model_result_shape(&response.result);
                 Ok(AgentToolExecution {
                     evidence: vec![
                         (
@@ -98,34 +229,29 @@ impl ReadOnlyAgentToolExecutor for LocalReadOnlyAgentToolExecutor {
                         (
                             AgentEvidenceKind::Aggregate,
                             AgentEvidenceSensitivity::Workspace,
-                            serde_json::json!({"resultRef": result_ref, "aggregate": aggregate}),
+                            serde_json::json!({"resultRef": result_ref.clone(), "aggregate": aggregate}),
                         ),
                     ],
-                    warnings: Vec::new(),
+                    schema: None,
+                    relation_context: None,
+                    analysis: None,
+                    index_context: None,
+                    normalized_plan: None,
+                    result_ref: Some(result_ref),
+                    result_shape: Some(model_result_shape),
+                    warnings: if response.result.truncated {
+                        vec!["Query result was truncated by the read-only result policy."
+                            .to_string()]
+                    } else {
+                        Vec::new()
+                    },
                     query_call_count: 1,
                     result_rows: response.result.row_count,
                     result_bytes,
+                    partial: response.result.truncated,
                 })
             }
-            AgentTool::SqlExplain => {
-                let request = read_only_request(&authorized.arguments)?;
-                let response = self.adapter.explain(&request)?;
-                let plan_text = format_plan_text(&response.plan);
-                Ok(AgentToolExecution {
-                    evidence: vec![(
-                        AgentEvidenceKind::Plan,
-                        AgentEvidenceSensitivity::Workspace,
-                        serde_json::json!({
-                            "analysis": response.analysis,
-                            "planText": plan_text,
-                        }),
-                    )],
-                    warnings: Vec::new(),
-                    query_call_count: 1,
-                    result_rows: 0,
-                    result_bytes: plan_text.len(),
-                })
-            }
+            AgentTool::SqlExplain => self.execute_explain(authorized, None),
             AgentTool::ResultInspect => {
                 let result_ref = result_ref(&authorized.arguments)?;
                 let result = self.results.get(&result_ref)?;
@@ -135,7 +261,7 @@ impl ReadOnlyAgentToolExecutor for LocalReadOnlyAgentToolExecutor {
                             AgentEvidenceKind::ResultShape,
                             AgentEvidenceSensitivity::Workspace,
                             serde_json::json!({
-                                "resultRef": result_ref,
+                                "resultRef": result_ref.clone(),
                                 "shape": inspect_result(&result),
                             }),
                         ),
@@ -143,15 +269,23 @@ impl ReadOnlyAgentToolExecutor for LocalReadOnlyAgentToolExecutor {
                             AgentEvidenceKind::Aggregate,
                             AgentEvidenceSensitivity::Workspace,
                             serde_json::json!({
-                                "resultRef": result_ref,
+                                "resultRef": result_ref.clone(),
                                 "aggregate": aggregate_result(&result),
                             }),
                         ),
                     ],
+                    schema: None,
+                    relation_context: None,
+                    analysis: None,
+                    index_context: None,
+                    normalized_plan: None,
+                    result_ref: Some(result_ref),
+                    result_shape: Some(model_result_shape(&result)),
                     warnings: Vec::new(),
                     query_call_count: 0,
                     result_rows: 0,
                     result_bytes: 0,
+                    partial: result.truncated,
                 })
             }
             AgentTool::ResultSample => {
@@ -170,10 +304,25 @@ impl ReadOnlyAgentToolExecutor for LocalReadOnlyAgentToolExecutor {
                         AgentEvidenceSensitivity::Sensitive,
                         serde_json::json!({"resultRef": result_ref, "sample": sample}),
                     )],
-                    warnings: Vec::new(),
+                    schema: None,
+                    relation_context: None,
+                    analysis: None,
+                    index_context: None,
+                    normalized_plan: None,
+                    result_ref: None,
+                    result_shape: None,
+                    warnings: if sample.truncated {
+                        vec![
+                            "Approved result sample was truncated by its row or byte cap."
+                                .to_string(),
+                        ]
+                    } else {
+                        Vec::new()
+                    },
                     query_call_count: 0,
                     result_rows,
                     result_bytes,
+                    partial: sample.truncated,
                 })
             }
             _ => Err(SqlCommandError::new(
@@ -181,6 +330,22 @@ impl ReadOnlyAgentToolExecutor for LocalReadOnlyAgentToolExecutor {
                 "A3 executor received a tool outside the read-only result set",
             )),
         }
+    }
+}
+
+fn model_result_shape(result: &SqlQueryResult) -> AgentModelResultShape {
+    AgentModelResultShape {
+        columns: result
+            .columns
+            .iter()
+            .map(|column| AgentModelResultShapeColumn {
+                name: column.name.clone(),
+                ordinal: column.ordinal,
+            })
+            .collect(),
+        row_count: result.row_count,
+        elapsed_ms: u128::from(result.elapsed_ms),
+        truncated: result.truncated,
     }
 }
 
@@ -201,7 +366,7 @@ fn result_ref(arguments: &serde_json::Value) -> Result<String, SqlCommandError> 
         .ok_or_else(|| SqlCommandError::new("invalid_input", "result tool requires a resultRef"))
 }
 
-fn format_plan_text(plan: &SqlQueryResult) -> String {
+fn format_plan_text(plan: &SqlQueryResult) -> (String, bool) {
     let mut lines = Vec::new();
     for row in &plan.rows {
         let values = row
@@ -215,7 +380,8 @@ fn format_plan_text(plan: &SqlQueryResult) -> String {
         lines.push(values.join(" | "));
     }
     let mut text = lines.join("\n");
-    if text.len() > MAX_PLAN_TEXT_BYTES {
+    let truncated = text.len() > MAX_PLAN_TEXT_BYTES;
+    if truncated {
         let end = text
             .char_indices()
             .take_while(|(index, _)| *index <= MAX_PLAN_TEXT_BYTES)
@@ -224,7 +390,7 @@ fn format_plan_text(plan: &SqlQueryResult) -> String {
             .unwrap_or(0);
         text.truncate(end);
     }
-    text
+    (text, truncated)
 }
 
 impl LocalSqlAgentQueryAdapter {
@@ -246,6 +412,29 @@ impl LocalSqlAgentQueryAdapter {
             })
             .map_err(map_agent_query_error)?;
 
+        Ok(SqlAgentExecuteReadonlyResult {
+            connection_id,
+            analysis,
+            result,
+        })
+    }
+
+    fn execute_readonly_owned(
+        &self,
+        request: &SqlAgentReadOnlyRequest,
+        run_id: &str,
+        call_id: &str,
+        cancellation: &AgentCancellationToken,
+    ) -> Result<SqlAgentExecuteReadonlyResult, SqlCommandError> {
+        let (connection_id, sql, analysis) = validate_request(&self.store, request, false)?;
+        let result = self.execute_owned_query(
+            &connection_id,
+            sql,
+            bounded_limit(request.limit),
+            run_id,
+            call_id,
+            cancellation,
+        )?;
         Ok(SqlAgentExecuteReadonlyResult {
             connection_id,
             analysis,
@@ -278,6 +467,67 @@ impl LocalSqlAgentQueryAdapter {
             plan,
         })
     }
+
+    fn explain_owned(
+        &self,
+        request: &SqlAgentReadOnlyRequest,
+        run_id: &str,
+        call_id: &str,
+        cancellation: &AgentCancellationToken,
+    ) -> Result<SqlAgentExplainResult, SqlCommandError> {
+        let (connection_id, sql, analysis) = validate_request(&self.store, request, true)?;
+        let plan_sql = if analysis.risk == StatementRisk::ExplainReadOnly {
+            sql
+        } else {
+            format!("EXPLAIN QUERY PLAN {sql}")
+        };
+        let plan = self.execute_owned_query(
+            &connection_id,
+            plan_sql,
+            bounded_limit(request.limit),
+            run_id,
+            call_id,
+            cancellation,
+        )?;
+        Ok(SqlAgentExplainResult {
+            connection_id,
+            analysis,
+            plan,
+        })
+    }
+
+    fn execute_owned_query(
+        &self,
+        connection_id: &str,
+        sql: String,
+        limit: Option<usize>,
+        run_id: &str,
+        call_id: &str,
+        cancellation: &AgentCancellationToken,
+    ) -> Result<SqlQueryResult, SqlCommandError> {
+        if cancellation.is_cancelled() {
+            return Err(cancelled_error());
+        }
+        let cancellation_for_query = cancellation.clone();
+        let result = self.store.execute_agent_query(
+            &SqlExecuteQueryRequest {
+                connection_id: connection_id.to_string(),
+                sql,
+                limit,
+            },
+            run_id,
+            call_id,
+            move || cancellation_for_query.is_cancelled(),
+        );
+        if cancellation.is_cancelled() {
+            return Err(cancelled_error());
+        }
+        result.map_err(map_agent_query_error)
+    }
+}
+
+fn cancelled_error() -> SqlCommandError {
+    SqlCommandError::new("invalid_input", "agent run was cancelled")
 }
 
 #[tauri::command]
@@ -515,9 +765,10 @@ mod tests {
             elapsed_ms: 0,
             truncated: false,
         };
-        let text = format_plan_text(&plan);
+        let (text, truncated) = format_plan_text(&plan);
         assert!(text.len() <= MAX_PLAN_TEXT_BYTES);
         assert!(text.is_char_boundary(text.len()));
+        assert!(truncated);
     }
 
     #[test]
@@ -555,5 +806,80 @@ mod tests {
             })
             .unwrap_err();
         assert!(error.to_string().contains("read-only SQLite connection"));
+    }
+
+    #[test]
+    fn read_only_tool_executor_rejects_cross_connection_arguments() {
+        let path = database_path("connection-scope");
+        let store = Arc::new(SqlConnectionStore::new());
+        store
+            .open_connection(input("writer", &path, false))
+            .unwrap();
+        store
+            .execute_query(SqlExecuteQueryRequest {
+                connection_id: "writer".to_string(),
+                sql: "CREATE TABLE users(id INTEGER PRIMARY KEY)".to_string(),
+                limit: None,
+            })
+            .unwrap();
+        store.close_connection("writer").unwrap();
+        store
+            .open_connection(input("reader-a", &path, true))
+            .unwrap();
+        store
+            .open_connection(input("reader-b", &path, true))
+            .unwrap();
+        let mut executor = LocalReadOnlyAgentToolExecutor::new(
+            Arc::clone(&store),
+            "reader-a".to_string(),
+            AgentCancellationToken::default(),
+        )
+        .unwrap();
+        for (tool, required_capability) in [
+            (
+                AgentTool::SqlExecuteReadonly,
+                super::super::policy::AgentCapability::DatabaseExecuteRead,
+            ),
+            (
+                AgentTool::SqlExplain,
+                super::super::policy::AgentCapability::DatabaseExplain,
+            ),
+        ] {
+            let authorized = AgentAuthorizedTool {
+                run_id: "run-reader-a".to_string(),
+                call_id: format!("call-{}", tool.wire_name()),
+                tool,
+                arguments: serde_json::json!({
+                    "connectionId": "reader-b",
+                    "sql": "SELECT id FROM users"
+                }),
+                required_capability,
+            };
+
+            let error = executor
+                .execute(&authorized, &AgentModelContext::default())
+                .unwrap_err();
+
+            assert!(matches!(error, SqlCommandError::Validation { .. }));
+            assert!(error.to_string().contains("run connection"));
+        }
+        store.close_connection("reader-a").unwrap();
+        store.close_connection("reader-b").unwrap();
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn read_only_tool_executor_requires_a_run_connection() {
+        let result = LocalReadOnlyAgentToolExecutor::new(
+            Arc::new(SqlConnectionStore::new()),
+            "  ",
+            AgentCancellationToken::default(),
+        );
+        let Err(error) = result else {
+            panic!("blank run connection should be rejected");
+        };
+
+        assert!(matches!(error, SqlCommandError::InvalidInput { .. }));
+        assert!(error.to_string().contains("requires a connection id"));
     }
 }

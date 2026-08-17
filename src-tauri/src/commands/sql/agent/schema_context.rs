@@ -1,7 +1,7 @@
 //! Bounded schema retrieval and per-runtime metadata snapshots for the SQL Agent.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -111,6 +111,13 @@ pub struct SchemaSearchResult {
 pub(crate) struct SchemaSnapshotObject {
     pub object: SchemaContextObject,
     pub columns: Vec<SchemaContextColumn>,
+    pub columns_truncated: bool,
+}
+
+#[derive(Clone)]
+pub(crate) struct SchemaSnapshot {
+    pub objects: Vec<SchemaSnapshotObject>,
+    pub truncated: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -131,13 +138,22 @@ impl SchemaCacheKey {
 }
 
 struct SchemaCacheEntry {
-    inserted_at: Instant,
-    objects: Arc<Vec<SchemaSnapshotObject>>,
+    state: Mutex<SchemaCacheEntryState>,
+    ready: Condvar,
+}
+
+enum SchemaCacheEntryState {
+    Loading,
+    Ready {
+        inserted_at: Instant,
+        snapshot: Arc<SchemaSnapshot>,
+    },
+    Failed(SqlCommandError),
 }
 
 pub(crate) struct SchemaSnapshotCache {
     ttl: Duration,
-    entries: Mutex<HashMap<SchemaCacheKey, SchemaCacheEntry>>,
+    entries: Mutex<HashMap<SchemaCacheKey, Arc<SchemaCacheEntry>>>,
 }
 
 impl SchemaSnapshotCache {
@@ -150,26 +166,81 @@ impl SchemaSnapshotCache {
 
     pub(crate) fn get_or_try_insert_with(
         &self,
-        key: SchemaCacheKey,
+        key: &SchemaCacheKey,
         now: Instant,
-        load: impl FnOnce() -> Result<Vec<SchemaSnapshotObject>, SqlCommandError>,
-    ) -> Result<Arc<Vec<SchemaSnapshotObject>>, SqlCommandError> {
-        if let Some(objects) = self.get_fresh(&key, now) {
-            return Ok(objects);
+        load: impl FnOnce() -> Result<SchemaSnapshot, SqlCommandError>,
+    ) -> Result<Arc<SchemaSnapshot>, SqlCommandError> {
+        let (entry, should_load) = {
+            let mut entries = self.entries.lock().expect("schema cache poisoned");
+            entries.retain(|_, entry| {
+                let state = entry.state.lock().expect("schema cache entry poisoned");
+                match &*state {
+                    SchemaCacheEntryState::Loading => true,
+                    SchemaCacheEntryState::Ready { inserted_at, .. } => {
+                        now.saturating_duration_since(*inserted_at) < self.ttl
+                    }
+                    SchemaCacheEntryState::Failed(_) => false,
+                }
+            });
+
+            if let Some(entry) = entries.get(key) {
+                (Arc::clone(entry), false)
+            } else {
+                let entry = Arc::new(SchemaCacheEntry {
+                    state: Mutex::new(SchemaCacheEntryState::Loading),
+                    ready: Condvar::new(),
+                });
+                entries.insert(key.to_owned(), Arc::clone(&entry));
+                (entry, true)
+            }
+        };
+
+        if should_load {
+            // Metadata I/O deliberately runs without the cache map lock held.
+            return match load() {
+                Ok(snapshot) => {
+                    let snapshot = Arc::new(snapshot);
+                    let mut state = entry.state.lock().expect("schema cache entry poisoned");
+                    *state = SchemaCacheEntryState::Ready {
+                        inserted_at: now,
+                        snapshot: Arc::clone(&snapshot),
+                    };
+                    entry.ready.notify_all();
+                    Ok(snapshot)
+                }
+                Err(error) => {
+                    let mut entries = self.entries.lock().expect("schema cache poisoned");
+                    if entries
+                        .get(key)
+                        .is_some_and(|cached| Arc::ptr_eq(cached, &entry))
+                    {
+                        entries.remove(key);
+                    }
+                    drop(entries);
+
+                    let mut state = entry.state.lock().expect("schema cache entry poisoned");
+                    *state = SchemaCacheEntryState::Failed(error.clone());
+                    entry.ready.notify_all();
+                    Err(error)
+                }
+            };
         }
 
-        // Metadata I/O deliberately runs without the cache lock held.
-        let objects = Arc::new(load()?);
-        let mut entries = self.entries.lock().expect("schema cache poisoned");
-        entries.retain(|_, entry| now.saturating_duration_since(entry.inserted_at) < self.ttl);
-        entries.insert(
-            key,
-            SchemaCacheEntry {
-                inserted_at: now,
-                objects: Arc::clone(&objects),
-            },
-        );
-        Ok(objects)
+        let mut state = entry.state.lock().expect("schema cache entry poisoned");
+        loop {
+            match &*state {
+                SchemaCacheEntryState::Loading => {
+                    state = entry
+                        .ready
+                        .wait(state)
+                        .expect("schema cache entry poisoned while waiting");
+                }
+                SchemaCacheEntryState::Ready { snapshot, .. } => {
+                    return Ok(Arc::clone(snapshot));
+                }
+                SchemaCacheEntryState::Failed(error) => return Err(error.clone()),
+            }
+        }
     }
 
     pub(crate) fn invalidate(&self, connection_id: &str) -> usize {
@@ -178,28 +249,13 @@ impl SchemaSnapshotCache {
         entries.retain(|key, _| key.connection_id != connection_id);
         before - entries.len()
     }
-
-    fn get_fresh(
-        &self,
-        key: &SchemaCacheKey,
-        now: Instant,
-    ) -> Option<Arc<Vec<SchemaSnapshotObject>>> {
-        let mut entries = self.entries.lock().expect("schema cache poisoned");
-        let entry = entries.get(key)?;
-        if now.saturating_duration_since(entry.inserted_at) < self.ttl {
-            Some(Arc::clone(&entry.objects))
-        } else {
-            entries.remove(key);
-            None
-        }
-    }
 }
 
 pub(crate) fn search_snapshot(
     request: &SchemaSearchRequest,
     dialect: SqlDialect,
     metadata_revision: u64,
-    snapshot: &[SchemaSnapshotObject],
+    snapshot: &SchemaSnapshot,
 ) -> Result<SchemaSearchResult, SqlCommandError> {
     let budget = request.budget.validate()?;
     if request.query.len() > MAX_SCHEMA_SEARCH_QUERY_BYTES {
@@ -219,6 +275,7 @@ pub(crate) fn search_snapshot(
     let query = normalize_search_text(&request.query);
     let terms = search_terms(&query);
     let mut ranked: Vec<_> = snapshot
+        .objects
         .iter()
         .filter_map(|entry| {
             rank_entry(entry, &query, &terms, &request.explicit_tables).map(
@@ -255,7 +312,16 @@ pub(crate) fn search_snapshot(
             .then_with(|| left.entry.object.name.cmp(&right.entry.object.name))
     });
 
-    build_bounded_result(request, dialect, metadata_revision, ranked, budget)
+    let source_truncated =
+        snapshot.truncated || snapshot.objects.iter().any(|entry| entry.columns_truncated);
+    build_bounded_result(
+        request,
+        dialect,
+        metadata_revision,
+        ranked,
+        budget,
+        source_truncated,
+    )
 }
 
 struct RankedMatch<'a> {
@@ -270,6 +336,7 @@ fn build_bounded_result(
     metadata_revision: u64,
     ranked: Vec<RankedMatch<'_>>,
     budget: SchemaSearchBudget,
+    source_truncated: bool,
 ) -> Result<SchemaSearchResult, SqlCommandError> {
     let ranked_count = ranked.len();
     let mut result = SchemaSearchResult {
@@ -278,7 +345,7 @@ fn build_bounded_result(
         dialect,
         metadata_revision,
         matches: Vec::new(),
-        truncated: false,
+        truncated: source_truncated,
         returned_object_count: 0,
         returned_column_count: 0,
         returned_byte_count: 0,
@@ -302,7 +369,8 @@ fn build_bounded_result(
         let mut matched = SchemaSearchMatch {
             object: candidate.entry.object.clone(),
             columns: candidate.entry.columns[..take_columns].to_vec(),
-            columns_truncated: take_columns < candidate.entry.columns.len(),
+            columns_truncated: candidate.entry.columns_truncated
+                || take_columns < candidate.entry.columns.len(),
             match_kind: candidate.match_kind,
             score: candidate.score,
             metadata_revision,
@@ -344,7 +412,8 @@ fn build_bounded_result(
 
     result.returned_object_count = result.matches.len();
     result.returned_column_count = result.matches.iter().map(|entry| entry.columns.len()).sum();
-    result.truncated = result.matches.len() < ranked_count || any_columns_truncated;
+    result.truncated =
+        source_truncated || result.matches.len() < ranked_count || any_columns_truncated;
     update_byte_count(&mut result)?;
 
     if result.returned_byte_count > budget.max_bytes {
@@ -515,6 +584,8 @@ fn update_byte_count(result: &mut SchemaSearchResult) -> Result<(), SqlCommandEr
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    use std::thread;
 
     use super::*;
 
@@ -545,6 +616,14 @@ mod tests {
                 .enumerate()
                 .map(|(ordinal, name)| column(name, i32::try_from(ordinal).unwrap()))
                 .collect(),
+            columns_truncated: false,
+        }
+    }
+
+    fn snapshot(objects: Vec<SchemaSnapshotObject>) -> SchemaSnapshot {
+        SchemaSnapshot {
+            objects,
+            truncated: false,
         }
     }
 
@@ -560,7 +639,7 @@ mod tests {
 
     #[test]
     fn ranking_is_stable_and_prefers_explicit_then_exact_matches() {
-        let snapshot = vec![
+        let snapshot = snapshot(vec![
             object(
                 "main",
                 "users_archive",
@@ -574,7 +653,7 @@ mod tests {
                 &["user_id"],
             ),
             object("main", "users", SchemaContextObjectKind::Table, &["id"]),
-        ];
+        ]);
         let mut search = request("users", SchemaSearchBudget::default());
         search.explicit_tables.push(SqlTableRef {
             schema: Some("main".to_string()),
@@ -593,7 +672,7 @@ mod tests {
 
     #[test]
     fn exact_column_match_is_returned_without_fabricating_comments() {
-        let snapshot = vec![
+        let snapshot = snapshot(vec![
             object(
                 "main",
                 "orders",
@@ -601,7 +680,7 @@ mod tests {
                 &["customer_id"],
             ),
             object("main", "customers", SchemaContextObjectKind::Table, &["id"]),
-        ];
+        ]);
 
         let result = search_snapshot(
             &request("customer_id", SchemaSearchBudget::default()),
@@ -618,7 +697,7 @@ mod tests {
 
     #[test]
     fn object_and_column_budgets_report_truncation() {
-        let snapshot = vec![
+        let snapshot = snapshot(vec![
             object(
                 "main",
                 "a",
@@ -626,7 +705,7 @@ mod tests {
                 &["a", "b", "c"],
             ),
             object("main", "b", SchemaContextObjectKind::Table, &["d"]),
-        ];
+        ]);
         let result = search_snapshot(
             &request(
                 "",
@@ -649,13 +728,43 @@ mod tests {
     }
 
     #[test]
+    fn source_truncation_is_preserved_for_matches_and_empty_results() {
+        let mut partial_object = object("main", "users", SchemaContextObjectKind::Table, &["id"]);
+        partial_object.columns_truncated = true;
+        let partial_snapshot = SchemaSnapshot {
+            objects: vec![partial_object],
+            truncated: true,
+        };
+
+        let matched = search_snapshot(
+            &request("users", SchemaSearchBudget::default()),
+            SqlDialect::Sqlite,
+            1,
+            &partial_snapshot,
+        )
+        .unwrap();
+        let missing = search_snapshot(
+            &request("missing", SchemaSearchBudget::default()),
+            SqlDialect::Sqlite,
+            1,
+            &partial_snapshot,
+        )
+        .unwrap();
+
+        assert!(matched.truncated);
+        assert!(matched.matches[0].columns_truncated);
+        assert!(missing.matches.is_empty());
+        assert!(missing.truncated);
+    }
+
+    #[test]
     fn utf8_byte_budget_never_returns_a_partial_identifier() {
-        let snapshot = vec![object(
+        let snapshot = snapshot(vec![object(
             "main",
             "订单明细",
             SchemaContextObjectKind::Table,
             &["客户名称", "订单编号"],
-        )];
+        )]);
         let roomy = search_snapshot(
             &request("", SchemaSearchBudget::default()),
             SqlDialect::Sqlite,
@@ -698,35 +807,136 @@ mod tests {
         let key = SchemaCacheKey::new("workspace", "main", 1);
         let load = || {
             loads.fetch_add(1, Ordering::Relaxed);
-            Ok(vec![object(
+            Ok(snapshot(vec![object(
                 "main",
                 "users",
                 SchemaContextObjectKind::Table,
                 &["id"],
-            )])
+            )]))
         };
 
+        cache.get_or_try_insert_with(&key, start, load).unwrap();
         cache
-            .get_or_try_insert_with(key.clone(), start, load)
-            .unwrap();
-        cache
-            .get_or_try_insert_with(key.clone(), start + Duration::from_secs(29), load)
+            .get_or_try_insert_with(&key, start + Duration::from_secs(29), load)
             .unwrap();
         assert_eq!(loads.load(Ordering::Relaxed), 1);
 
         cache
-            .get_or_try_insert_with(key, start + Duration::from_secs(30), load)
+            .get_or_try_insert_with(&key, start + Duration::from_secs(30), load)
             .unwrap();
         assert_eq!(loads.load(Ordering::Relaxed), 2);
 
         cache
             .get_or_try_insert_with(
-                SchemaCacheKey::new("workspace", "main", 2),
+                &SchemaCacheKey::new("workspace", "main", 2),
                 start + Duration::from_secs(30),
                 load,
             )
             .unwrap();
         assert_eq!(loads.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn cache_hit_preserves_partial_snapshot_and_does_not_reload() {
+        let cache = SchemaSnapshotCache::new(Duration::from_secs(30));
+        let now = Instant::now();
+        let loads = AtomicUsize::new(0);
+        let key = SchemaCacheKey::new("workspace", "main", 1);
+        let load = || {
+            loads.fetch_add(1, Ordering::Relaxed);
+            Ok(SchemaSnapshot {
+                objects: vec![object(
+                    "main",
+                    "users",
+                    SchemaContextObjectKind::Table,
+                    &["id"],
+                )],
+                truncated: true,
+            })
+        };
+
+        let first = cache.get_or_try_insert_with(&key, now, load).unwrap();
+        let second = cache
+            .get_or_try_insert_with(&key, now + Duration::from_secs(1), load)
+            .unwrap();
+
+        assert_eq!(loads.load(Ordering::Relaxed), 1);
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(second.truncated);
+    }
+
+    #[test]
+    fn failed_load_is_shared_with_waiters_but_not_cached() {
+        let cache = SchemaSnapshotCache::new(Duration::from_secs(30));
+        let key = SchemaCacheKey::new("workspace", "main", 1);
+        let loads = AtomicUsize::new(0);
+
+        let first = cache.get_or_try_insert_with(&key, Instant::now(), || {
+            loads.fetch_add(1, Ordering::Relaxed);
+            Err(SqlCommandError::new("internal", "metadata failed"))
+        });
+        let second = cache.get_or_try_insert_with(&key, Instant::now(), || {
+            loads.fetch_add(1, Ordering::Relaxed);
+            Ok(snapshot(Vec::new()))
+        });
+
+        assert!(first.is_err());
+        assert!(second.is_ok());
+        assert_eq!(loads.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn concurrent_same_key_cold_miss_loads_once() {
+        let cache = Arc::new(SchemaSnapshotCache::new(Duration::from_secs(30)));
+        let key = SchemaCacheKey::new("workspace", "main", 1);
+        let loads = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let (started_tx, started_rx) = mpsc::channel();
+
+        thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..2 {
+                let cache = Arc::clone(&cache);
+                let key = key.clone();
+                let loads = Arc::clone(&loads);
+                let barrier = Arc::clone(&barrier);
+                let release = Arc::clone(&release);
+                let started_tx = started_tx.clone();
+                handles.push(scope.spawn(move || {
+                    barrier.wait();
+                    cache
+                        .get_or_try_insert_with(&key, Instant::now(), || {
+                            loads.fetch_add(1, Ordering::Relaxed);
+                            started_tx.send(()).unwrap();
+                            let (released, ready) = &*release;
+                            let mut released = released.lock().unwrap();
+                            while !*released {
+                                released = ready.wait(released).unwrap();
+                            }
+                            Ok(snapshot(vec![object(
+                                "main",
+                                "users",
+                                SchemaContextObjectKind::Table,
+                                &["id"],
+                            )]))
+                        })
+                        .unwrap()
+                }));
+            }
+
+            barrier.wait();
+            started_rx.recv().unwrap();
+            let (released, ready) = &*release;
+            *released.lock().unwrap() = true;
+            ready.notify_all();
+
+            let first = handles.remove(0).join().unwrap();
+            let second = handles.remove(0).join().unwrap();
+            assert!(Arc::ptr_eq(&first, &second));
+        });
+
+        assert_eq!(loads.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -736,9 +946,9 @@ mod tests {
         for connection_id in ["one", "two"] {
             cache
                 .get_or_try_insert_with(
-                    SchemaCacheKey::new(connection_id, "main", 1),
+                    &SchemaCacheKey::new(connection_id, "main", 1),
                     start,
-                    || Ok(Vec::new()),
+                    || Ok(snapshot(Vec::new())),
                 )
                 .unwrap();
         }
@@ -746,16 +956,16 @@ mod tests {
         assert_eq!(cache.invalidate("one"), 1);
         let one_loads = AtomicUsize::new(0);
         cache
-            .get_or_try_insert_with(SchemaCacheKey::new("one", "main", 1), start, || {
+            .get_or_try_insert_with(&SchemaCacheKey::new("one", "main", 1), start, || {
                 one_loads.fetch_add(1, Ordering::Relaxed);
-                Ok(Vec::new())
+                Ok(snapshot(Vec::new()))
             })
             .unwrap();
         let two_loads = AtomicUsize::new(0);
         cache
-            .get_or_try_insert_with(SchemaCacheKey::new("two", "main", 1), start, || {
+            .get_or_try_insert_with(&SchemaCacheKey::new("two", "main", 1), start, || {
                 two_loads.fetch_add(1, Ordering::Relaxed);
-                Ok(Vec::new())
+                Ok(snapshot(Vec::new()))
             })
             .unwrap();
 
@@ -765,12 +975,12 @@ mod tests {
 
     #[test]
     fn serialized_result_contains_no_store_or_secret_identity_fields() {
-        let snapshot = vec![object(
+        let snapshot = snapshot(vec![object(
             "main",
             "users",
             SchemaContextObjectKind::Table,
             &["password_hint"],
-        )];
+        )]);
         let result = search_snapshot(
             &request("users", SchemaSearchBudget::default()),
             SqlDialect::Sqlite,

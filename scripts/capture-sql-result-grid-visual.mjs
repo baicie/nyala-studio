@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
-import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { execFileSync, spawn } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { EXECUTION_ORDER, isBenchmarkResultForRun } from './sql-result-grid-benchmark-contract.mjs';
+import { CdpClient } from './sql-result-grid-cdp-client.mjs';
 import { hasVisiblePngDiversity, inspectPngPixels } from './sql-result-grid-visual-png.mjs';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -44,6 +46,7 @@ const browserVersion = browser ? getBrowserVersion(browser) : undefined;
 const temporaryRoot = await mkdtemp(join(process.env.RUNNER_TEMP ?? '/tmp', 'nyala-sql-result-visual-'));
 const artifacts = [];
 const artifactPaths = new Set();
+let browserRunner;
 let reason;
 
 try {
@@ -64,19 +67,23 @@ try {
 			{ stdio: 'inherit' }
 		);
 		const pageUrl = pathToFileURL(pagePath).href;
+		browserRunner = await launchChromiumCapture(browser, join(temporaryRoot, 'chrome-profile'));
+		let executionOrdinal = 0;
 		for (const workload of selectedWorkloads) {
 			for (const renderer of selectedRenderers) {
 				for (let iteration = 1; iteration <= repeat; iteration += 1) {
+					executionOrdinal += 1;
 					const screenshotName = `${workload.id}-${renderer}-${iteration}.png`;
 					const screenshotPath = join(screenshotDir, screenshotName);
 					if (artifactPaths.has(screenshotPath)) throw new Error(`Duplicate screenshot path: ${screenshotPath}`);
 					artifactPaths.add(screenshotPath);
 					const artifact = await captureArtifact({
-						browser,
+						client: browserRunner.client,
 						pageUrl,
 						workload,
 						renderer,
 						iteration,
+						executionOrdinal,
 						screenshotPath
 					});
 					artifacts.push(artifact);
@@ -90,6 +97,7 @@ try {
 } catch (error) {
 	reason = error instanceof Error ? error.message : String(error);
 } finally {
+	await browserRunner?.close();
 	await rm(temporaryRoot, { recursive: true, force: true });
 }
 
@@ -124,9 +132,13 @@ await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 process.stdout.write(`Wrote ${outputPath}\n`);
 process.exitCode = ready ? 0 : 1;
 
-async function captureArtifact({ browser, pageUrl, workload, renderer, iteration, screenshotPath }) {
+async function captureArtifact({ client, pageUrl, workload, renderer, iteration, executionOrdinal, screenshotPath }) {
+	const runToken = randomUUID();
 	const url = `${pageUrl}?${new URLSearchParams({
+		run: runToken,
 		renderer,
+		executionOrder: EXECUTION_ORDER,
+		executionOrdinal: String(executionOrdinal),
 		rows: String(workload.rows),
 		columns: String(workload.columns),
 		wide: String(workload.wide),
@@ -134,39 +146,31 @@ async function captureArtifact({ browser, pageUrl, workload, renderer, iteration
 		height: String(workload.height)
 	})}`;
 	try {
-		const output = execFileSync(
-			browser,
-			[
-				'--headless=new',
-				'--single-process',
-				'--disable-gpu',
-				'--no-sandbox',
-				'--disable-dev-shm-usage',
-				'--disable-background-networking',
-				'--disable-component-update',
-				'--disable-default-apps',
-				'--no-first-run',
-				'--enable-precise-memory-info',
-				'--run-all-compositor-stages-before-draw',
-				'--hide-scrollbars',
-				'--timeout=20000',
-				'--virtual-time-budget=20000',
-				`--window-size=${workload.width},${workload.height}`,
-				`--screenshot=${screenshotPath}`,
-				'--dump-dom',
-				url
-			],
-			{
-				encoding: 'utf8',
-				maxBuffer: 64 * 1024 * 1024,
-				stdio: ['ignore', 'pipe', 'ignore'],
-				timeout: browserTimeoutMs,
-				killSignal: 'SIGKILL'
-			}
-		);
-		const record = parseBenchmarkRecord(output);
+		await client.send('Emulation.setDeviceMetricsOverride', {
+			width: workload.width,
+			height: workload.height,
+			deviceScaleFactor: 1,
+			mobile: false
+		});
+		const navigation = await client.send('Page.navigate', { url });
+		if (navigation.errorText) {
+			throw new Error(`Visual capture navigation failed for ${workload.id}/${renderer}: ${navigation.errorText}`);
+		}
+		const record = await waitForBenchmarkRecord(client, Date.now() + browserTimeoutMs, url, {
+			runToken,
+			renderer,
+			executionOrder: EXECUTION_ORDER,
+			executionOrdinal,
+			workload
+		});
+		const screenshot = await client.send('Page.captureScreenshot', {
+			format: 'png',
+			fromSurface: true,
+			captureBeyondViewport: false
+		});
+		const screenshotBytes = Buffer.from(screenshot.data, 'base64');
+		await writeFile(screenshotPath, screenshotBytes);
 		const visual = await inspectVisualEvidence(screenshotPath, workload, renderer, record);
-		const screenshotBytes = await readFile(screenshotPath);
 		return {
 			workloadId: workload.id,
 			renderer,
@@ -197,10 +201,131 @@ async function captureArtifact({ browser, pageUrl, workload, renderer, iteration
 	}
 }
 
-function parseBenchmarkRecord(output) {
-	const match = output.match(/<pre id="benchmark-result">([\s\S]*?)<\/pre>/);
-	if (!match) throw new Error('Benchmark did not produce a result record.');
-	return JSON.parse(match[1].replaceAll('&quot;', '"').replaceAll('&amp;', '&'));
+async function launchChromiumCapture(browser, profileDirectory) {
+	const browserProcess = spawn(
+		browser,
+		[
+			'--headless=new',
+			'--disable-gpu',
+			'--no-sandbox',
+			'--disable-dev-shm-usage',
+			'--disable-background-networking',
+			'--disable-background-timer-throttling',
+			'--disable-backgrounding-occluded-windows',
+			'--disable-component-update',
+			'--disable-default-apps',
+			'--disable-renderer-backgrounding',
+			'--no-first-run',
+			'--enable-precise-memory-info',
+			'--remote-debugging-port=0',
+			`--user-data-dir=${profileDirectory}`,
+			'about:blank'
+		],
+		{ stdio: 'ignore' }
+	);
+	const deadline = Date.now() + 20_000;
+	let client;
+	try {
+		const port = await readDevToolsPort(profileDirectory, deadline);
+		const target = await createPageTarget(port, deadline);
+		client = await CdpClient.connect(target.webSocketDebuggerUrl, deadline);
+		await Promise.all([client.send('Page.enable'), client.send('Runtime.enable')]);
+		return {
+			client,
+			async close() {
+				client.close();
+				await stopBrowser(browserProcess);
+			}
+		};
+	} catch (error) {
+		client?.close();
+		await stopBrowser(browserProcess);
+		throw error;
+	}
+}
+
+async function waitForBenchmarkRecord(client, deadline, expectedUrl, expected) {
+	let lastError;
+	while (Date.now() < deadline) {
+		try {
+			const response = await client.send('Runtime.evaluate', {
+				expression: `({ href: location.href, readyState: document.readyState, resultText: document.querySelector('#benchmark-result')?.textContent || '' })`,
+				returnByValue: true
+			});
+			if (response.exceptionDetails) throw new Error(response.exceptionDetails.text ?? 'Runtime.evaluate failed');
+			const page = response.result?.value;
+			if (
+				page?.href === expectedUrl &&
+				page.readyState !== 'loading' &&
+				typeof page.resultText === 'string' &&
+				page.resultText.trim()
+			) {
+				const record = JSON.parse(page.resultText);
+				if (isBenchmarkResultForRun(record, expected)) return record;
+				lastError = new Error(`Ignored stale or mismatched visual result for run ${expected.runToken}.`);
+			}
+		} catch (error) {
+			lastError = error;
+		}
+		await delay(25);
+	}
+	const detail = lastError instanceof Error ? ` Last error: ${lastError.message}` : '';
+	throw new Error(`Visual capture timed out for ${expected.workload.id}/${expected.renderer}.${detail}`);
+}
+
+async function readDevToolsPort(profileDirectory, deadline) {
+	const endpointFile = join(profileDirectory, 'DevToolsActivePort');
+	while (Date.now() < deadline) {
+		try {
+			const [port] = (await readFile(endpointFile, 'utf8')).trim().split(/\r?\n/);
+			if (Number.isInteger(Number(port))) return Number(port);
+		} catch {
+			// Chrome writes the endpoint after initializing its temporary profile.
+		}
+		await delay(25);
+	}
+	throw new Error('Timed out waiting for the Chromium DevTools endpoint.');
+}
+
+async function createPageTarget(port, deadline) {
+	const browserTarget = await waitForJson(`http://127.0.0.1:${port}/json/version`, deadline);
+	const browserClient = await CdpClient.connect(browserTarget.webSocketDebuggerUrl, deadline);
+	try {
+		const created = await browserClient.send('Target.createTarget', { url: 'about:blank' });
+		while (Date.now() < deadline) {
+			const targets = await waitForJson(`http://127.0.0.1:${port}/json/list`, deadline);
+			const target = targets.find(item => item.id === created.targetId);
+			if (target?.webSocketDebuggerUrl) return target;
+			await delay(25);
+		}
+		throw new Error('Timed out waiting for the Chromium page target.');
+	} finally {
+		browserClient.close();
+	}
+}
+
+async function waitForJson(url, deadline) {
+	while (Date.now() < deadline) {
+		try {
+			const response = await fetch(url);
+			if (response.ok) return response.json();
+		} catch {
+			// The loopback DevTools endpoint may not be ready yet.
+		}
+		await delay(25);
+	}
+	throw new Error(`Timed out waiting for ${url}.`);
+}
+
+async function stopBrowser(browserProcess) {
+	if (browserProcess.exitCode !== null) return;
+	browserProcess.kill('SIGTERM');
+	await Promise.race([new Promise(resolveExit => browserProcess.once('exit', resolveExit)), delay(3_000)]);
+	if (browserProcess.exitCode === null) browserProcess.kill('SIGKILL');
+}
+
+function delay(milliseconds) {
+	return new Promise(resolveDelay => setTimeout(resolveDelay, milliseconds));
 }
 
 async function inspectVisualEvidence(filePath, workload, renderer, record) {

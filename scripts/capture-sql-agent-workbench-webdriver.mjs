@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
+	convergeWindowRectForCssViewport,
+	createWebdriverRunNonce,
 	createEmbeddedWebdriverSession,
+	dimensionsWithinTolerance,
 	identifyEmbeddedWebview,
 	launchTauriEmbeddedWebdriver,
-	scaleCssViewportToPhysicalWindowRect,
+	resolveLoopbackDriverEndpoint,
 	unwrapWebdriverValue,
 	webdriverRequest
 } from './tauri-embedded-webdriver.mjs';
@@ -22,17 +26,23 @@ import { serveFrontendDist } from './serve-frontend-dist.mjs';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const isMain = process.argv[1] ? resolve(process.argv[1]) === fileURLToPath(import.meta.url) : false;
+const manualGateCheckIds = new Set(['keyboard-tab-order', 'native-keyboard-evidence']);
 
 const cli = isMain ? parseArgs(process.argv.slice(2)) : {};
 if (isMain && cli.help === 'true') {
 	process.stdout.write(`Usage: node scripts/capture-sql-agent-workbench-webdriver.mjs [options]
   --app-binary <path>       Webdriver-enabled Nyala debug binary
   --platform <name>         macos or windows
-  --driver-url <url>        Embedded WebDriver endpoint (default: http://127.0.0.1:4445)
+  --driver-url <url>        Embedded WebDriver endpoint (default: OS-assigned loopback port)
   --frontend-dist <path>    Built frontend directory (default: ./dist)
   --output <path>           Evidence JSON destination
   --screenshot-dir <path>   Screenshot destination
   --app-log <path>          Captured native application log
+  --repository <owner/name> GitHub repository provenance
+  --source-revision <sha>   Tested Git commit provenance
+  --source-ref <ref>        Tested Git ref provenance
+  --workflow-run-id <id>    GitHub Actions run provenance
+  --workflow-run-attempt <n> GitHub Actions attempt provenance
   --startup-timeout-ms <n>  Native application startup budget
   --script-timeout-ms <n>   Workbench/direct-eval budget
 `);
@@ -42,7 +52,7 @@ if (isMain && cli.help === 'true') {
 const appBinary = cli['app-binary'] ? resolve(cli['app-binary']) : undefined;
 const platform =
 	cli.platform ?? (process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : '');
-const driverUrl = String(cli['driver-url'] ?? 'http://127.0.0.1:4445').replace(/\/$/, '');
+const explicitDriverUrl = cli['driver-url'] === undefined ? undefined : String(cli['driver-url']);
 const frontendDist = resolve(cli['frontend-dist'] ?? join(repositoryRoot, 'dist'));
 const outputPath = resolve(cli.output ?? 'sql-agent-native-evidence.json');
 const screenshotDir = resolve(cli['screenshot-dir'] ?? join(dirname(outputPath), 'screenshots'));
@@ -62,9 +72,13 @@ const requestedViewports = [
 	{ id: 'desktop', width: 1440, height: 900 },
 	{ id: 'narrow', width: 390, height: 844 }
 ];
+const viewportCalibrationMaxAttempts = 4;
+const viewportCalibrationTolerance = 1;
+const screenshotDimensionTolerance = 2;
 const keyboardMode = 'webdriver-actions-synthetic';
 const keyboardLimitation =
 	'tauri-plugin-wdio-webdriver 1.3.0 dispatches W3C /actions keys as synthetic DOM KeyboardEvent values; native system Tab traversal and screen-reader keyboard behavior are not claimed.';
+const baseProvenance = createEvidenceProvenance(cli);
 
 if (isMain) {
 	if (!appBinary) throw new Error('--app-binary is required.');
@@ -76,10 +90,19 @@ if (isMain) {
 
 async function run() {
 	const artifacts = [];
+	const runNonce = createWebdriverRunNonce();
 	let sessionId;
 	let appHost;
 	let temporaryRoot;
 	let frontendServer;
+	let driverUrl;
+	let commandSequence = 0;
+	let provenance = baseProvenance;
+	let webdriverOwnership = {
+		driverUrl: undefined,
+		portSource: explicitDriverUrl === undefined ? 'os-assigned' : 'explicit',
+		runNonceVerified: false
+	};
 	let identity = {
 		driverProvider: 'embedded',
 		nativeWebView: false,
@@ -89,20 +112,28 @@ async function run() {
 		platformName: platform
 	};
 	try {
+		const endpoint = await resolveLoopbackDriverEndpoint(explicitDriverUrl);
+		driverUrl = endpoint.driverUrl;
+		webdriverOwnership = {
+			driverUrl,
+			portSource: endpoint.portSource,
+			runNonceVerified: false
+		};
 		await mkdir(screenshotDir, { recursive: true });
 		await mkdir(dirname(outputPath), { recursive: true });
 		temporaryRoot = await mkdtemp(join(process.env.RUNNER_TEMP ?? tmpdir(), 'nyala-agent-webdriver-'));
 		frontendServer = await serveFrontendDist(frontendDist);
+		provenance = { ...baseProvenance, binarySha256: await sha256File(appBinary) };
 		appHost = await launchTauriEmbeddedWebdriver({
 			appBinary,
 			driverUrl,
 			dataDir: cli['app-data-dir'] ?? join(temporaryRoot, 'app-data'),
 			logPath: cli['app-log'],
+			runNonce,
 			timeoutMs: startupTimeoutMs
 		});
 		const session = await createEmbeddedWebdriverSession(driverUrl);
 		sessionId = session.sessionId;
-		identity = identifyEmbeddedWebview(session.capabilities, platform);
 		await webdriverRequest(driverUrl, `/session/${sessionId}/timeouts`, 'POST', {
 			implicit: 0,
 			pageLoad: scriptTimeoutMs,
@@ -110,6 +141,14 @@ async function run() {
 		});
 		await webdriverRequest(driverUrl, `/session/${sessionId}/url`, 'POST', { url: frontendServer.url });
 		await waitForFrontendNavigation(frontendServer.url);
+		validateWebdriverRunNonce(
+			runNonce,
+			await syncEval(
+				'typeof globalThis.__nyalaWebdriverRunNonce === "string" ? globalThis.__nyalaWebdriverRunNonce : null'
+			)
+		);
+		webdriverOwnership.runNonceVerified = true;
+		identity = identifyEmbeddedWebview(session.capabilities, platform);
 		await waitForExpression(
 			`Boolean(globalThis.__sidex_commandService) && Boolean(document.querySelector('.monaco-workbench')) && !document.querySelector('#nyala-splash')`,
 			'Workbench boot'
@@ -120,7 +159,14 @@ async function run() {
 			if (requestedViewport.id === 'narrow') {
 				await dispatchCommand('workbench.action.closeSidebar');
 			}
-			await dispatchCommand('sql.agent.openPanel');
+			const agentPanelVisible = Boolean(
+				await syncEval(
+					`Boolean(document.querySelector('.sql-agent-view')) && document.querySelector('.sql-agent-view').getClientRects().length > 0`
+				)
+			);
+			if (shouldOpenAgentPanel(agentPanelVisible)) {
+				await dispatchCommand('sql.agent.openPanel');
+			}
 			await waitForExpression(
 				`Boolean(document.querySelector('.sql-agent-view')) && document.querySelector('.sql-agent-view').getClientRects().length > 0`,
 				`${requestedViewport.id} SQL Agent panel`
@@ -139,32 +185,42 @@ async function run() {
 			const screenshotName = `sql-agent-${platform}-${requestedViewport.id}.png`;
 			const screenshot = await captureScreenshot(join(screenshotDir, screenshotName));
 			const checks = [
-				...validateAgentWorkbenchSnapshot(snapshot, viewport, tabOrder),
-				validateRequestedViewport(requestedViewport, viewport),
+				...validateAgentWorkbenchSnapshot(snapshot, viewport, tabOrder).map(check => ({
+					...check,
+					scope: check.id === 'keyboard-tab-order' ? 'manual' : 'automated'
+				})),
+				{ ...validateRequestedViewport(requestedViewport, viewport, viewportSizing), scope: 'automated' },
 				{
 					id: 'native-keyboard-evidence',
 					passed: tabEvidence.keyboardMode === 'native',
+					scope: 'manual',
 					reason: `${tabEvidence.keyboardMode}: ${tabEvidence.limitation}`
 				},
-				{
-					id: 'screenshot-size',
-					passed: screenshot.width >= 300 && screenshot.height >= 300,
-					reason: `${screenshot.width}x${screenshot.height}`
-				},
+				{ ...validateScreenshotPhysicalDimensions(screenshot, viewport), scope: 'automated' },
 				{
 					id: 'screenshot-pixel-diversity',
 					passed: hasVisiblePngDiversity(screenshot),
+					scope: 'automated',
 					reason: `${screenshot.distinctColorBuckets} color bucket(s), luma range ${screenshot.lumaRange}`
 				}
 			];
+			const automatedSurface = evaluateAutomatedSurfaceChecks(checks);
 			artifacts.push({
 				requestedViewport,
 				requestedCssViewport: viewportSizing.requestedCssViewport,
-				requestedPhysicalRect: viewportSizing.requestedPhysicalRect,
+				initialWindowRect: viewportSizing.initialWindowRect,
+				lastAppliedRequestedWindowRect: viewportSizing.lastAppliedRequestedWindowRect,
 				devicePixelRatio: viewportSizing.devicePixelRatio,
 				appliedWindowRect: viewportSizing.appliedWindowRect,
+				observedCssViewport: viewportSizing.observedCssViewport,
+				viewportConverged: viewportSizing.viewportConverged,
+				viewportTolerance: viewportSizing.viewportTolerance,
+				convergenceStoppedReason: viewportSizing.convergenceStoppedReason,
+				calibrationAttempts: viewportSizing.calibrationAttempts,
 				viewport,
-				status: checks.every(check => check.passed) ? 'ready' : 'blocked',
+				status: automatedSurface.status,
+				automatedSurfaceStatus: automatedSurface.status,
+				failedAutomatedCheckIds: automatedSurface.failedCheckIds,
 				screenshot: screenshotName,
 				screenshotBytes: screenshot.bytes,
 				screenshotSha256: screenshot.sha256,
@@ -176,14 +232,18 @@ async function run() {
 			});
 		}
 
-		const ready = artifacts.length === requestedViewports.length && artifacts.every(item => item.status === 'ready');
+		const ready =
+			artifacts.length === requestedViewports.length &&
+			artifacts.every(item => item.automatedSurfaceStatus === 'ready');
 		await writeEvidence({
 			status: ready ? 'ready' : 'blocked',
 			reason: ready
-				? `${identity.engine} recorded desktop and narrow SQL Agent Workbench evidence.`
-				: `${identity.engine} did not satisfy every SQL Agent Workbench check.`,
+				? `${identity.engine} recorded desktop and narrow automated surface evidence; real keyboard and screen-reader gates remain pending.`
+				: `${identity.engine} did not satisfy every automated SQL Agent Workbench surface check.`,
 			identity,
+			webdriverOwnership,
 			frontendSource: { kind: 'local-dist-server', url: frontendServer.url },
+			provenance,
 			artifacts
 		});
 		if (!ready) process.exitCode = 1;
@@ -194,12 +254,14 @@ async function run() {
 			status: 'blocked',
 			reason,
 			identity,
+			webdriverOwnership,
 			frontendSource: frontendServer ? { kind: 'local-dist-server', url: frontendServer.url } : undefined,
+			provenance,
 			artifacts
 		});
 		process.exitCode = 1;
 	} finally {
-		if (sessionId) {
+		if (sessionId && driverUrl) {
 			await webdriverRequest(driverUrl, `/session/${sessionId}`, 'DELETE').catch(() => undefined);
 		}
 		await appHost?.stop();
@@ -226,27 +288,11 @@ async function run() {
 	}
 
 	async function dispatchCommand(commandId) {
-		const result = await syncScript(`
-			globalThis.__nyalaNativeCaptureCommandError = '';
-			try {
-				const commandResult = globalThis.__sidex_commandService.executeCommand(${JSON.stringify(commandId)});
-				if (commandResult && typeof commandResult.then === 'function') {
-					commandResult.catch(error => {
-						globalThis.__nyalaNativeCaptureCommandError = String(error?.stack || error);
-					});
-				}
-				return { started: true };
-			} catch (error) {
-				return { started: false, error: String(error?.stack || error) };
-			}
-		`);
-		if (!result?.started) {
-			throw new Error(`Workbench command ${commandId} failed to start: ${result?.error || 'unknown error'}`);
-		}
-	}
-
-	async function commandError() {
-		return syncEval('globalThis.__nyalaNativeCaptureCommandError || ""');
+		commandSequence += 1;
+		await executeWorkbenchCommandAndWait(syncScript, commandId, {
+			commandToken: `${runNonce}:${commandSequence}`,
+			timeoutMs: scriptTimeoutMs
+		});
 	}
 
 	async function waitForExpression(expression, label) {
@@ -295,17 +341,25 @@ async function run() {
 	}
 
 	async function setWindowSize(viewport) {
-		const devicePixelRatio = Number(await syncEval('window.devicePixelRatio'));
-		const requestedPhysicalRect = scaleCssViewportToPhysicalWindowRect(viewport, devicePixelRatio);
-		const appliedWindowRect = unwrapWebdriverValue(
-			await webdriverRequest(driverUrl, `/session/${sessionId}/window/rect`, 'POST', requestedPhysicalRect)
+		const requestedCssViewport = { width: viewport.width, height: viewport.height };
+		const calibration = await convergeWindowRectForCssViewport(
+			requestedCssViewport,
+			async requestedWindowRect => {
+				const appliedWindowRect = unwrapWebdriverValue(
+					await webdriverRequest(driverUrl, `/session/${sessionId}/window/rect`, 'POST', requestedWindowRect)
+				);
+				await delay(250);
+				const observedCssViewport = await syncEval('({ width: window.innerWidth, height: window.innerHeight })');
+				return { appliedWindowRect, observedCssViewport };
+			},
+			{
+				maxAttempts: viewportCalibrationMaxAttempts,
+				tolerance: viewportCalibrationTolerance
+			}
 		);
-		await delay(250);
 		return {
-			requestedCssViewport: { width: viewport.width, height: viewport.height },
-			requestedPhysicalRect,
-			devicePixelRatio,
-			appliedWindowRect
+			...calibration,
+			devicePixelRatio: Number(await syncEval('window.devicePixelRatio'))
 		};
 	}
 
@@ -350,26 +404,136 @@ async function run() {
 	}
 }
 
-function validateRequestedViewport(requested, actual) {
-	const passed =
-		requested.id === 'narrow'
-			? actual.width >= 320 && actual.width <= 420 && actual.height >= 480
-			: actual.width >= 1200 && actual.height >= 700;
+export async function executeWorkbenchCommandAndWait(
+	syncScript,
+	commandId,
+	{ commandToken = createWebdriverRunNonce(), timeoutMs = 30_000, pollIntervalMs = 25 } = {}
+) {
+	if (typeof syncScript !== 'function') throw new Error('Workbench command execution requires a script executor.');
+	if (typeof commandId !== 'string' || commandId.length === 0) {
+		throw new Error('Workbench command id must be a non-empty string.');
+	}
+	if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+		throw new Error(`Workbench command timeout must be a positive integer, got ${timeoutMs}`);
+	}
+	if (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 0) {
+		throw new Error(`Workbench command poll interval must be a non-negative integer, got ${pollIntervalMs}`);
+	}
+
+	const encodedCommandId = JSON.stringify(commandId);
+	const encodedCommandToken = JSON.stringify(String(commandToken));
+	const start = await syncScript(`
+		const commandToken = ${encodedCommandToken};
+		const states = globalThis.__nyalaNativeCaptureCommandStates ??= Object.create(null);
+		states[commandToken] = { status: 'pending' };
+		try {
+			const commandResult = globalThis.__sidex_commandService.executeCommand(${encodedCommandId});
+			Promise.resolve(commandResult).then(
+				() => { states[commandToken] = { status: 'fulfilled' }; },
+				error => { states[commandToken] = { status: 'rejected', error: String(error?.stack || error) }; }
+			);
+			return { started: true };
+		} catch (error) {
+			states[commandToken] = { status: 'rejected', error: String(error?.stack || error) };
+			return { started: false, error: String(error?.stack || error) };
+		}
+	`);
+	if (!start?.started) {
+		throw new Error(`Workbench command ${commandId} failed to start: ${start?.error || 'unknown error'}`);
+	}
+
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const state = await syncScript(`
+			const states = globalThis.__nyalaNativeCaptureCommandStates;
+			const commandToken = ${encodedCommandToken};
+			const state = states?.[commandToken] ?? { status: 'missing' };
+			if (state.status === 'fulfilled' || state.status === 'rejected') delete states[commandToken];
+			return state;
+		`);
+		if (state?.status === 'fulfilled') return;
+		if (state?.status === 'rejected') {
+			throw new Error(`Workbench command ${commandId} rejected: ${state.error || 'unknown error'}`);
+		}
+		if (state?.status === 'missing') {
+			throw new Error(`Workbench command ${commandId} lost its page execution state.`);
+		}
+		await delay(pollIntervalMs);
+	}
+	throw new Error(`Timed out waiting for Workbench command ${commandId}.`);
+}
+
+export function validateRequestedViewport(requested, actual, calibration) {
+	const dimensionsMatch = dimensionsWithinTolerance(requested, actual, viewportCalibrationTolerance);
+	const viewportConverged = calibration?.viewportConverged === true;
 	return {
 		id: 'requested-viewport',
-		passed,
-		reason: `${requested.id} requested ${requested.width}x${requested.height}; inner viewport ${actual.width}x${actual.height}`
+		passed: viewportConverged && dimensionsMatch,
+		reason: `${requested.id} requested ${requested.width}x${requested.height}; inner viewport ${actual.width}x${actual.height}; calibration ${viewportConverged ? 'converged' : 'did not converge'}`
 	};
 }
 
-async function writeEvidence({ status, reason, identity, frontendSource, artifacts }) {
+export function validateScreenshotPhysicalDimensions(
+	screenshot,
+	cssViewport,
+	tolerance = screenshotDimensionTolerance
+) {
+	const expectedWidth = Number(cssViewport?.width) * Number(cssViewport?.devicePixelRatio);
+	const expectedHeight = Number(cssViewport?.height) * Number(cssViewport?.devicePixelRatio);
+	const widthDelta = Math.abs(Number(screenshot?.width) - expectedWidth);
+	const heightDelta = Math.abs(Number(screenshot?.height) - expectedHeight);
+	const passed =
+		Number.isFinite(expectedWidth) &&
+		expectedWidth > 0 &&
+		Number.isFinite(expectedHeight) &&
+		expectedHeight > 0 &&
+		Number.isFinite(tolerance) &&
+		tolerance >= 0 &&
+		widthDelta <= tolerance &&
+		heightDelta <= tolerance;
+	return {
+		id: 'screenshot-size',
+		passed,
+		reason: `${screenshot?.width}x${screenshot?.height}; expected ${formatDimension(expectedWidth)}x${formatDimension(expectedHeight)} from ${cssViewport?.width}x${cssViewport?.height} CSS at DPR ${cssViewport?.devicePixelRatio}`
+	};
+}
+
+export function shouldOpenAgentPanel(agentPanelVisible) {
+	return !agentPanelVisible;
+}
+
+export function validateWebdriverRunNonce(expectedNonce, observedNonce) {
+	if (typeof expectedNonce !== 'string' || expectedNonce.length === 0) {
+		throw new Error('Embedded WebDriver run nonce must be a non-empty string.');
+	}
+	if (observedNonce !== expectedNonce) {
+		throw new Error('Embedded WebDriver page ownership nonce did not match this evidence run.');
+	}
+	return true;
+}
+
+export function evaluateAutomatedSurfaceChecks(checks) {
+	const failedCheckIds = checks
+		.filter(check => !(manualGateCheckIds.has(check?.id) && check?.scope === 'manual') && check?.passed !== true)
+		.map(check => String(check?.id ?? 'unknown'));
+	return {
+		status: failedCheckIds.length === 0 ? 'ready' : 'blocked',
+		failedCheckIds
+	};
+}
+
+async function writeEvidence({ status, reason, identity, webdriverOwnership, frontendSource, provenance, artifacts }) {
 	const report = {
-		version: 1,
+		version: 2,
 		generatedAt: new Date().toISOString(),
 		label: identity.platformName === 'windows' ? 'Windows WebView2 SQL Agent' : 'macOS WKWebView SQL Agent',
 		status,
+		automatedSurfaceStatus: status,
+		checkpointDecision: 'BLOCKED',
 		reason,
 		...identity,
+		provenance,
+		webdriverOwnership,
 		...(frontendSource ? { frontendSource } : {}),
 		artifacts,
 		limitations: [
@@ -377,11 +541,36 @@ async function writeEvidence({ status, reason, identity, frontendSource, artifac
 			keyboardLimitation,
 			'A real VoiceOver or Narrator walkthrough remains manual and is not claimed by this evidence.'
 		],
+		manualGates: {
+			nativeKeyboard: 'pending',
+			screenReader: 'pending'
+		},
 		keyboardMode
 	};
 	await mkdir(dirname(outputPath), { recursive: true });
 	await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 	process.stdout.write(`Wrote ${outputPath}\n`);
+}
+
+function createEvidenceProvenance(options) {
+	const workflowRunAttempt = Number(options['workflow-run-attempt']);
+	return compactObject({
+		repository: options.repository,
+		sourceRevision: options['source-revision'],
+		sourceRef: options['source-ref'],
+		workflowRunId: options['workflow-run-id'],
+		workflowRunAttempt: Number.isInteger(workflowRunAttempt) && workflowRunAttempt > 0 ? workflowRunAttempt : undefined
+	});
+}
+
+function compactObject(value) {
+	return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined && item !== ''));
+}
+
+async function sha256File(path) {
+	const hash = createHash('sha256');
+	for await (const chunk of createReadStream(path)) hash.update(chunk);
+	return hash.digest('hex');
 }
 
 function parseArgs(args) {
@@ -414,4 +603,8 @@ function parseBoundedInteger(value, name, min, max) {
 
 function delay(ms) {
 	return new Promise(resolveDelay => setTimeout(resolveDelay, ms));
+}
+
+function formatDimension(value) {
+	return Number.isFinite(value) ? String(Math.round(value * 100) / 100) : 'invalid';
 }

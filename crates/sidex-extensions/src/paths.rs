@@ -4,11 +4,33 @@
 
 use std::path::PathBuf;
 
-/// Root `SideX` data directory (`~/.sidex`).
+#[cfg(all(feature = "webdriver", debug_assertions))]
+const WEBDRIVER_APP_DATA_DIR_ENV: &str = "NYALA_WEBDRIVER_APP_DATA_DIR";
+
+/// Root extension data directory (`~/.sidex` outside isolated `WebDriver` runs).
 pub fn sidex_data_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".sidex")
+    resolve_sidex_data_dir(dirs::home_dir(), webdriver_data_dir_override())
+}
+
+fn resolve_sidex_data_dir(
+    home_dir: Option<PathBuf>,
+    webdriver_override: Option<PathBuf>,
+) -> PathBuf {
+    webdriver_override.unwrap_or_else(|| {
+        home_dir
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".sidex")
+    })
+}
+
+#[cfg(all(feature = "webdriver", debug_assertions))]
+fn webdriver_data_dir_override() -> Option<PathBuf> {
+    std::env::var_os(WEBDRIVER_APP_DATA_DIR_ENV).map(PathBuf::from)
+}
+
+#[cfg(not(all(feature = "webdriver", debug_assertions)))]
+fn webdriver_data_dir_override() -> Option<PathBuf> {
+    None
 }
 
 /// User-installed extensions directory (`~/.sidex/extensions`).
@@ -108,4 +130,29 @@ fn is_usable_node(binary: &str) -> bool {
         cmd.creation_flags(0x0800_0000);
     }
     cmd.status().is_ok_and(|s| s.success())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_sidex_data_dir;
+    use std::path::PathBuf;
+
+    #[test]
+    fn default_data_dir_remains_under_the_user_home() {
+        assert_eq!(
+            resolve_sidex_data_dir(Some(PathBuf::from("/home/nyala")), None),
+            PathBuf::from("/home/nyala/.sidex")
+        );
+    }
+
+    #[test]
+    fn webdriver_data_dir_override_wins_when_present() {
+        assert_eq!(
+            resolve_sidex_data_dir(
+                Some(PathBuf::from("/home/nyala")),
+                Some(PathBuf::from("/tmp/nyala-webdriver"))
+            ),
+            PathBuf::from("/tmp/nyala-webdriver")
+        );
+    }
 }

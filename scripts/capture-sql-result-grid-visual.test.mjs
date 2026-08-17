@@ -6,7 +6,11 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { deflateSync } from 'node:zlib';
 import test from 'node:test';
-import { hasVisiblePngDiversity, inspectPngPixels } from './sql-result-grid-visual-png.mjs';
+import {
+	hasVisiblePngDiversity,
+	inspectPngPixels,
+	validatePngViewportDimensions
+} from './sql-result-grid-visual-png.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -22,6 +26,11 @@ test('visual capture harness exposes bounded workload and renderer controls', as
 	assert.match(source, /header-sentinel/);
 	assert.match(source, /visible-text/);
 	assert.match(source, /browserTimeoutMs/);
+	assert.match(source, /--remote-debugging-port=0/);
+	assert.match(source, /Page\.captureScreenshot/);
+	assert.match(source, /isBenchmarkResultForRun/);
+	assert.doesNotMatch(source, /--dump-dom/);
+	assert.doesNotMatch(source, /--virtual-time-budget/);
 	assert.match(source, /Chromium headless screenshots/);
 	assert.match(source, /separate platform evidence workflow/);
 	assert.match(source, /1_000/);
@@ -35,6 +44,27 @@ test('pixel analysis rejects a correctly-sized solid PNG', () => {
 	assert.equal(analysis.height, 420);
 	assert.equal(analysis.distinctColorBuckets, 1);
 	assert.equal(hasVisiblePngDiversity(analysis), false);
+});
+
+test('PNG viewport dimensions bind CSS pixels to device pixels with a bounded tolerance', () => {
+	assert.deepEqual(
+		validatePngViewportDimensions({ width: 2880, height: 840 }, { width: 1440, height: 420, devicePixelRatio: 2 }),
+		{ passed: true, expectedWidth: 2880, expectedHeight: 840 }
+	);
+	assert.deepEqual(
+		validatePngViewportDimensions({ width: 390, height: 420 }, { width: 1440, height: 420, devicePixelRatio: 1 }),
+		{ passed: false, expectedWidth: 1440, expectedHeight: 420 }
+	);
+	assert.equal(
+		validatePngViewportDimensions({ width: 1442, height: 418 }, { width: 1440, height: 420, devicePixelRatio: 1 })
+			.passed,
+		true
+	);
+	assert.equal(
+		validatePngViewportDimensions({ width: 1443, height: 420 }, { width: 1440, height: 420, devicePixelRatio: 1 })
+			.passed,
+		false
+	);
 });
 
 test('visual capture harness supports help without launching a browser', async () => {

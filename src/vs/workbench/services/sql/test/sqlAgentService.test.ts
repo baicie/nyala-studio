@@ -21,6 +21,14 @@ class FakeExecutor implements ISqlCommandExecutor {
 	}
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>(resolvePromise => {
+		resolve = resolvePromise;
+	});
+	return { promise, resolve };
+}
+
 const request = {
 	goal: '  generate a query  ',
 	task: SqlAgentTaskKind.GenerateQuery,
@@ -52,6 +60,124 @@ test('normalizeSqlAgentStartRequest preserves and trims structured error context
 	});
 });
 
+test('normalizeSqlAgentStartRequest preserves the stale-safe editor identity', () => {
+	const normalized = normalizeSqlAgentStartRequest({
+		...request,
+		task: SqlAgentTaskKind.FixError,
+		context: {
+			dialect: SqlDialect.Sqlite,
+			editorId: ' query-7 ',
+			editorVersionId: 9,
+			sql: ' SELECT amunt FROM orders ',
+			errorContext: { message: 'no such column: amunt' }
+		}
+	});
+
+	assert.equal(normalized.context.editorId, 'query-7');
+	assert.equal(normalized.context.editorVersionId, 9);
+});
+
+test('normalizeSqlAgentStartRequest rejects an invalid editor version identity', () => {
+	assert.throws(
+		() =>
+			normalizeSqlAgentStartRequest({
+				...request,
+				context: { dialect: SqlDialect.Sqlite, editorVersionId: 0 }
+			}),
+		/editor version id/
+	);
+});
+
+test('normalizeSqlAgentStartRequest reduces Optimize context to its opaque stale-safe allowlist', () => {
+	const normalized = normalizeSqlAgentStartRequest({
+		...request,
+		task: SqlAgentTaskKind.OptimizeQuery,
+		mode: SqlAgentMode.ReadOnly,
+		context: {
+			dialect: SqlDialect.Sqlite,
+			connectionId: ' demo-reader ',
+			editorId: ' query-7 ',
+			editorVersionId: 9,
+			sql: ' SELECT * FROM orders ',
+			selectedSql: 'SELECT secret FROM credentials',
+			errorMessage: 'legacy error',
+			errorContext: { message: 'legacy structured error' },
+			userPrompt: 'include every row',
+			explainPlan: 'legacy frontend plan',
+			schema: [{ name: 'credentials', columns: ['secret'] }],
+			resultShape: { columns: [{ name: 'secret', ordinal: 0 }], rowCount: 1, elapsedMs: 1, truncated: false }
+		}
+	});
+
+	assert.deepEqual(normalized.context, {
+		dialect: SqlDialect.Sqlite,
+		connectionId: 'demo-reader',
+		editorId: 'query-7',
+		editorVersionId: 9,
+		sql: 'SELECT * FROM orders'
+	});
+});
+
+test('normalizeSqlAgentStartRequest requires a complete Read Only SQLite context for Optimize', () => {
+	const optimizeRequest = {
+		...request,
+		task: SqlAgentTaskKind.OptimizeQuery,
+		mode: SqlAgentMode.ReadOnly,
+		context: {
+			dialect: SqlDialect.Sqlite,
+			connectionId: 'demo-reader',
+			editorId: 'query-7',
+			editorVersionId: 9,
+			sql: 'SELECT * FROM orders'
+		}
+	};
+
+	assert.throws(
+		() => normalizeSqlAgentStartRequest({ ...optimizeRequest, mode: SqlAgentMode.SuggestOnly }),
+		/Read Only mode/
+	);
+	assert.throws(
+		() =>
+			normalizeSqlAgentStartRequest({
+				...optimizeRequest,
+				context: { ...optimizeRequest.context, dialect: SqlDialect.MySql }
+			}),
+		/SQLite/
+	);
+	assert.throws(
+		() =>
+			normalizeSqlAgentStartRequest({
+				...optimizeRequest,
+				context: { ...optimizeRequest.context, connectionId: '   ' }
+			}),
+		/connection id/
+	);
+	assert.throws(
+		() =>
+			normalizeSqlAgentStartRequest({
+				...optimizeRequest,
+				context: { ...optimizeRequest.context, editorId: '   ' }
+			}),
+		/editor id/
+	);
+	assert.throws(
+		() =>
+			normalizeSqlAgentStartRequest({
+				...optimizeRequest,
+				context: { ...optimizeRequest.context, editorVersionId: undefined }
+			}),
+		/editor version id/
+	);
+	assert.throws(
+		() =>
+			normalizeSqlAgentStartRequest({
+				...optimizeRequest,
+				context: { ...optimizeRequest.context, sql: '   ' }
+			}),
+		/SQL/
+	);
+});
+
 test('normalizeSqlAgentStartRequest rejects malformed task, dialect, and capability', () => {
 	assert.throws(() => normalizeSqlAgentStartRequest({ ...request, task: 'unknown' as never }), /task/);
 	assert.throws(
@@ -66,25 +192,103 @@ test('normalizeSqlAgentStartRequest rejects malformed task, dialect, and capabil
 
 test('SqlAgentService uses the command executor for start, cancel, and get', async () => {
 	const executor = new FakeExecutor();
-	const event = {
-		run: { runId: 'agent-run-1' },
+	const started = {
+		run: { runId: 'agent-run-1', revision: 0 },
+		result: undefined
+	};
+	const completed = {
+		run: { runId: 'agent-run-1', state: 'completed', revision: 1 },
 		result: { queryCallCount: 0 }
 	};
-	executor.responses.set('sql_agent_start', event);
-	executor.responses.set('sql_agent_cancel', event);
-	executor.responses.set('sql_agent_get_run', event.run);
+	executor.responses.set('sql_agent_start', started);
+	executor.responses.set('sql_agent_run', completed);
+	executor.responses.set('sql_agent_cancel', completed);
+	executor.responses.set('sql_agent_get_run', completed.run);
 	const service = new SqlAgentService(executor);
 
-	assert.deepEqual(await service.start(request), event);
-	assert.deepEqual(service.getLastRunEvent(), event);
-	assert.deepEqual(await service.cancel(' agent-run-1 '), event);
-	assert.deepEqual(service.getLastRunEvent(), event);
-	assert.deepEqual(await service.getRun('agent-run-1'), event.run);
+	assert.deepEqual(await service.start(request), completed);
+	assert.deepEqual(service.getLastRunEvent(), completed);
+	assert.deepEqual(await service.cancel(' agent-run-1 '), completed);
+	assert.deepEqual(service.getLastRunEvent(), completed);
+	assert.deepEqual(await service.getRun('agent-run-1'), completed.run);
 	assert.deepEqual(
 		executor.calls.map(call => call.command),
-		['sql_agent_start', 'sql_agent_cancel', 'sql_agent_get_run']
+		['sql_agent_start', 'sql_agent_run', 'sql_agent_cancel', 'sql_agent_get_run']
 	);
+	assert.deepEqual(executor.calls[1].args, { runId: 'agent-run-1' });
 	service.dispose();
+});
+
+test('SqlAgentService publishes the allocated run before the background loop completes', async () => {
+	const executor = new FakeExecutor();
+	const started = { run: { runId: 'agent-run-1', state: 'created', revision: 0 } };
+	const completed = {
+		run: { runId: 'agent-run-1', state: 'completed', revision: 1 },
+		result: { queryCallCount: 0 }
+	};
+	const background = deferred<typeof completed>();
+	executor.responses.set('sql_agent_start', started);
+	executor.responses.set('sql_agent_run', background.promise);
+	const service = new SqlAgentService(executor);
+	const events: unknown[] = [];
+	service.onDidChangeRun(event => events.push(event));
+
+	const completion = service.start(request);
+	await new Promise<void>(resolve => setTimeout(resolve, 0));
+
+	assert.deepEqual(events, [started]);
+	assert.deepEqual(
+		executor.calls.map(call => call.command),
+		['sql_agent_start', 'sql_agent_run']
+	);
+	background.resolve(completed);
+	assert.deepEqual(await completion, completed);
+	assert.deepEqual(events, [started, completed]);
+	service.dispose();
+});
+
+test('SqlAgentService deduplicates matching Rust events and command responses', async () => {
+	const previousTauri = (globalThis as { __TAURI__?: unknown }).__TAURI__;
+	let emitRunEvent: ((event: unknown) => void) | undefined;
+	(globalThis as { __TAURI__?: unknown }).__TAURI__ = {
+		event: {
+			listen: async (_event: string, handler: (event: { payload: unknown }) => void) => {
+				emitRunEvent = payload => handler({ payload });
+				return () => undefined;
+			}
+		}
+	};
+	const executor = new FakeExecutor();
+	const started = { run: { runId: 'agent-run-dedupe', state: 'created', revision: 0 } };
+	const completed = {
+		run: { runId: 'agent-run-dedupe', state: 'completed', revision: 3 },
+		result: { queryCallCount: 0 }
+	};
+	const stale = { run: { runId: 'agent-run-dedupe', state: 'reasoning', revision: 2 } };
+	executor.responses.set('sql_agent_start', started);
+	executor.responses.set('sql_agent_run', completed);
+
+	try {
+		const service = new SqlAgentService(executor);
+		const events: unknown[] = [];
+		service.onDidChangeRun(event => events.push(event));
+		await new Promise<void>(resolve => setTimeout(resolve, 0));
+		emitRunEvent?.(started);
+
+		await service.start(request);
+		emitRunEvent?.(completed);
+		emitRunEvent?.(stale);
+
+		assert.deepEqual(events, [started, completed]);
+		assert.deepEqual(service.getLastRunEvent(), completed);
+		service.dispose();
+	} finally {
+		if (previousTauri === undefined) {
+			delete (globalThis as { __TAURI__?: unknown }).__TAURI__;
+		} else {
+			(globalThis as { __TAURI__?: unknown }).__TAURI__ = previousTauri;
+		}
+	}
 });
 
 test('SqlAgentService validates run id before invoking cancel', async () => {

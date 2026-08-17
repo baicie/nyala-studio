@@ -1,11 +1,11 @@
 # SQL Workspace Agent 设计规格
 
-> 状态：Proposed
+> 状态：Implemented through A4.2, including A1.3 SQLite Schema Graph; Checkpoint R complete; native Checkpoint W pending
 >
 > 设计基线：`mvp` 分支，`ffb13b98`（2026-08-11）
 >
-> 本文是 Phase 06 AI Helper 的后续演进设计，不表示 Agent Runtime 已实现，也不改变
-> `docs/sql-mvp-phases/README.md` 中任何 Phase 的完成状态或 driver maturity。
+> 本文是 Phase 06 AI Helper 的后续演进设计。A0.1-A4.2（含 A1.3）已按 vNext 路线实现；本状态不表示
+> Checkpoint W、Zeus Z1.3/Z2 或 MVP vNext release gate 已完成，也不改变任何 driver maturity。
 
 ## 1. 决策摘要
 
@@ -195,6 +195,11 @@ pub trait SqlCoreAdapter: Send + Sync {
         request: SchemaContextRequest,
     ) -> Result<SchemaContextResult, SqlCommandError>;
 
+    fn search_relations(
+        &self,
+        request: RelationSearchRequest,
+    ) -> Result<RelationSearchResult, SqlCommandError>;
+
     fn explain_readonly(
         &self,
         request: ExplainReadonlyRequest,
@@ -343,7 +348,12 @@ export interface SqlWorkspaceContextRef {
 
 Schema Graph 是 per-connection cache：table/view 是 node，foreign key 是 directed edge。缓存 key 至少包含 connection id、database/schema 和 metadata revision。连接关闭、DDL 成功或用户 refresh 时失效。
 
-如果当前 driver 没有 FK metadata，relation search 只能基于显式 join SQL 提供低置信候选，并标明 evidence kind，不能声明真实外键。
+A1.3 不实现 inferred relation。SQLite Generate 只有在 typed
+`declared_foreign_key` evidence 与检索到的 schema 匹配时才能引入 JOIN；复合 FK 必须保留全部
+column ordinal。已有 SQL 中的显式 JOIN 最多可作为独立、低置信的 `explicit_join` context 用于
+Explain/Fix，不能冒充 FK，也不能授权 Generate 创造关系；列名相似永远不构成 relation evidence。
+缺少 FK capability、已支持但没有匹配关系、以及因 graph/search budget 截断是三个不同状态，
+不得用空数组混淆。
 
 ### 7.4 Result data policy
 
@@ -616,6 +626,7 @@ UI 规则：
 
 - run 只检索相关的 `users`/`orders` 和关系；
 - SQL 使用真实列，不凭空增加列；
+- 新引入的 JOIN 具有匹配的 `declared_foreign_key` evidence；无 evidence 时降级为单表 SQL；
 - `sql.parse` 返回单条 ReadOnly；
 - Suggest-only 下只展示 SQL diff；
 - Read-only 下执行仍需用户已显式启用该 mode；
@@ -627,7 +638,13 @@ UI 规则：
 
 验收：
 
-- 使用当前 editor version、原 SQL、structured error 和真实 columns；
+- Workbench 只提交 opaque connection id、当前 editor identity/version、原 SQL 和 structured error，
+  不提交 renderer schema payload；
+- Rust backend 在该连接上检索有界真实 columns，并严格执行
+  `schema.search -> sql.parse -> final`；
+- 缺失或空白 connection id 在 run allocation 前 fail closed，不回落到 generic gateway；
+- 修复稿必须是单条 ReadOnly，final SQL 必须与 parsed draft 完全一致，且
+  `queryCallCount = 0`；
 - 返回 patch 与解释；
 - editor 已变化时不覆盖，改为展示 stale-context diff；
 - 修复稿不自动执行。
@@ -675,16 +692,22 @@ UI 规则：
   - Verify：SQLite adapter tests + MySQL unsupported/preview tests。
   - Plan：[`A1.1 Implementation Plan`](./sql-workspace-agent-a1-1-implementation-plan.md)。
   - Record：`e808fbef`、`08e4fc81`、`2007400a`（2026-08-11 完成；25 个 focused tests + 全量回归）。
-- [x] A1.2：实现 bounded schema search/cache，之后再加 FK graph。
+- [x] A1.2：实现 bounded schema search/cache；FK graph 在后续 A1.3 补齐。
   - Record：[`Agent foundation verification`](./sql-mvp-phases/phase-a0-a1-foundation-verification.md)（2026-08-12）。
   - Acceptance：稳定排序、TTL/invalidation、object/byte cap 可测。
   - Verify：pure Rust tests。
+- [x] A1.3：为 SQLite 增加 bounded foreign-key metadata、Schema Graph 与 `relation.search`。
+  - Record：[`Agent foundation verification`](./sql-mvp-phases/phase-a0-a1-foundation-verification.md)（2026-08-16）。
+  - Acceptance：复合 FK 原子保留；supported-empty/unsupported/truncated 可区分；一到两跳稳定路径受
+    path/edge/byte budget；cache key 与失效规则完整；Generate JOIN 只接受
+    `declared_foreign_key` evidence；Suggest-only 全路径零 query call。
+  - Verify：focused SQLite FK、relation graph、adapter、Suggest-only tests + `test:sql-agent` + Rust gates。
 - [x] A2.1：实现 domain、state machine、budget、evidence store。
   - Record：[`A2.1 Runtime Domain Verification`](./sql-mvp-phases/phase-a2-1-runtime-domain-verification.md)（2026-08-12 完成；47 个 agent focused tests）。
   - Acceptance：非法 transition、timeout、cancel、redaction 均有 tests。
   - Verify：`cargo test --lib agent`。
 - [x] A2.2：统一 capability schema 并在 Rust policy 强制执行。
-  - Record：[`A2.2 Capability Policy Verification`](./sql-mvp-phases/phase-a2-2-capability-policy-verification.md)（2026-08-12 完成；52 个 Rust agent tests + 2 个 canonical capability tests）。
+  - Record：[`A2.2 Capability Policy Verification`](./sql-mvp-phases/phase-a2-2-capability-policy-verification.md)（2026-08-12 完成；2026-08-14 增加 backend-owned grant intersection，当前 177 个 Rust agent tests + 2 个 canonical capability tests）。
   - Acceptance：manifest/model 不能绕过 tool capability。
   - Verify：allow/deny table tests + frontend type tests。
 - [x] A2.3：实现 deterministic Model Gateway 与 Suggest-only loop。
@@ -695,8 +718,6 @@ UI 规则：
   - Record：[`A2.4 Service Bridge Verification`](./sql-mvp-phases/phase-a2-4-service-bridge-verification.md)（2026-08-12）。
   - Acceptance：view 不直接 invoke；stream/cancel listener 可 dispose。
   - Verify：`test:sql-services` + `test:sql-agent` + Rust checks。
-  - Acceptance：view 不直接 invoke；stream/cancel listener 可 dispose。
-  - Verify：`test:sql-services` + Rust command tests。
 - [x] A3.1：增加 read-only explain/execute tools。
   - Record：[`A3.1 Read-only Tools Verification`](./sql-mvp-phases/phase-a3-1-read-only-tools-verification.md)（2026-08-12）。
   - Files：`agent/read_only.rs`、`agent/policy.rs`、`state.rs`、Workbench Agent service contract。
@@ -706,15 +727,24 @@ UI 规则：
   - Record：[`A3.2 Result Policy Verification`](./sql-mvp-phases/phase-a3-2-result-policy-verification.md)（2026-08-12）。
   - Acceptance：默认不外发 rows，sample cap/redaction/approval 可测。
   - Verify：policy tests + fake model envelope snapshot + scripted ReadOnly loop。
+- [x] Checkpoint R：Demo SQLite Generate/Fix/Explore 自动化与 macOS 原生三故事走查已完成。
+  - Record：[`A4 Workbench Verification`](./sql-mvp-phases/phase-a4-workbench-verification.md) 与
+    [`Checkpoint R Explore Verification`](./sql-mvp-phases/phase-agent-checkpoint-r-explore-verification.md)（2026-08-15）。
+  - Acceptance：Generate/Fix 使用真实 backend schema 并通过 parse；Explore 完成
+    schema -> parse -> 单次 read-only execute -> inspect -> evidence answer；
+    write/multi/Unknown/capability/budget deny；默认无 rows。
+  - Verify：real Demo SQLite integration + native three-story walkthrough。
 - [x] A4.1：先接 Editor/Error actions 和 diff artifact。
   - Record：[`A4 Workbench Verification`](./sql-mvp-phases/phase-a4-workbench-verification.md)（2026-08-12，browser QA pending）。
   - Acceptance：stale editor 不覆盖、已有 Phase 06 commands 不回归。
   - Verify：artifact tests + `test:sql-editor` + `test:sql-advanced`。
 - [x] A4.2：最后接 Agent Panel、Schema/Result/Fix actions。
-  - Record：[`A4 Workbench Verification`](./sql-mvp-phases/phase-a4-workbench-verification.md)（2026-08-13；actions、Panel 与 Chromium automation 已完成）。
-  - Acceptance：全状态可见、键盘可达、dispose/cancel 行为清晰。
-  - Verify：contribution tests + Playwright desktop/narrow viewport screenshots。
-- [ ] Checkpoint W：完成 macOS 原生 viewport/键盘、Windows WebView2 与真实 VoiceOver/Narrator 走查。
+  - Record：[`A4 Workbench Verification`](./sql-mvp-phases/phase-a4-workbench-verification.md)（2026-08-16；actions、Panel、backend-grounded Generate/Fix/Explore、九种 run state 与 Checkpoint W evidence contracts 已完成）。
+  - Acceptance：全状态可见、键盘可达、dispose/cancel 行为清晰；Schema/Fix actions 不把
+    renderer schema 当成信任边界。
+  - Verify：contribution tests + Rust/Workbench state alignment + desktop/narrow viewport screenshots。
+- [ ] Checkpoint W：两阶段 GitHub capture/attestation 与 fail-closed verifier 已实现；仍需完成 macOS
+      原生键盘、Windows WebView2 与真实 VoiceOver/Narrator 走查。
 
 ## 17. Code Style
 
@@ -853,4 +883,4 @@ pnpm run test
 - A6 write 和 A8 advanced 保持在首版范围之外；
 - Phase 08 状态和 SQLite/MySQL/PostgreSQL maturity 没有被本文改变。
 
-本次用户已明确授权 A0.1 与 A1.1 作为顺序例外，并分别按独立 implementation plan 完成。A0.2、A1.2、A2.1-A2.4 与 A3.1-A3.2 已按独立 spike/implementation record 完成；A4 仍保持未实现，后续继续按 Stage 拆分，不能把 A0-A4 合并成一个大 PR。
+本次用户已明确授权 A0.1 与 A1.1 作为顺序例外，并分别按独立 implementation plan 完成。A0.2、A1.2、A1.3、A2.1-A2.4、A3.1-A3.2 与 A4.1-A4.2 已按独立 spike/implementation record 完成；Checkpoint R 已由自动化与 macOS 原生三故事证据签收，Checkpoint W 仍保持未完成，不能把 embedded synthetic keyboard 误写为真实键盘/读屏签收，也不能把 A0-A4 合并成一个大 PR。

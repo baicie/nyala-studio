@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { SqlConnectionService } from '../browser/sqlConnectionService.js';
+import { SqlConnectionChangeService } from '../browser/sqlConnectionChangeService.js';
 import {
 	ISqlCommandExecutor,
 	SqlCommandName,
@@ -55,6 +56,18 @@ class FakeSqlCommandExecutor implements ISqlCommandExecutor {
 		return call;
 	}
 }
+
+test('SqlConnectionChangeService broadcasts connection cache invalidation', () => {
+	const service = new SqlConnectionChangeService();
+	let changeCount = 0;
+	const listener = service.onDidChangeConnections(() => changeCount++);
+
+	service.notifyConnectionsChanged();
+
+	assert.equal(changeCount, 1);
+	listener.dispose();
+	service.dispose();
+});
 
 test('normalizeSqlConnectionInput trims fields and applies boolean defaults', () => {
 	const input = normalizeSqlConnectionInput({

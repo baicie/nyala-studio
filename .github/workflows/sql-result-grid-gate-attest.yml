@@ -1,0 +1,192 @@
+name: SQL Result Grid Z1 Gate Attestation
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform_run_id:
+        description: 'Successful SQL Result Grid Native WebView Evidence run ID for this revision'
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: sql-result-grid-z1-gate-attest-${{ inputs.platform_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  attest-z1-gate:
+    name: Recompute and attest the Z1 gate
+    if: github.ref_protected == true && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    environment: sql-result-grid-z1-gate
+    env:
+      PLATFORM_RUN_ID: ${{ inputs.platform_run_id }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Initialize fail-closed Z1 attestation directory
+        run: |
+          ATTESTATION_ROOT="$RUNNER_TEMP/sql-result-grid-z1-attestation"
+          echo "ATTESTATION_ROOT=$ATTESTATION_ROOT" >> "$GITHUB_ENV"
+          mkdir -p "$ATTESTATION_ROOT/source"
+          node -e "const fs=require('node:fs');const p=process.env.RUNNER_TEMP+'/sql-result-grid-z1-attestation/phase-z1-gate.json';fs.writeFileSync(p,JSON.stringify({version:2,generatedAt:new Date().toISOString(),sourceRevision:process.env.GITHUB_SHA,decision:'NO-GO',reasons:['The protected Z1 attestation workflow did not complete.']},null,2)+'\n')"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Verify protected default-branch source
+        run: |
+          test "$GITHUB_REF_PROTECTED" = "true" || {
+            echo 'Z1 attestation requires a branch protected by GitHub rules.' >&2
+            exit 1
+          }
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" || {
+            echo 'Z1 attestation must run from the protected default branch.' >&2
+            exit 1
+          }
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA" || {
+            echo 'Default branch moved after dispatch; rerun the Z1 attestation.' >&2
+            exit 1
+          }
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Fetch immutable platform run metadata
+        env:
+          GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          case "$PLATFORM_RUN_ID" in
+            ''|*[!0-9]*) echo 'platform_run_id must be a positive integer' >&2; exit 1 ;;
+          esac
+          curl --fail-with-body --silent --show-error --location \
+            --header "Authorization: Bearer $GH_API_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$PLATFORM_RUN_ID" \
+            --output "$ATTESTATION_ROOT/platform-run-api.json"
+          curl --fail-with-body --silent --show-error --location \
+            --header "Authorization: Bearer $GH_API_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$PLATFORM_RUN_ID/artifacts?per_page=100" \
+            --output "$ATTESTATION_ROOT/platform-artifacts-api.json"
+
+      - id: platform-run
+        name: Verify immutable platform run metadata
+        run: |
+          node scripts/verify-sql-result-grid-platform-run.mjs \
+            --run-metadata "$ATTESTATION_ROOT/platform-run-api.json" \
+            --artifact-metadata "$ATTESTATION_ROOT/platform-artifacts-api.json" \
+            --output "$ATTESTATION_ROOT/platform-run.json" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$PLATFORM_RUN_ID" \
+            --expected-revision "$GITHUB_SHA" \
+            --expected-ref "$GITHUB_REF" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Download and verify aggregate artifact archive
+        env:
+          GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AGGREGATE_ARTIFACT_URL: ${{ steps.platform-run.outputs.artifact_url }}
+          AGGREGATE_ARTIFACT_DIGEST: ${{ steps.platform-run.outputs.artifact_digest }}
+        run: |
+          archive="$ATTESTATION_ROOT/sql-result-grid-platform-gate.zip"
+          entries="$ATTESTATION_ROOT/archive-entries.txt"
+          curl --fail-with-body --silent --show-error --location \
+            --header "Authorization: Bearer $GH_API_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$AGGREGATE_ARTIFACT_URL" \
+            --output "$archive"
+          printf '%s  %s\n' "$AGGREGATE_ARTIFACT_DIGEST" "$archive" | sha256sum --check --strict -
+          unzip -Z1 "$archive" > "$entries"
+          ENTRIES_FILE="$entries" node <<'NODE'
+          const fs = require('node:fs');
+          const entries = fs.readFileSync(process.env.ENTRIES_FILE, 'utf8').split(/\r?\n/).filter(Boolean);
+          if (entries.length === 0) throw new Error('Aggregate artifact archive is empty.');
+          for (const entry of entries) {
+            if (entry.startsWith('/') || /^[A-Za-z]:/.test(entry) || entry.includes('\\') || entry.split('/').includes('..')) {
+              throw new Error(`Unsafe aggregate artifact archive entry: ${entry}`);
+            }
+          }
+          NODE
+          unzip -q "$archive" -d "$ATTESTATION_ROOT/source"
+          rm "$archive" "$entries"
+          for path in \
+            "$ATTESTATION_ROOT/source/platform-evidence.json" \
+            "$ATTESTATION_ROOT/source/sql-result-grid-zeus-audit/phase-z1-benchmark.json" \
+            "$ATTESTATION_ROOT/source/sql-result-grid-zeus-audit/zeus-audit.json" \
+            "$ATTESTATION_ROOT/source/sql-result-grid-zeus-audit/data-grid-bundle.js"
+          do
+            test -f "$path" && test ! -L "$path" || {
+              echo "Required aggregate evidence is missing or unsafe: $path" >&2
+              exit 1
+            }
+          done
+
+      - id: z1-gate
+        name: Recompute fail-closed Z1 gate
+        continue-on-error: true
+        env:
+          NYALA_EXPECTED_REPOSITORY: ${{ github.repository }}
+          NYALA_EXPECTED_SOURCE_REVISION: ${{ github.sha }}
+          NYALA_EXPECTED_SOURCE_REF: ${{ github.ref }}
+          NYALA_EXPECTED_WORKFLOW_RUN_ID: ${{ inputs.platform_run_id }}
+          NYALA_EXPECTED_WORKFLOW_RUN_ATTEMPT: ${{ steps.platform-run.outputs.platform_run_attempt }}
+          NYALA_ZEUS_AUDIT_EVIDENCE: ${{ runner.temp }}/sql-result-grid-z1-attestation/source/sql-result-grid-zeus-audit/zeus-audit.json
+        run: |
+          node scripts/verify-sql-result-grid-gate.mjs \
+            "$ATTESTATION_ROOT/source/sql-result-grid-zeus-audit/phase-z1-benchmark.json" \
+            "$ATTESTATION_ROOT/phase-z1-gate.json" \
+            "$ATTESTATION_ROOT/source/platform-evidence.json"
+
+      - name: Record Z1 gate attestation
+        if: always() && steps.platform-run.outcome == 'success'
+        run: |
+          node scripts/create-sql-result-grid-gate-attestation.mjs \
+            --output "$ATTESTATION_ROOT/z1-gate-attestation.json" \
+            --gate "$ATTESTATION_ROOT/phase-z1-gate.json" \
+            --benchmark "$ATTESTATION_ROOT/source/sql-result-grid-zeus-audit/phase-z1-benchmark.json" \
+            --platform-evidence "$ATTESTATION_ROOT/source/platform-evidence.json" \
+            --zeus-audit "$ATTESTATION_ROOT/source/sql-result-grid-zeus-audit/zeus-audit.json" \
+            --zeus-bundle "$ATTESTATION_ROOT/source/sql-result-grid-zeus-audit/data-grid-bundle.js" \
+            --platform-run "$ATTESTATION_ROOT/platform-run.json" \
+            --attestation-workflow-run-id "$GITHUB_RUN_ID" \
+            --attestation-workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --attestation-workflow-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Publish Z1 attestation summary
+        if: always()
+        run: |
+          echo '## SQL Result Grid Z1 Gate Attestation' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$ATTESTATION_ROOT/z1-gate-attestation.json" ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$ATTESTATION_ROOT/z1-gate-attestation.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Attestation manifest was not produced.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload Z1 gate attestation
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sql-result-grid-gate-attestation
+          path: ${{ runner.temp }}/sql-result-grid-z1-attestation
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+      - name: Enforce Z1 gate decision
+        if: steps.z1-gate.outcome == 'failure'
+        run: |
+          echo 'Z1 remains NO-GO. Inspect the attestation artifact and workflow summary.' >&2
+          exit 1

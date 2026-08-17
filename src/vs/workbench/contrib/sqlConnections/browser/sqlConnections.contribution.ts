@@ -42,7 +42,11 @@ import { ISqlConnectionDialogService } from '../../../services/sql/common/sqlCon
 import { SqlConnectionEditorInput } from '../../../services/sql/common/sqlConnectionEditorInput.js';
 import { SqlConnectionDialogService } from './sqlConnectionDialogService.js';
 import { SqlConnectionEditorPane } from './sqlConnectionEditorPane.js';
-import { openNewSqlDataSourceForm, openSavedSqlDataSourceForm } from '../common/sqlConnectionNavigation.js';
+import {
+	openNewSqlDataSourceForm,
+	openSavedSqlDataSourceForm,
+	runSqlConnectionsRefreshCommand
+} from '../common/sqlConnectionNavigation.js';
 import {
 	SQL_CONNECTIONS_FOCUS_COMMAND_ID,
 	SQL_CONNECTIONS_ADD_COMMAND_ID,
@@ -50,6 +54,7 @@ import {
 	SQL_CONNECTIONS_STORAGE_ID,
 	SQL_CONNECTIONS_VIEW_ID,
 	SQL_CONNECTIONS_VIEWLET_ID,
+	type SqlConnectionsRefreshCommandOptions,
 	SQL_CONNECTORS_FOCUS_COMMAND_ID,
 	SQL_CONNECTORS_OPEN_SAVED_COMMAND_ID,
 	SQL_CONNECTORS_STORAGE_ID,
@@ -116,13 +121,15 @@ class SqlRefreshConnectionsAction extends Action2 {
 		});
 	}
 
-	override async run(accessor: ServicesAccessor, options?: { readonly revealConnectionId?: string }): Promise<void> {
-		const view = await accessor.get(IViewsService).openView<SqlConnectionsView>(SQL_CONNECTIONS_VIEW_ID, true);
-		if (typeof options?.revealConnectionId === 'string') {
-			await view?.refreshAndRevealConnection(options.revealConnectionId);
-			return;
-		}
-		await view?.refresh();
+	override async run(accessor: ServicesAccessor, options: SqlConnectionsRefreshCommandOptions = {}): Promise<void> {
+		const viewsService = accessor.get(IViewsService);
+		await runSqlConnectionsRefreshCommand(
+			{
+				getExistingView: () => viewsService.getViewWithId<SqlConnectionsView>(SQL_CONNECTIONS_VIEW_ID),
+				openAndFocusView: () => viewsService.openView<SqlConnectionsView>(SQL_CONNECTIONS_VIEW_ID, true)
+			},
+			options
+		);
 	}
 }
 

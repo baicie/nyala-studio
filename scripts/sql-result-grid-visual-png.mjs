@@ -2,7 +2,41 @@ import { inflateSync } from 'node:zlib';
 
 const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-export function inspectPngPixels(bytes) {
+const maximumDecodedBytes = 256 * 1024 * 1024;
+
+export function inspectPngPixels(bytes, { excludeRegions = [] } = {}) {
+	const decoded = decodePngPixels(bytes);
+	const { pixels, bytesPerPixel, ...header } = decoded;
+	const sampleStep = Math.max(1, Math.floor((header.width * header.height) / 100_000));
+	const colorBuckets = new Set();
+	let sampledPixels = 0;
+	let visiblePixels = 0;
+	let minimumLuma = 255;
+	let maximumLuma = 0;
+	for (let pixel = 0; pixel < header.width * header.height; pixel += sampleStep) {
+		const x = pixel % header.width;
+		const y = Math.floor(pixel / header.width);
+		if (excludeRegions.some(region => isPixelInRegion(x, y, region))) continue;
+		const [red, green, blue, alpha] = readPixel(pixels, pixel * bytesPerPixel, header.colorType);
+		sampledPixels += 1;
+		if (alpha <= 16) continue;
+		visiblePixels += 1;
+		colorBuckets.add(`${red >> 4}:${green >> 4}:${blue >> 4}`);
+		const luma = Math.round((red * 299 + green * 587 + blue * 114) / 1_000);
+		minimumLuma = Math.min(minimumLuma, luma);
+		maximumLuma = Math.max(maximumLuma, luma);
+	}
+	return {
+		...header,
+		sampledPixels,
+		visiblePixels,
+		visiblePixelRatio: sampledPixels === 0 ? 0 : visiblePixels / sampledPixels,
+		distinctColorBuckets: colorBuckets.size,
+		lumaRange: visiblePixels === 0 ? 0 : maximumLuma - minimumLuma
+	};
+}
+
+export function decodePngPixels(bytes) {
 	if (bytes.byteLength < pngSignature.length || !bytes.subarray(0, pngSignature.length).equals(pngSignature)) {
 		throw new Error('file does not have a PNG signature');
 	}
@@ -28,40 +62,63 @@ export function inspectPngPixels(bytes) {
 	}
 	const bytesPerPixel = bytesPerPixelFor(header.colorType);
 	const rowBytes = header.width * bytesPerPixel;
-	const inflated = inflateSync(Buffer.concat(compressed));
 	const expectedBytes = header.height * (rowBytes + 1);
+	if (!Number.isSafeInteger(expectedBytes) || expectedBytes > maximumDecodedBytes) {
+		throw new Error(`PNG decoded payload exceeds ${maximumDecodedBytes} bytes`);
+	}
+	const inflated = inflateSync(Buffer.concat(compressed), { maxOutputLength: expectedBytes });
 	if (inflated.byteLength !== expectedBytes) {
 		throw new Error(`PNG pixel payload is ${inflated.byteLength} bytes; expected ${expectedBytes}`);
 	}
 	const pixels = unfilter(inflated, header.height, rowBytes, bytesPerPixel);
-	const sampleStep = Math.max(1, Math.floor((header.width * header.height) / 100_000));
-	const colorBuckets = new Set();
-	let sampledPixels = 0;
-	let visiblePixels = 0;
-	let minimumLuma = 255;
-	let maximumLuma = 0;
-	for (let pixel = 0; pixel < header.width * header.height; pixel += sampleStep) {
-		const [red, green, blue, alpha] = readPixel(pixels, pixel * bytesPerPixel, header.colorType);
-		sampledPixels += 1;
-		if (alpha <= 16) continue;
-		visiblePixels += 1;
-		colorBuckets.add(`${red >> 4}:${green >> 4}:${blue >> 4}`);
-		const luma = Math.round((red * 299 + green * 587 + blue * 114) / 1_000);
-		minimumLuma = Math.min(minimumLuma, luma);
-		maximumLuma = Math.max(maximumLuma, luma);
-	}
 	return {
 		...header,
-		sampledPixels,
-		visiblePixels,
-		visiblePixelRatio: sampledPixels === 0 ? 0 : visiblePixels / sampledPixels,
-		distinctColorBuckets: colorBuckets.size,
-		lumaRange: visiblePixels === 0 ? 0 : maximumLuma - minimumLuma
+		bytesPerPixel,
+		pixels
 	};
+}
+
+function isPixelInRegion(x, y, region) {
+	return (
+		Number.isFinite(region?.x) &&
+		Number.isFinite(region?.y) &&
+		Number.isFinite(region?.width) &&
+		Number.isFinite(region?.height) &&
+		x >= region.x &&
+		x < region.x + region.width &&
+		y >= region.y &&
+		y < region.y + region.height
+	);
+}
+
+export function readDecodedPngPixel(decoded, x, y) {
+	if (!Number.isInteger(x) || x < 0 || x >= decoded.width || !Number.isInteger(y) || y < 0 || y >= decoded.height) {
+		throw new Error(`PNG pixel coordinate ${x},${y} is outside ${decoded.width}x${decoded.height}`);
+	}
+	return readPixel(decoded.pixels, (y * decoded.width + x) * decoded.bytesPerPixel, decoded.colorType);
 }
 
 export function hasVisiblePngDiversity(analysis) {
 	return analysis.visiblePixelRatio >= 0.95 && analysis.distinctColorBuckets >= 4 && analysis.lumaRange >= 24;
+}
+
+export function validatePngViewportDimensions(analysis, viewport, tolerance = 2) {
+	const expectedWidth = Number(viewport?.width) * Number(viewport?.devicePixelRatio);
+	const expectedHeight = Number(viewport?.height) * Number(viewport?.devicePixelRatio);
+	const passed =
+		Number.isFinite(analysis?.width) &&
+		analysis.width > 0 &&
+		Number.isFinite(analysis?.height) &&
+		analysis.height > 0 &&
+		Number.isFinite(expectedWidth) &&
+		expectedWidth > 0 &&
+		Number.isFinite(expectedHeight) &&
+		expectedHeight > 0 &&
+		Number.isFinite(tolerance) &&
+		tolerance >= 0 &&
+		Math.abs(analysis.width - expectedWidth) <= tolerance &&
+		Math.abs(analysis.height - expectedHeight) <= tolerance;
+	return { passed, expectedWidth, expectedHeight };
 }
 
 function readHeader(data) {

@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 default = []
-webdriver = ["dep:tauri-plugin-wdio-webdriver"]
+webdriver = ["dep:tauri-plugin-wdio-webdriver", "sidex-extensions/webdriver"]
 
 [build-dependencies]
 tauri-build = { version = "2.5.6", features = [] }
@@ -40,7 +40,7 @@ log = "0.4"
 notify = { version = "7", features = ["macos_fsevent"] }
 portable-pty = "0.8"
 walkdir = "2"
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.31", features = ["bundled", "hooks"] }
 mysql = { version = "28", features = ["rustls-tls-ring"] }
 tokio = { version = "1", features = ["full"] }
 hostname = "0.4"

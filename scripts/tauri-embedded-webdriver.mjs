@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { dirname, resolve } from 'node:path';
 
 const defaultTimeoutMs = 60_000;
@@ -11,25 +13,16 @@ export async function launchTauriEmbeddedWebdriver({
 	driverUrl,
 	dataDir,
 	logPath,
+	runNonce,
 	timeoutMs = defaultTimeoutMs
 }) {
-	const endpoint = parseLoopbackDriverUrl(driverUrl);
 	const application = resolve(appBinary);
 	if (dataDir) {
 		await mkdir(resolve(dataDir), { recursive: true });
 	}
 
 	const child = spawn(application, [], {
-		env: {
-			...process.env,
-			TAURI_WEBDRIVER_PORT: endpoint.port,
-			...(dataDir
-				? {
-						NYALA_DATA_DIR: resolve(dataDir),
-						NYALA_WEBDRIVER_DATA_DIR: resolve(dataDir)
-					}
-				: {})
-		},
+		env: createTauriWebdriverEnvironment({ driverUrl, dataDir, runNonce }),
 		stdio: ['ignore', 'pipe', 'pipe'],
 		windowsHide: false
 	});
@@ -81,6 +74,51 @@ export async function launchTauriEmbeddedWebdriver({
 		await stop();
 		throw error;
 	}
+}
+
+export function createTauriWebdriverEnvironment({ driverUrl, dataDir, runNonce, baseEnvironment = process.env }) {
+	const endpoint = parseLoopbackDriverUrl(driverUrl);
+	const resolvedDataDir = dataDir ? resolve(dataDir) : undefined;
+	return {
+		...baseEnvironment,
+		TAURI_WEBDRIVER_PORT: endpoint.port,
+		...(resolvedDataDir
+			? {
+					NYALA_DATA_DIR: resolvedDataDir,
+					NYALA_WEBDRIVER_APP_DATA_DIR: resolvedDataDir
+				}
+			: {}),
+		...(runNonce === undefined ? {} : { NYALA_WEBDRIVER_RUN_NONCE: String(runNonce) })
+	};
+}
+
+export function createWebdriverRunNonce() {
+	return randomBytes(32).toString('hex');
+}
+
+export async function resolveLoopbackDriverEndpoint(explicitDriverUrl, allocate = allocateLoopbackDriverUrl) {
+	const portSource = explicitDriverUrl === undefined ? 'os-assigned' : 'explicit';
+	const candidate = portSource === 'explicit' ? explicitDriverUrl : await allocate();
+	const endpoint = parseLoopbackDriverUrl(candidate);
+	return { driverUrl: endpoint.url, port: endpoint.port, portSource };
+}
+
+export async function allocateLoopbackDriverUrl() {
+	const server = createServer();
+	await new Promise((resolveListen, rejectListen) => {
+		server.once('error', rejectListen);
+		server.listen(0, '127.0.0.1', () => {
+			server.off('error', rejectListen);
+			resolveListen();
+		});
+	});
+	const address = server.address();
+	if (!address || typeof address === 'string') {
+		await closeServer(server);
+		throw new Error('Unable to allocate a loopback WebDriver port.');
+	}
+	await closeServer(server);
+	return `http://127.0.0.1:${address.port}`;
 }
 
 export async function createEmbeddedWebdriverSession(driverUrl) {
@@ -171,23 +209,140 @@ export function unwrapWebdriverValue(payload) {
 }
 
 /**
- * WebDriver's window rect is expressed in physical pixels by the embedded
- * Tauri plugin, while the Workbench contract is expressed in CSS pixels.
+ * Derive the next outer window rect from WebDriver's applied rect and the
+ * viewport observed inside the WebView. This avoids assuming whether a driver
+ * reports physical or logical pixels and converges across window chrome.
  */
-export function scaleCssViewportToPhysicalWindowRect(cssViewport, devicePixelRatio) {
-	const width = Number(cssViewport?.width);
-	const height = Number(cssViewport?.height);
-	const dpr = Number(devicePixelRatio);
-	if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
-		throw new Error(`CSS viewport must have positive finite dimensions, got ${JSON.stringify(cssViewport)}`);
+export function calibrateWindowRectForCssViewport(
+	requestedCssViewport,
+	observedCssViewport,
+	appliedWindowRect,
+	{
+		minimumWindowRect = { width: 1, height: 1 },
+		maximumWindowRect = { width: 16_384, height: 16_384 },
+		maximumScaleStep = 4
+	} = {}
+) {
+	const requested = positiveDimensions(requestedCssViewport, 'requested CSS viewport');
+	const observed = positiveDimensions(observedCssViewport, 'observed CSS viewport');
+	const applied = positiveDimensions(appliedWindowRect, 'applied window rect');
+	const minimum = positiveDimensions(minimumWindowRect, 'minimum window rect');
+	const maximum = positiveDimensions(maximumWindowRect, 'maximum window rect');
+	const scaleStep = Number(maximumScaleStep);
+	if (minimum.width > maximum.width || minimum.height > maximum.height) {
+		throw new Error('minimum window rect must not exceed maximum window rect');
 	}
-	if (!Number.isFinite(dpr) || dpr <= 0) {
-		throw new Error(`devicePixelRatio must be a positive finite number, got ${devicePixelRatio}`);
+	if (!Number.isFinite(scaleStep) || scaleStep < 1) {
+		throw new Error(`maximumScaleStep must be a finite number at least 1, got ${maximumScaleStep}`);
 	}
+
 	return {
-		width: Math.max(1, Math.round(width * dpr)),
-		height: Math.max(1, Math.round(height * dpr))
+		width: calibratedDimension(requested.width, observed.width, applied.width, minimum.width, maximum.width, scaleStep),
+		height: calibratedDimension(
+			requested.height,
+			observed.height,
+			applied.height,
+			minimum.height,
+			maximum.height,
+			scaleStep
+		)
 	};
+}
+
+export async function convergeWindowRectForCssViewport(
+	requestedCssViewport,
+	applyAndObserve,
+	{ maxAttempts = 4, tolerance = 1, initialWindowRect = requestedCssViewport } = {}
+) {
+	const requested = positiveDimensions(requestedCssViewport, 'requested CSS viewport');
+	let requestedWindowRect = positiveDimensions(initialWindowRect, 'initial window rect');
+	if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+		throw new Error(`viewport calibration maxAttempts must be a positive integer, got ${maxAttempts}`);
+	}
+	validateDimensionTolerance(tolerance);
+	if (typeof applyAndObserve !== 'function') {
+		throw new Error('viewport calibration requires an applyAndObserve function');
+	}
+
+	const calibrationAttempts = [];
+	let viewportConverged = false;
+	let convergenceStoppedReason = 'max-attempts';
+	for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+		const appliedRequest = { ...requestedWindowRect };
+		const observation = await applyAndObserve(appliedRequest, attempt);
+		positiveDimensions(observation?.appliedWindowRect, 'applied window rect');
+		positiveDimensions(observation?.observedCssViewport, 'observed CSS viewport');
+		calibrationAttempts.push({
+			attempt,
+			requestedWindowRect: appliedRequest,
+			appliedWindowRect: { ...observation.appliedWindowRect },
+			observedCssViewport: { ...observation.observedCssViewport }
+		});
+
+		viewportConverged = dimensionsWithinTolerance(requested, observation.observedCssViewport, tolerance);
+		if (viewportConverged) {
+			convergenceStoppedReason = 'target-reached';
+			break;
+		}
+		if (attempt === maxAttempts) break;
+
+		const nextWindowRect = calibrateWindowRectForCssViewport(
+			requested,
+			observation.observedCssViewport,
+			observation.appliedWindowRect
+		);
+		if (windowDimensionsEqual(nextWindowRect, appliedRequest)) {
+			convergenceStoppedReason = 'no-adjustment';
+			break;
+		}
+		requestedWindowRect = nextWindowRect;
+	}
+
+	const lastAttempt = calibrationAttempts.at(-1);
+	return {
+		requestedCssViewport: requested,
+		initialWindowRect: positiveDimensions(initialWindowRect, 'initial window rect'),
+		lastAppliedRequestedWindowRect: lastAttempt.requestedWindowRect,
+		appliedWindowRect: lastAttempt.appliedWindowRect,
+		observedCssViewport: lastAttempt.observedCssViewport,
+		viewportConverged,
+		viewportTolerance: tolerance,
+		convergenceStoppedReason,
+		calibrationAttempts
+	};
+}
+
+export function dimensionsWithinTolerance(requestedDimensions, observedDimensions, tolerance = 1) {
+	const requested = positiveDimensions(requestedDimensions, 'requested dimensions');
+	const observed = positiveDimensions(observedDimensions, 'observed dimensions');
+	validateDimensionTolerance(tolerance);
+	return (
+		Math.abs(requested.width - observed.width) <= tolerance && Math.abs(requested.height - observed.height) <= tolerance
+	);
+}
+
+function calibratedDimension(requested, observed, applied, minimum, maximum, maximumScaleStep) {
+	const scale = Math.min(maximumScaleStep, Math.max(1 / maximumScaleStep, requested / observed));
+	return Math.min(maximum, Math.max(minimum, Math.round(applied * scale)));
+}
+
+function positiveDimensions(value, label) {
+	const width = Number(value?.width);
+	const height = Number(value?.height);
+	if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+		throw new Error(`${label} must have positive finite dimensions, got ${JSON.stringify(value)}`);
+	}
+	return { width, height };
+}
+
+function validateDimensionTolerance(tolerance) {
+	if (!Number.isFinite(tolerance) || tolerance < 0) {
+		throw new Error(`dimension tolerance must be a finite non-negative number, got ${tolerance}`);
+	}
+}
+
+function windowDimensionsEqual(left, right) {
+	return Number(left?.width) === Number(right?.width) && Number(left?.height) === Number(right?.height);
 }
 
 export function parseLoopbackDriverUrl(value) {
@@ -240,4 +395,10 @@ async function waitForChildClose(childClosed, timeoutMs) {
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+function closeServer(server) {
+	return new Promise((resolveClose, rejectClose) => {
+		server.close(error => (error ? rejectClose(error) : resolveClose()));
+	});
 }

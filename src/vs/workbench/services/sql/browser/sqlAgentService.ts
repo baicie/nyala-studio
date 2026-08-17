@@ -8,13 +8,16 @@ import { isTauri } from '../../../../sidex-bridge.js';
 import {
 	ISqlAgentService,
 	isSqlAgentMode,
+	isSqlAgentRunState,
 	isSqlAgentTaskKind,
 	SqlAgentRun,
 	SqlAgentRunEvent,
 	SqlAgentExecuteReadonlyResult,
 	SqlAgentExplainResult,
+	SqlAgentMode,
 	SqlAgentReadOnlyRequest,
-	SqlAgentStartRequest
+	SqlAgentStartRequest,
+	SqlAgentTaskKind
 } from '../common/sqlAgent.js';
 import { isSqlCapability } from '../common/sqlCapabilities.js';
 import { SqlDialect } from '../common/sqlDialect.js';
@@ -61,6 +64,7 @@ export class SqlAgentService extends Disposable implements ISqlAgentService {
 	private disposed = false;
 	private eventUnlisten: (() => void) | undefined;
 	private lastRunEvent: SqlAgentRunEvent | undefined;
+	private readonly runEventSnapshots = new Map<string, { revision: number; fingerprint: string }>();
 
 	constructor();
 	constructor(executor: ISqlCommandExecutor);
@@ -71,6 +75,7 @@ export class SqlAgentService extends Disposable implements ISqlAgentService {
 				this.disposed = true;
 				this.eventUnlisten?.();
 				this.eventUnlisten = undefined;
+				this.runEventSnapshots.clear();
 			})
 		);
 		void this.subscribeToRunEvents();
@@ -84,12 +89,21 @@ export class SqlAgentService extends Disposable implements ISqlAgentService {
 
 	async start(request: SqlAgentStartRequest): Promise<SqlAgentRunEvent> {
 		const normalized = normalizeSqlAgentStartRequest(request);
+		let started: SqlAgentRunEvent;
 		try {
-			const event = await this.executor.execute<SqlAgentRunEvent>('sql_agent_start', { request: normalized });
-			this.lastRunEvent = event;
-			return event;
+			started = await this.executor.execute<SqlAgentRunEvent>('sql_agent_start', { request: normalized });
 		} catch (error) {
 			throw toSqlServiceError('sql_agent_start', error);
+		}
+		this.publishRunEvent(started);
+		try {
+			const completed = await this.executor.execute<SqlAgentRunEvent>('sql_agent_run', {
+				runId: started.run.runId
+			});
+			this.publishRunEvent(completed);
+			return completed;
+		} catch (error) {
+			throw toSqlServiceError('sql_agent_run', error);
 		}
 	}
 
@@ -97,7 +111,7 @@ export class SqlAgentService extends Disposable implements ISqlAgentService {
 		const normalized = normalizeRunId(runId);
 		try {
 			const event = await this.executor.execute<SqlAgentRunEvent>('sql_agent_cancel', { runId: normalized });
-			this.lastRunEvent = event;
+			this.publishRunEvent(event);
 			return event;
 		} catch (error) {
 			throw toSqlServiceError('sql_agent_cancel', error);
@@ -138,8 +152,7 @@ export class SqlAgentService extends Disposable implements ISqlAgentService {
 	private async subscribeToRunEvents(): Promise<void> {
 		const unlisten = await tauriListen<SqlAgentRunEvent>(SQL_AGENT_RUN_EVENT, event => {
 			if (isSqlAgentRunEvent(event)) {
-				this.lastRunEvent = event;
-				this._onDidChangeRun.fire(event);
+				this.publishRunEvent(event);
 			}
 		});
 		if (this.disposed) {
@@ -147,6 +160,20 @@ export class SqlAgentService extends Disposable implements ISqlAgentService {
 			return;
 		}
 		this.eventUnlisten = unlisten;
+	}
+
+	private publishRunEvent(event: SqlAgentRunEvent): void {
+		const fingerprint = JSON.stringify(event);
+		const previous = this.runEventSnapshots.get(event.run.runId);
+		if (previous && (event.run.revision < previous.revision || fingerprint === previous.fingerprint)) {
+			return;
+		}
+		if (previous && event.run.revision === previous.revision) {
+			return;
+		}
+		this.runEventSnapshots.set(event.run.runId, { revision: event.run.revision, fingerprint });
+		this.lastRunEvent = event;
+		this._onDidChangeRun.fire(event);
 	}
 }
 
@@ -166,26 +193,69 @@ export function normalizeSqlAgentStartRequest(request: SqlAgentStartRequest): Sq
 	if (!request.context || typeof request.context !== 'object' || !isSqlDialect(request.context.dialect)) {
 		throw new Error('Agent context dialect is required.');
 	}
+	if (
+		request.context.editorVersionId !== undefined &&
+		(!Number.isSafeInteger(request.context.editorVersionId) || request.context.editorVersionId <= 0)
+	) {
+		throw new Error('Agent editor version id must be a positive safe integer.');
+	}
 	const capabilities = [...new Set(request.capabilities ?? [])];
 	for (const capability of capabilities) {
 		if (!isSqlCapability(capability)) {
 			throw new Error(`Unsupported SQL capability '${capability}'`);
 		}
 	}
+	const context =
+		request.task === SqlAgentTaskKind.OptimizeQuery
+			? normalizeSqlAgentOptimizeContext(request)
+			: {
+					...request.context,
+					connectionId: request.context.connectionId?.trim() || undefined,
+					editorId: request.context.editorId?.trim() || undefined,
+					sql: request.context.sql?.trim() || undefined,
+					selectedSql: request.context.selectedSql?.trim() || undefined,
+					errorMessage: request.context.errorMessage?.trim() || undefined,
+					errorContext: normalizeSqlAgentErrorContext(request.context.errorContext),
+					userPrompt: request.context.userPrompt?.trim() || undefined,
+					explainPlan: request.context.explainPlan?.trim() || undefined
+				};
 	return {
 		...request,
 		goal: request.goal.trim(),
-		context: {
-			...request.context,
-			connectionId: request.context.connectionId?.trim() || undefined,
-			sql: request.context.sql?.trim() || undefined,
-			selectedSql: request.context.selectedSql?.trim() || undefined,
-			errorMessage: request.context.errorMessage?.trim() || undefined,
-			errorContext: normalizeSqlAgentErrorContext(request.context.errorContext),
-			userPrompt: request.context.userPrompt?.trim() || undefined,
-			explainPlan: request.context.explainPlan?.trim() || undefined
-		},
+		context,
 		capabilities
+	};
+}
+
+function normalizeSqlAgentOptimizeContext(request: SqlAgentStartRequest): SqlAgentStartRequest['context'] {
+	if (request.mode !== SqlAgentMode.ReadOnly) {
+		throw new Error('Optimize requires Read Only mode.');
+	}
+	if (request.context.dialect !== SqlDialect.Sqlite) {
+		throw new Error('Optimize supports SQLite only.');
+	}
+	const connectionId = request.context.connectionId?.trim();
+	if (!connectionId) {
+		throw new Error('Optimize connection id is required.');
+	}
+	const editorId = request.context.editorId?.trim();
+	if (!editorId) {
+		throw new Error('Optimize editor id is required.');
+	}
+	const editorVersionId = request.context.editorVersionId;
+	if (editorVersionId === undefined || !Number.isSafeInteger(editorVersionId) || editorVersionId <= 0) {
+		throw new Error('Optimize editor version id must be a positive safe integer.');
+	}
+	const sql = request.context.sql?.trim();
+	if (!sql) {
+		throw new Error('Optimize SQL is required.');
+	}
+	return {
+		dialect: SqlDialect.Sqlite,
+		connectionId,
+		editorId,
+		editorVersionId,
+		sql
 	};
 }
 
@@ -245,6 +315,13 @@ function isSqlAgentRunEvent(value: unknown): value is SqlAgentRunEvent {
 	if (!value || typeof value !== 'object') {
 		return false;
 	}
-	const candidate = value as { run?: unknown };
-	return Boolean(candidate.run && typeof candidate.run === 'object');
+	const candidate = value as { run?: { runId?: unknown; revision?: unknown; state?: unknown } };
+	return Boolean(
+		candidate.run &&
+		typeof candidate.run === 'object' &&
+		typeof candidate.run.runId === 'string' &&
+		isSqlAgentRunState(candidate.run.state) &&
+		Number.isSafeInteger(candidate.run.revision) &&
+		(candidate.run.revision as number) >= 0
+	);
 }

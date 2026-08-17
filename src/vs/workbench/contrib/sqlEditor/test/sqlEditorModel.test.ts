@@ -10,8 +10,13 @@ import {
 	normalizeExecutableSql,
 	normalizeSqlEditorOptions,
 	splitSqlStatements,
+	SqlEditorConnectionRefreshCoordinator,
 	SqlEditorExecutionSource
 } from '../common/sqlEditorModel.js';
+
+interface TestConnection {
+	readonly id: string;
+}
 
 test('normalizeSqlEditorOptions creates defaults', () => {
 	const normalized = normalizeSqlEditorOptions({}, 'SELECT 1;', () => 'query-1');
@@ -44,6 +49,75 @@ test('normalizeSqlEditorOptions trims optional fields', () => {
 
 test('normalizeExecutableSql trims SQL', () => {
 	assert.equal(normalizeExecutableSql(' SELECT 1; '), 'SELECT 1;');
+});
+
+test('connection refresh uses a new editor input instead of the previous selection', async () => {
+	const coordinator = new SqlEditorConnectionRefreshCoordinator<TestConnection>();
+
+	const result = await coordinator.load(async () => [{ id: 'connection-a' }, { id: 'connection-b' }], {
+		inputConnectionId: 'connection-b',
+		preserveCurrentSelection: false,
+		getCurrentSelection: () => 'connection-a'
+	});
+
+	assert.equal(result?.succeeded && result.selectedConnectionId, 'connection-b');
+});
+
+test('connection refresh preserves a current selection for the same editor input', async () => {
+	const coordinator = new SqlEditorConnectionRefreshCoordinator<TestConnection>();
+
+	const result = await coordinator.load(async () => [{ id: 'connection-a' }, { id: 'connection-b' }], {
+		inputConnectionId: 'connection-a',
+		preserveCurrentSelection: true,
+		getCurrentSelection: () => 'connection-b'
+	});
+
+	assert.equal(result?.succeeded && result.selectedConnectionId, 'connection-b');
+});
+
+test('connection refresh ignores a stale success after a newer request', async () => {
+	const coordinator = new SqlEditorConnectionRefreshCoordinator<TestConnection>();
+	let resolveFirst!: (connections: TestConnection[]) => void;
+	const first = coordinator.load(
+		() =>
+			new Promise(resolve => {
+				resolveFirst = resolve;
+			}),
+		{
+			inputConnectionId: 'connection-a',
+			getCurrentSelection: () => undefined
+		}
+	);
+	const second = await coordinator.load(async () => [{ id: 'connection-b' }], {
+		inputConnectionId: 'connection-b',
+		getCurrentSelection: () => undefined
+	});
+
+	resolveFirst([{ id: 'connection-a' }]);
+
+	assert.equal(second?.succeeded && second.selectedConnectionId, 'connection-b');
+	assert.equal(await first, undefined);
+});
+
+test('connection refresh ignores a stale failure after invalidation', async () => {
+	const coordinator = new SqlEditorConnectionRefreshCoordinator<TestConnection>();
+	let rejectLoad!: (error: Error) => void;
+	const pending = coordinator.load(
+		() =>
+			new Promise((_resolve, reject) => {
+				rejectLoad = reject;
+			}),
+		{
+			inputConnectionId: 'connection-a',
+			getCurrentSelection: () => undefined
+		}
+	);
+
+	coordinator.invalidate();
+	const error = new Error('stale connection failure');
+	rejectLoad(error);
+
+	assert.equal(await pending, undefined);
 });
 
 test('createExecutePayload creates executable payload', () => {
