@@ -156,6 +156,7 @@ async function run() {
 		const benchmarkPlan = createBalancedBenchmarkPlan(selectedWorkloads, selectedRenderers, repeat);
 		for (const { workload, renderer, iteration, executionOrdinal } of benchmarkPlan) {
 			const runToken = randomUUID();
+			await resetPageForViewportCalibration(driverUrl, sessionId);
 			const viewportCalibration = await calibrateCssViewport(driverUrl, sessionId, workload, Boolean(appBinary));
 			if (!viewportCalibration.viewportConverged) {
 				throw new Error(
@@ -394,6 +395,18 @@ async function calibrateCssViewport(baseUrl, sessionId, workload, embedded) {
 		},
 		{ maxAttempts: 4, tolerance: 1, initialWindowRect: { width: workload.width, height: workload.height } }
 	);
+}
+
+async function resetPageForViewportCalibration(baseUrl, sessionId) {
+	const blankUrl = 'about:blank';
+	await webdriverRequest(baseUrl, `/session/${sessionId}/url`, 'POST', { url: blankUrl });
+	const deadline = Date.now() + 30_000;
+	while (Date.now() < deadline) {
+		const urlPayload = await webdriverRequest(baseUrl, `/session/${sessionId}/url`);
+		if (unwrapWebdriverValue(urlPayload) === blankUrl) return;
+		await new Promise(resolveDelay => setTimeout(resolveDelay, 50));
+	}
+	throw new Error(`Timed out waiting for viewport calibration reset: ${blankUrl}`);
 }
 
 function normalizeWindowRect(value) {
