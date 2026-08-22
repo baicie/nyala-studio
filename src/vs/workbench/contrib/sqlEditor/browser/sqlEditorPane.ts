@@ -574,17 +574,24 @@ export class SqlEditorPane extends EditorPane {
 
 		clearNode(this.connectionSelect);
 
-		if (!result.succeeded || this.currentConnections.length === 0) {
+		if ('error' in result) {
 			const option = document.createElement('option');
 			option.value = '';
 			option.textContent = 'No connection';
 			this.connectionSelect.appendChild(option);
 			this.connectionSelect.disabled = true;
-			if (result.succeeded) {
-				this.updateReadyStatus();
-			} else {
-				this.showError(result.error);
-			}
+			this.showError(result.error);
+			this.updateToolbarState();
+			return;
+		}
+
+		if (this.currentConnections.length === 0) {
+			const option = document.createElement('option');
+			option.value = '';
+			option.textContent = 'No connection';
+			this.connectionSelect.appendChild(option);
+			this.connectionSelect.disabled = true;
+			this.updateReadyStatus();
 			this.updateToolbarState();
 			return;
 		}

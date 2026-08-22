@@ -389,8 +389,10 @@ fn decode_utf16(bytes: &[u8], little_endian: bool) -> Result<String, EncodingErr
         return Err(EncodingError::InvalidData(encoding));
     }
 
-    let code_units: Vec<u16> = data
-        .chunks_exact(2)
+    let (pairs, remainder) = data.as_chunks::<2>();
+    debug_assert!(remainder.is_empty());
+    let code_units: Vec<u16> = pairs
+        .iter()
         .map(|pair| {
             if little_endian {
                 u16::from_le_bytes([pair[0], pair[1]])
