@@ -54,10 +54,13 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /createBalancedBenchmarkPlan/);
 	assert.match(source, /executionOrdinal/);
 	assert.match(source, /convergeWindowRectForCssViewport/);
+	assert.match(source, /await resetPageForViewportCalibration\(driverUrl, sessionId, Boolean\(appBinary\)\)/);
 	assert.match(
 		source,
-		/await resetPageForViewportCalibration\(driverUrl, sessionId, Boolean\(appBinary\)\);\s*const viewportCalibration = await calibrateCssViewport/
+		/await waitForNavigation\(driverUrl, sessionId, url\);\s*const viewportCalibration = await calibrateCssViewport/
 	);
+	assert.match(source, /deferStart: 'true'/);
+	assert.match(source, /await startDeferredBenchmark\(driverUrl, sessionId, Boolean\(appBinary\)\)/);
 	assert.match(source, /hasBenchmarkResult: Boolean\(document\.querySelector\("#benchmark-result"\)\)/);
 	assert.match(source, /readCssViewport/);
 	assert.match(source, /viewportCalibration/);

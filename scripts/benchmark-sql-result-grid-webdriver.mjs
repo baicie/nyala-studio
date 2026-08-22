@@ -157,12 +157,6 @@ async function run() {
 		for (const { workload, renderer, iteration, executionOrdinal } of benchmarkPlan) {
 			const runToken = randomUUID();
 			await resetPageForViewportCalibration(driverUrl, sessionId, Boolean(appBinary));
-			const viewportCalibration = await calibrateCssViewport(driverUrl, sessionId, workload, Boolean(appBinary));
-			if (!viewportCalibration.viewportConverged) {
-				throw new Error(
-					`CSS viewport did not converge for ${workload.id}: observed ${viewportCalibration.observedCssViewport.width}x${viewportCalibration.observedCssViewport.height}`
-				);
-			}
 			const query = {
 				run: runToken,
 				renderer,
@@ -172,7 +166,8 @@ async function run() {
 				columns: String(workload.columns),
 				wide: String(workload.wide),
 				width: String(workload.width),
-				height: String(workload.height)
+				height: String(workload.height),
+				deferStart: 'true'
 			};
 			if (iteration === 1) {
 				query.screenshotRunMarker = Buffer.from(createSqlResultGridRunMarkerBytes(runToken)).toString('hex');
@@ -180,6 +175,13 @@ async function run() {
 			const url = `${benchmarkServer.url}?${new URLSearchParams(query)}`;
 			await webdriverRequest(driverUrl, `/session/${sessionId}/url`, 'POST', { url });
 			await waitForNavigation(driverUrl, sessionId, url);
+			const viewportCalibration = await calibrateCssViewport(driverUrl, sessionId, workload, Boolean(appBinary));
+			if (!viewportCalibration.viewportConverged) {
+				throw new Error(
+					`CSS viewport did not converge for ${workload.id}: observed ${viewportCalibration.observedCssViewport.width}x${viewportCalibration.observedCssViewport.height}`
+				);
+			}
+			await startDeferredBenchmark(driverUrl, sessionId, Boolean(appBinary));
 			const record = await waitForResult(driverUrl, sessionId, Boolean(appBinary), {
 				runToken,
 				renderer,
@@ -418,6 +420,18 @@ async function resetPageForViewportCalibration(baseUrl, sessionId, embedded) {
 		await new Promise(resolveDelay => setTimeout(resolveDelay, 50));
 	}
 	throw new Error(`Timed out waiting for viewport calibration reset: ${blankUrl}`);
+}
+
+async function startDeferredBenchmark(baseUrl, sessionId, embedded) {
+	const expression = "window.dispatchEvent(new Event('nyala-benchmark-start')); true";
+	if (embedded) {
+		await evaluateViaDirectEval(baseUrl, expression);
+		return;
+	}
+	await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
+		script: `return ${expression};`,
+		args: []
+	});
 }
 
 function normalizeWindowRect(value) {
