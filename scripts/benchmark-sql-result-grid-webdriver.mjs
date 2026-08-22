@@ -19,6 +19,8 @@ import {
 	createBalancedBenchmarkPlan,
 	EXECUTION_ORDER,
 	isBenchmarkResultForRun,
+	isValidWorkbenchTableRendererImplementation,
+	maximumVirtualRenderedRows,
 	MEASUREMENT_CONTRACT_VERSION,
 	SCROLL_COMMIT_BOUNDARY
 } from './sql-result-grid-benchmark-contract.mjs';
@@ -131,6 +133,8 @@ async function run() {
 			pagePath,
 			'--renderer',
 			selectedRenderers.join(','),
+			'--workbench-table-implementation',
+			'real',
 			'--zeus-bundle',
 			zeusBundle
 		];
@@ -148,7 +152,7 @@ async function run() {
 			});
 		}
 		const session = appBinary
-			? await createEmbeddedWebdriverSession(driverUrl)
+			? await createEmbeddedWebdriverSession(driverUrl, { timeoutMs: startupTimeoutMs })
 			: await createExternalSession(driverUrl, browser);
 		sessionId = session.sessionId;
 		await setSessionTimeouts(driverUrl, sessionId, scriptTimeoutMs);
@@ -187,8 +191,21 @@ async function run() {
 				renderer,
 				executionOrder: EXECUTION_ORDER,
 				executionOrdinal,
-				workload
+				workload,
+				workbenchTableImplementation: 'real',
+				workbenchTableBundleSha256: provenance.workbenchTableBundleSha256
 			});
+			if (renderer === 'workbench-table') {
+				const bundleSha256 = record.rendererImplementation?.bundleSha256;
+				if (
+					!isValidWorkbenchTableRendererImplementation(record.rendererImplementation, bundleSha256) ||
+					(provenance.workbenchTableBundleSha256 !== undefined &&
+						provenance.workbenchTableBundleSha256 !== bundleSha256)
+				) {
+					throw new Error('WorkbenchTable bundle identity changed within the platform run.');
+				}
+				provenance = { ...provenance, workbenchTableBundleSha256: bundleSha256 };
+			}
 			const enriched = {
 				...record,
 				workloadId: workload.id,
@@ -404,19 +421,19 @@ async function resetPageForViewportCalibration(baseUrl, sessionId, embedded) {
 	await webdriverRequest(baseUrl, `/session/${sessionId}/url`, 'POST', { url: blankUrl });
 	const deadline = Date.now() + 30_000;
 	while (Date.now() < deadline) {
-		const state = embedded
-			? await evaluateViaDirectEval(
-					baseUrl,
-					'({ href: location.href, readyState: document.readyState, hasBenchmarkResult: Boolean(document.querySelector("#benchmark-result")) })'
-				)
-			: unwrapWebdriverValue(
-					await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
-						script:
-							'return { href: location.href, readyState: document.readyState, hasBenchmarkResult: Boolean(document.querySelector("#benchmark-result")) };',
-						args: []
-					})
-				);
-		if (state?.href === blankUrl && state.readyState === 'complete' && state.hasBenchmarkResult === false) return;
+		if (embedded) {
+			const urlPayload = await webdriverRequest(baseUrl, `/session/${sessionId}/url`);
+			if (unwrapWebdriverValue(urlPayload) === blankUrl) return;
+		} else {
+			const state = unwrapWebdriverValue(
+				await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
+					script:
+						'return { href: location.href, readyState: document.readyState, hasBenchmarkResult: Boolean(document.querySelector("#benchmark-result")) };',
+					args: []
+				})
+			);
+			if (state?.href === blankUrl && state.readyState === 'complete' && state.hasBenchmarkResult === false) return;
+		}
 		await new Promise(resolveDelay => setTimeout(resolveDelay, 50));
 	}
 	throw new Error(`Timed out waiting for viewport calibration reset: ${blankUrl}`);
@@ -640,6 +657,12 @@ function summarize(records) {
 
 function validateVisualProbe(record, workload) {
 	const probe = record.visualProbe;
+	const renderedRowsValid =
+		record.renderer === 'native'
+			? record.renderedRows === workload.rows
+			: Number.isInteger(record.renderedRows) &&
+				record.renderedRows > 0 &&
+				record.renderedRows <= maximumVirtualRenderedRows(workload);
 	const passed =
 		probe &&
 		probe.rootWidth >= Math.min(workload.width, 300) &&
@@ -650,11 +673,20 @@ function validateVisualProbe(record, workload) {
 		probe.firstVisibleCellText.length > 0 &&
 		probe.firstCellInViewport === true &&
 		probe.virtualRowsBounded === true &&
+		renderedRowsValid &&
+		probe.outerDocumentOverflowFree === true &&
+		probe.runMarkerAnchored === true &&
+		probe.documentViewport?.clientWidth === workload.width &&
+		probe.documentViewport?.clientHeight === workload.height &&
+		probe.documentViewport?.scrollWidth === workload.width &&
+		probe.documentViewport?.scrollHeight === workload.height &&
 		Number.isInteger(probe.visibleTextLength) &&
 		probe.visibleTextLength > 0;
 	return {
 		passed: Boolean(passed),
-		reason: passed ? 'visual probe passed' : 'renderer did not expose a visible header and first cell'
+		reason: passed
+			? 'visual probe passed'
+			: 'renderer did not expose contained document geometry, a visible header, and a first cell'
 	};
 }
 

@@ -121,22 +121,51 @@ export async function allocateLoopbackDriverUrl() {
 	return `http://127.0.0.1:${address.port}`;
 }
 
-export async function createEmbeddedWebdriverSession(driverUrl) {
-	const payload = await webdriverRequest(driverUrl, '/session', 'POST', {
-		capabilities: {
-			alwaysMatch: {
-				browserName: 'tauri',
-				'wdio:tauriServiceOptions': { windowLabel: 'main' }
-			}
-		}
-	});
-	const value = payload.value ?? {};
-	const sessionId = payload.sessionId ?? value.sessionId;
-	const capabilities = value.capabilities ?? payload.capabilities;
-	if (!sessionId || !capabilities || typeof capabilities !== 'object') {
-		throw new Error(`Embedded WebDriver returned an invalid session: ${JSON.stringify(payload).slice(0, 1_000)}`);
+export async function createEmbeddedWebdriverSession(
+	driverUrl,
+	{ timeoutMs = defaultTimeoutMs, retryDelayMs = 100 } = {}
+) {
+	if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+		throw new Error(`Embedded WebDriver session timeout must be a positive integer, got ${timeoutMs}`);
 	}
-	return { sessionId, capabilities };
+	if (!Number.isInteger(retryDelayMs) || retryDelayMs < 1) {
+		throw new Error(`Embedded WebDriver session retry delay must be a positive integer, got ${retryDelayMs}`);
+	}
+	const deadline = Date.now() + timeoutMs;
+	let lastError;
+	while (Date.now() < deadline) {
+		try {
+			const payload = await webdriverRequest(
+				driverUrl,
+				'/session',
+				'POST',
+				{
+					capabilities: {
+						alwaysMatch: {
+							browserName: 'tauri',
+							'wdio:tauriServiceOptions': { windowLabel: 'main' }
+						}
+					}
+				},
+				{ timeoutMs: Math.max(1, Math.min(defaultRequestTimeoutMs, deadline - Date.now())) }
+			);
+			const value = payload.value ?? {};
+			const sessionId = payload.sessionId ?? value.sessionId;
+			const capabilities = value.capabilities ?? payload.capabilities;
+			if (!sessionId || !capabilities || typeof capabilities !== 'object') {
+				throw new Error(`Embedded WebDriver returned an invalid session: ${JSON.stringify(payload).slice(0, 1_000)}`);
+			}
+			return { sessionId, capabilities };
+		} catch (error) {
+			lastError = error;
+			const reason = error instanceof Error ? error.message : String(error);
+			if (!/no such window/i.test(reason)) throw error;
+			await delay(Math.min(retryDelayMs, Math.max(1, deadline - Date.now())));
+		}
+	}
+	throw new Error(
+		`Timed out waiting for embedded WebDriver main window${lastError ? `: ${lastError instanceof Error ? lastError.message : String(lastError)}` : ''}`
+	);
 }
 
 export function identifyEmbeddedWebview(capabilities, expectedPlatform, hostPlatform = process.platform) {

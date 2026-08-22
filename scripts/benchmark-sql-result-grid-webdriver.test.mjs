@@ -6,7 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { identifyEmbeddedWebview, parseLoopbackDriverUrl, webdriverRequest } from './tauri-embedded-webdriver.mjs';
+import {
+	createEmbeddedWebdriverSession,
+	identifyEmbeddedWebview,
+	parseLoopbackDriverUrl,
+	webdriverRequest
+} from './tauri-embedded-webdriver.mjs';
 import {
 	EXECUTION_ORDER,
 	MEASUREMENT_CONTRACT_VERSION,
@@ -35,6 +40,8 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /firstVisibleCellText/);
 	assert.match(source, /firstCellInViewport/);
 	assert.match(source, /virtualRowsBounded/);
+	assert.match(source, /outerDocumentOverflowFree/);
+	assert.match(source, /runMarkerAnchored/);
 	assert.match(source, /screenshot/);
 	assert.match(source, /inspectPngPixels/);
 	assert.match(source, /hasVisiblePngDiversity/);
@@ -62,6 +69,10 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /deferStart: 'true'/);
 	assert.match(source, /await startDeferredBenchmark\(driverUrl, sessionId, Boolean\(appBinary\)\)/);
 	assert.match(source, /hasBenchmarkResult: Boolean\(document\.querySelector\("#benchmark-result"\)\)/);
+	assert.match(
+		source,
+		/if \(embedded\) \{\s*const urlPayload = await webdriverRequest\(baseUrl, `\/session\/\$\{sessionId\}\/url`\)/s
+	);
 	assert.match(source, /readCssViewport/);
 	assert.match(source, /viewportCalibration/);
 	assert.match(source, /devicePixelRatio/);
@@ -70,6 +81,50 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.doesNotMatch(source, /window\/rect[^\n]*\.catch/);
 	assert.match(source, /sha256: createHash\('sha256'\)/);
 	assert.match(source, /screenshots\.push\(\{/);
+});
+
+test('embedded WebDriver session creation waits for the native main window', async () => {
+	let attempts = 0;
+	const server = createServer((request, response) => {
+		if (request.method !== 'POST' || request.url !== '/session') {
+			response.writeHead(404).end();
+			return;
+		}
+		attempts += 1;
+		response.setHeader('content-type', 'application/json');
+		if (attempts < 3) {
+			response.writeHead(500).end(JSON.stringify({ value: { error: 'no such window', message: 'main is not ready' } }));
+			return;
+		}
+		response.writeHead(200).end(
+			JSON.stringify({
+				value: {
+					sessionId: 'session-1',
+					capabilities: { platformName: 'macos', browserName: 'webkit' }
+				}
+			})
+		);
+	});
+	await new Promise((resolveListen, rejectListen) => {
+		server.once('error', rejectListen);
+		server.listen(0, '127.0.0.1', () => {
+			server.off('error', rejectListen);
+			resolveListen();
+		});
+	});
+	const address = server.address();
+	assert.ok(address && typeof address !== 'string');
+	try {
+		const session = await createEmbeddedWebdriverSession(`http://127.0.0.1:${address.port}`, {
+			timeoutMs: 1_000,
+			retryDelayMs: 5
+		});
+		assert.equal(session.sessionId, 'session-1');
+		assert.equal(attempts, 3);
+	} finally {
+		server.closeAllConnections();
+		await new Promise(resolveClose => server.close(resolveClose));
+	}
 });
 
 test('embedded WebDriver identity accepts only the matching native WebView', () => {
@@ -167,11 +222,50 @@ test('embedded launch failure writes a blocked manifest', async () => {
 	}
 });
 
-test('Chromium benchmark can emit a reusable page without launching a browser', async () => {
-	const source = await import('node:fs/promises').then(fs =>
-		fs.readFile(new URL('./benchmark-sql-result-grid.mjs', import.meta.url), 'utf8')
-	);
-	assert.match(source, /emit-page/);
+test('Chromium benchmark emits a reusable page without outer document scrollbars', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-benchmark-page-test-'));
+	try {
+		const page = join(root, 'benchmark.html');
+		await execFileAsync(process.execPath, [
+			'scripts/benchmark-sql-result-grid.mjs',
+			'--emit-page',
+			page,
+			'--renderer',
+			'native'
+		]);
+		const source = await readFile(page, 'utf8');
+		assert.match(source, /html, body \{ width: 100%; height: 100%; margin: 0; overflow: hidden;/);
+		assert.match(source, /#benchmark-result \{ display: none; \}/);
+		assert.match(source, /formatBenchmarkError/);
+		assert.match(source, /runMarkerAnchored: !screenshotRunMarkerHex \|\| Boolean/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('Chromium benchmark emits a fail-closed real WorkbenchTable page', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-workbench-table-page-test-'));
+	try {
+		const page = join(root, 'benchmark.html');
+		await execFileAsync(process.execPath, [
+			'scripts/benchmark-sql-result-grid.mjs',
+			'--emit-page',
+			page,
+			'--renderer',
+			'workbench-table',
+			'--workbench-table-implementation',
+			'real'
+		]);
+		const source = await readFile(page, 'utf8');
+		assert.match(source, /data-nyala-workbench-table-benchmark/);
+		assert.match(source, /__NYALA_CREATE_WORKBENCH_TABLE_BENCHMARK__/);
+		assert.match(source, /vs\.platform\.list\.browser\.WorkbenchTable/);
+		assert.match(source, /Real WorkbenchTable renderer implementation proof is invalid/);
+		assert.match(source, /workbenchTableImplementation = "real"/);
+		assert.match(source, /WORKBENCH_TABLE_BUNDLE_SHA256/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
 });
 
 test('native platform workflow bundles the auto-registering Zeus entry', async () => {
@@ -185,6 +279,7 @@ test('native platform workflow bundles the auto-registering Zeus entry', async (
 	assert.match(source, /--features webdriver/);
 	assert.match(source, /create-sql-result-grid-zeus-audit\.mjs/);
 	assert.match(source, /phase-z1-benchmark\.json/);
+	assert.match(source, /--workbench-table-implementation real/);
 	assert.match(source, /NYALA_ZEUS_AUDIT_EVIDENCE/);
 	assert.equal(source.match(/measurementContractVersion:6/g)?.length, 2);
 	assert.equal(source.match(/scrollCommitBoundary:'post-presentation-opportunity'/g)?.length, 2);
