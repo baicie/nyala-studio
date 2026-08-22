@@ -29,9 +29,12 @@ test('visual capture harness exposes bounded workload and renderer controls', as
 	assert.match(source, /--remote-debugging-port=0/);
 	assert.match(source, /Page\.captureScreenshot/);
 	assert.match(source, /isBenchmarkResultForRun/);
+	assert.match(source, /--workbench-table-implementation/);
+	assert.match(source, /workbenchTableImplementation: 'real'/);
 	assert.doesNotMatch(source, /--dump-dom/);
 	assert.doesNotMatch(source, /--virtual-time-budget/);
 	assert.match(source, /Chromium headless screenshots/);
+	assert.match(source, /real WorkbenchTable in an isolated benchmark bundle/);
 	assert.match(source, /separate platform evidence workflow/);
 	assert.match(source, /1_000/);
 	assert.match(source, /10_000/);
@@ -160,6 +163,42 @@ test('native narrow-panel capture verifies semantic sentinels and PNG evidence',
 		assert.ok(report.artifacts[0].visualChecks.every(check => check.passed));
 		assert.equal(report.artifacts[0].record.visualProbe.headerText, 'column_0');
 		assert.match(report.artifacts[0].screenshotSha256, /^[a-f0-9]{64}$/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('native wide-columns capture accepts the workload-specific header sentinel', async t => {
+	const chrome = process.env.NYALA_CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+	try {
+		await readFile(chrome);
+	} catch {
+		t.skip('Chrome is unavailable for the local integration capture.');
+		return;
+	}
+	const root = await mkdtemp(join(tmpdir(), 'nyala-sql-result-wide-visual-test-'));
+	try {
+		const output = join(root, 'visual-evidence.json');
+		await execFileAsync(
+			process.execPath,
+			[
+				'scripts/capture-sql-result-grid-visual.mjs',
+				'--renderer',
+				'native',
+				'--workload',
+				'wide-columns',
+				'--output',
+				output,
+				'--screenshot-dir',
+				join(root, 'screenshots')
+			],
+			{ env: { ...process.env, NYALA_CHROME: chrome }, timeout: 60_000 }
+		);
+		const report = JSON.parse(await readFile(output, 'utf8'));
+		assert.equal(report.status, 'ready');
+		assert.equal(report.artifactCount, 1);
+		assert.ok(report.artifacts[0].visualChecks.every(check => check.passed));
+		assert.equal(report.artifacts[0].record.visualProbe.headerText, `column_0_${'wide_header_value'.repeat(3)}`);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

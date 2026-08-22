@@ -62,7 +62,9 @@ try {
 				'--emit-page',
 				pagePath,
 				'--renderer',
-				selectedRenderers.join(',')
+				selectedRenderers.join(','),
+				'--workbench-table-implementation',
+				'real'
 			],
 			{ stdio: 'inherit' }
 		);
@@ -116,13 +118,14 @@ const report = {
 	repeat,
 	workloads: selectedWorkloads,
 	renderers: selectedRenderers,
+	workbenchTableImplementation: selectedRenderers.includes('workbench-table') ? 'real' : null,
 	expectedArtifactCount,
 	artifactCount: artifacts.length,
 	screenshotDirectory: relative(dirname(outputPath), screenshotDir) || '.',
 	artifacts,
 	limitations: [
 		'Chromium headless screenshots are visual review evidence, not macOS WebKit or Windows WebView2 evidence.',
-		'The page is a standalone result-grid characterization and does not boot the Workbench or invoke Tauri.',
+		'The page instantiates the real WorkbenchTable in an isolated benchmark bundle; it does not boot the full Workbench or invoke Tauri.',
 		'Zeus screenshots require the separate platform evidence workflow and are not enabled by the synthetic CI job.'
 	]
 };
@@ -161,7 +164,8 @@ async function captureArtifact({ client, pageUrl, workload, renderer, iteration,
 			renderer,
 			executionOrder: EXECUTION_ORDER,
 			executionOrdinal,
-			workload
+			workload,
+			workbenchTableImplementation: 'real'
 		});
 		const screenshot = await client.send('Page.captureScreenshot', {
 			format: 'png',
@@ -362,6 +366,7 @@ async function inspectVisualEvidence(filePath, workload, renderer, record) {
 		});
 	}
 	const probe = record.visualProbe;
+	const expectedHeaderText = workload.wide ? `column_0_${'wide_header_value'.repeat(3)}` : 'column_0';
 	checks.push({
 		id: 'renderer-identity',
 		passed: record.renderer === renderer,
@@ -383,8 +388,8 @@ async function inspectVisualEvidence(filePath, workload, renderer, record) {
 	});
 	checks.push({
 		id: 'header-sentinel',
-		passed: probe?.headerText === 'column_0',
-		reason: `header sentinel was ${JSON.stringify(probe?.headerText ?? '')}`
+		passed: probe?.headerText === expectedHeaderText,
+		reason: `header sentinel was ${JSON.stringify(probe?.headerText ?? '')}; expected ${JSON.stringify(expectedHeaderText)}`
 	});
 	checks.push({
 		id: 'cell-sentinel',
