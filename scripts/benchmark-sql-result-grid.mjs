@@ -1055,7 +1055,12 @@ async function main() {
 		const stack = String(error && error.stack || '');
 		return stack && !stack.includes(message) ? message + String.fromCharCode(10) + stack : stack || message;
 	}
-	main().catch(error => { writeBenchmarkResult({ status: 'error', error: formatBenchmarkError(error) }); });
+	const startBenchmark = () => main().catch(error => { writeBenchmarkResult({ status: 'error', error: formatBenchmarkError(error) }); });
+	if (params.get('deferStart') === 'true') {
+		globalThis.addEventListener('nyala-benchmark-start', startBenchmark, { once: true });
+	} else {
+		startBenchmark();
+	}
 </script>`;
 }
 
