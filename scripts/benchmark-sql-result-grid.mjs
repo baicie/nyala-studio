@@ -13,13 +13,20 @@ import {
 	HEADER_HEIGHT,
 	isBenchmarkResultForRun,
 	isValidVisibleRowIndex,
+	MAX_VIRTUAL_ROW_OVERSCAN,
+	maximumVirtualRenderedRows,
 	MEASUREMENT_CONTRACT_VERSION,
+	RESERVED_VIEWPORT_HEIGHT,
 	ROW_HEIGHT,
+	SCROLLBAR_THICKNESS_ESTIMATE,
 	SCROLL_COMMIT_BOUNDARY,
 	SCROLL_COMMIT_ATTEMPTS,
 	SCROLL_OFFSET_TOLERANCE,
 	SCROLL_ROW_TOLERANCE,
 	SCROLL_TARGET_RATIOS,
+	WORKBENCH_TABLE_CHARACTERIZATION_ID,
+	WORKBENCH_TABLE_IMPLEMENTATION_ID,
+	WORKBENCH_TABLE_RUNTIME_PROOF,
 	waitForPresentationOpportunity
 } from './sql-result-grid-benchmark-contract.mjs';
 import { CdpClient } from './sql-result-grid-cdp-client.mjs';
@@ -55,7 +62,7 @@ const workloads = [
 const cli = parseArgs(process.argv.slice(2));
 if (cli.help) {
 	process.stdout.write(
-		`Usage: node scripts/benchmark-sql-result-grid.mjs [options]\n\nOptions:\n  -h, --help                    Show this help\n  --repeat <n>                  Runs per workload/renderer (default: 1)\n  --renderer <names>            native,workbench-table,zeus, or all\n  --workload <ids>              Comma-separated workload ids\n  --zeus-bundle <path>          Zeus data-grid browser bundle\n  --require-zeus <true|false>   Fail unless Zeus produces ok records\n  --diagnostic-profile <bool>   Measure the shared presentation floor (default: false)\n  --emit-page <path>            Write the standalone benchmark page and exit\n  --output <path>               Output benchmark JSON\n`
+		`Usage: node scripts/benchmark-sql-result-grid.mjs [options]\n\nOptions:\n  -h, --help                    Show this help\n  --repeat <n>                  Runs per workload/renderer (default: 1)\n  --renderer <names>            native,workbench-table,zeus, or all\n  --workload <ids>              Comma-separated workload ids\n  --workbench-table-implementation <mode>\n                                characterization (default) or real\n  --zeus-bundle <path>          Zeus data-grid browser bundle (or NYALA_ZEUS_BUNDLE)\n  --require-zeus <true|false>   Fail unless Zeus produces ok records\n  --diagnostic-profile <bool>   Measure the shared presentation floor (default: false)\n  --emit-page <path>            Write the standalone benchmark page and exit\n  --output <path>               Output benchmark JSON\n`
 	);
 	process.exit(0);
 }
@@ -66,6 +73,10 @@ const selectedRenderers =
 const supportedRenderers = new Set(['native', 'workbench-table', 'zeus']);
 if (selectedRenderers.some(renderer => !supportedRenderers.has(renderer))) {
 	throw new Error(`renderer must be one of: ${[...supportedRenderers].join(', ')}`);
+}
+const workbenchTableImplementation = cli['workbench-table-implementation'] ?? 'characterization';
+if (!['characterization', 'real'].includes(workbenchTableImplementation)) {
+	throw new Error('--workbench-table-implementation must be characterization or real');
 }
 const selectedWorkloads = cli.workload
 	? workloads.filter(workload => cli.workload.split(',').includes(workload.id))
@@ -84,19 +95,28 @@ if (
 		'--diagnostic-profile requires repeat >= 3, workload 10k-x-50, Zeus, and a non-Zeus baseline renderer'
 	);
 }
-const zeusBundle = cli['zeus-bundle'] ?? '/tmp/nyala-zeus-audit-20260810/data-grid-bundle.js';
+const zeusBundle = cli['zeus-bundle'] ?? process.env.NYALA_ZEUS_BUNDLE;
+if (selectedRenderers.includes('zeus')) {
+	if (!zeusBundle) throw new Error('Zeus renderer requires --zeus-bundle <path> or NYALA_ZEUS_BUNDLE.');
+	if (!(await exists(zeusBundle))) throw new Error(`Unable to load Zeus bundle at ${zeusBundle}`);
+}
 const outputPath = resolve(cli.output ?? defaultOutput);
+const workbenchTableBundle =
+	selectedRenderers.includes('workbench-table') && workbenchTableImplementation === 'real'
+		? await import('./sql-result-grid-workbench-table-bundle.mjs').then(module =>
+				module.buildSqlResultGridWorkbenchTableBundle()
+			)
+		: undefined;
 
 if (cli['emit-page']) {
 	const pagePath = resolve(cli['emit-page']);
-	if (selectedRenderers.includes('zeus') && cli['require-zeus'] === 'true' && !(await exists(zeusBundle))) {
-		throw new Error(`Unable to load Zeus bundle at ${zeusBundle}`);
-	}
 	await writeFile(
 		pagePath,
 		await createBenchmarkPage({
 			includeZeus: selectedRenderers.includes('zeus'),
-			zeusBundle
+			zeusBundle,
+			workbenchTableBundle,
+			workbenchTableImplementation
 		}),
 		'utf8'
 	);
@@ -114,12 +134,11 @@ const temporaryRoot = await mkdtemp(join(tmpdir(), 'nyala-sql-result-grid-'));
 let browserRunner;
 
 try {
-	if (selectedRenderers.includes('zeus') && cli['require-zeus'] === 'true' && !(await exists(zeusBundle))) {
-		throw new Error(`Unable to load Zeus bundle at ${zeusBundle}`);
-	}
 	const html = await createBenchmarkPage({
 		includeZeus: selectedRenderers.includes('zeus'),
-		zeusBundle
+		zeusBundle,
+		workbenchTableBundle,
+		workbenchTableImplementation
 	});
 	await writeFile(join(temporaryRoot, 'benchmark.html'), html, 'utf8');
 	browserRunner = await launchChromiumBenchmark(chromePath, temporaryRoot);
@@ -150,27 +169,36 @@ try {
 		generatedAt: new Date().toISOString(),
 		provenance: {
 			...createEvidenceProvenance(cli),
-			...(selectedRenderers.includes('zeus') ? { zeusBundleSha256: await sha256File(zeusBundle) } : {})
+			...(selectedRenderers.includes('zeus') ? { zeusBundleSha256: await sha256File(zeusBundle) } : {}),
+			...(workbenchTableBundle ? { workbenchTableBundleSha256: workbenchTableBundle.sha256 } : {})
 		},
 		browser: chromePath,
 		userAgent: records.find(record => record.userAgent)?.userAgent,
 		repeat,
 		workloads: selectedWorkloads,
 		renderers: selectedRenderers,
+		workbenchTableImplementation,
 		records,
 		summary: summarize(records),
 		...(diagnosticProfile
 			? {
 					diagnosticProfile: {
 						version: SQL_RESULT_GRID_FEASIBILITY_PROFILE_VERSION,
-						presentationFloorSampleCount: SQL_RESULT_GRID_PRESENTATION_FLOOR_SAMPLE_COUNT
+						presentationFloorSampleCount: SQL_RESULT_GRID_PRESENTATION_FLOOR_SAMPLE_COUNT,
+						zeusAdapter: {
+							explicitRefreshViewport: false,
+							overscan: 4,
+							rowShape: 'array-index'
+						}
 					}
 				}
 			: {}),
 		limitations: [
 			'Browser runs use Chromium-compatible headless mode; they are not macOS WebKit or Windows WebView2 evidence.',
-			'The WorkbenchTable renderer is a standalone fixed-row virtual-list characterization of the platform table contract, not a Workbench boot.',
-			'Scroll latency uses one DOM input and a post-presentation-opportunity visible-row completion contract for all renderers; aggregate timings are recomputable from 20 real-displacement samples.',
+			workbenchTableImplementation === 'real'
+				? 'The WorkbenchTable renderer instantiates the repository WorkbenchTable with isolated platform services; it is not a full Workbench boot.'
+				: 'The WorkbenchTable renderer is a standalone fixed-row virtual-list characterization of the platform table contract, not a Workbench boot.',
+			'Scroll latency uses one scroll-controller input and a post-presentation-opportunity visible-row completion contract for all renderers; aggregate timings are recomputable from 20 real-displacement samples.',
 			'IPC and format timings measure the existing JSON-shaped result boundary and local cell formatting; no database or Tauri command is invoked.'
 		]
 	};
@@ -369,7 +397,9 @@ async function runBrowserBenchmark(
 		renderer,
 		executionOrder: EXECUTION_ORDER,
 		executionOrdinal,
-		workload
+		workload,
+		workbenchTableImplementation,
+		workbenchTableBundleSha256: workbenchTableBundle?.sha256
 	});
 	return { ...record, workloadId: workload.id, iteration };
 }
@@ -460,15 +490,22 @@ function delay(milliseconds) {
 	return new Promise(resolveDelay => setTimeout(resolveDelay, milliseconds));
 }
 
-async function createBenchmarkPage({ includeZeus, zeusBundle }) {
+async function createBenchmarkPage({ includeZeus, zeusBundle, workbenchTableBundle, workbenchTableImplementation }) {
 	const zeusSource = includeZeus && (await exists(zeusBundle)) ? await readFile(zeusBundle, 'utf8') : '';
 	const zeusTag = zeusSource ? `<script type="module">\n${zeusSource}\n</script>` : '';
+	const workbenchTableCssTag = workbenchTableBundle
+		? `<style data-nyala-workbench-table-benchmark>\n${workbenchTableBundle.css.replaceAll('</style>', '<\\/style>')}\n</style>`
+		: '';
+	const workbenchTableScriptTag = workbenchTableBundle
+		? `<script type="module">\n${workbenchTableBundle.javascript.replaceAll('</script>', '<\\/script>')}\n</script>`
+		: '';
 	return `<!doctype html>
 <meta charset="utf-8">
 <title>Nyala SQL result grid benchmark</title>
 <style>
-html, body { margin: 0; background: #1e1e1e; color: #ddd; font: 12px sans-serif; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #1e1e1e; color: #ddd; font: 12px sans-serif; }
 #root { width: 100vw; height: 100vh; overflow: hidden; }
+#benchmark-result { display: none; }
 .bench-scroll { width: 100%; height: calc(100vh - 20px); overflow: auto; contain: strict; }
 table { border-collapse: collapse; width: max-content; }
 th, td { box-sizing: border-box; min-width: 112px; height: 28px; padding: 4px 8px; border: 1px solid #444; white-space: nowrap; }
@@ -479,6 +516,9 @@ th { position: sticky; top: 0; background: #2d2d2d; }
 .virtual-header { position: sticky; top: 0; z-index: 1; background: #2d2d2d; }
 .virtual-cell { box-sizing: border-box; height: 28px; padding: 4px 8px; border: 1px solid #444; white-space: nowrap; overflow: hidden; }
 .virtual-row { position: absolute; left: 0; }
+.nyala-workbench-table-host { width: 100%; height: calc(100vh - 20px); overflow: hidden; }
+.nyala-workbench-table-host .monaco-table-th { box-sizing: border-box; height: 28px; padding: 4px 8px; border: 1px solid #444; background: #2d2d2d; color: #ddd; }
+.nyala-workbench-table-host .monaco-table-td { box-sizing: border-box; height: 28px; padding: 4px 8px; border: 1px solid #444; color: #ddd; }
 zw-data-grid { display: block; width: 100%; height: calc(100vh - 20px); }
 zw-data-grid [data-slot="data-grid-viewport"] { position: relative; box-sizing: border-box; width: 100%; height: 100%; overflow: auto; contain: strict; }
 zw-data-grid [data-slot="data-grid-header"] { position: sticky; top: 0; z-index: 2; min-height: 28px; background: #2d2d2d; }
@@ -488,6 +528,8 @@ zw-data-grid [data-slot="data-grid-row"] { position: absolute; left: 0; height: 
 	zw-data-grid [data-slot="data-grid-header-cell"], zw-data-grid [data-slot="data-grid-cell"] { box-sizing: border-box; min-width: 0; height: 28px; padding: 4px 8px; border: 1px solid #444; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 	#benchmark-run-marker { position: fixed; z-index: 2147483647; pointer-events: none; image-rendering: pixelated; }
 	</style>
+${workbenchTableCssTag}
+${workbenchTableScriptTag}
 ${zeusTag}
 <div id="root"></div><pre id="benchmark-result"></pre>
 <script>
@@ -497,6 +539,11 @@ const runToken = params.get('run') || 'standalone';
 	const executionOrder = params.get('executionOrder') || '';
 	const executionOrdinal = Number(params.get('executionOrdinal') || 0);
 	const diagnosticProfile = params.get('diagnosticProfile') === 'true';
+const workbenchTableImplementation = ${JSON.stringify(workbenchTableImplementation)};
+const WORKBENCH_TABLE_IMPLEMENTATION_ID = ${JSON.stringify(WORKBENCH_TABLE_IMPLEMENTATION_ID)};
+const WORKBENCH_TABLE_RUNTIME_PROOF = ${JSON.stringify(WORKBENCH_TABLE_RUNTIME_PROOF)};
+const WORKBENCH_TABLE_CHARACTERIZATION_ID = ${JSON.stringify(WORKBENCH_TABLE_CHARACTERIZATION_ID)};
+const WORKBENCH_TABLE_BUNDLE_SHA256 = ${JSON.stringify(workbenchTableBundle?.sha256)};
 const rowCount = Number(params.get('rows') || 1000);
 const columnCount = Number(params.get('columns') || 20);
 const wide = params.get('wide') === 'true';
@@ -510,6 +557,9 @@ const wide = params.get('wide') === 'true';
 	const RUN_MARKER_LAYOUT = ${JSON.stringify(SQL_RESULT_GRID_RUN_MARKER_LAYOUT)};
 const ROW_HEIGHT = ${ROW_HEIGHT};
 const HEADER_HEIGHT = ${HEADER_HEIGHT};
+const RESERVED_VIEWPORT_HEIGHT = ${RESERVED_VIEWPORT_HEIGHT};
+const SCROLLBAR_THICKNESS_ESTIMATE = ${SCROLLBAR_THICKNESS_ESTIMATE};
+const MAX_VIRTUAL_ROW_OVERSCAN = ${MAX_VIRTUAL_ROW_OVERSCAN};
 const SCROLL_TARGET_RATIOS = ${JSON.stringify(SCROLL_TARGET_RATIOS)};
 const SCROLL_SAMPLE_COUNT = SCROLL_TARGET_RATIOS.length;
 const PRESENTATION_FLOOR_SAMPLE_COUNT = ${SQL_RESULT_GRID_PRESENTATION_FLOOR_SAMPLE_COUNT};
@@ -517,6 +567,7 @@ const SCROLL_ROW_TOLERANCE = ${SCROLL_ROW_TOLERANCE};
 const SCROLL_OFFSET_TOLERANCE = ${SCROLL_OFFSET_TOLERANCE};
 const SCROLL_COMMIT_ATTEMPTS = ${SCROLL_COMMIT_ATTEMPTS};
 ${isValidVisibleRowIndex.toString()}
+${maximumVirtualRenderedRows.toString()}
 ${waitForPresentationOpportunity.toString()}
 const workload = { rows: rowCount, columns: columnCount, wide, viewportWidth, viewportHeight };
 document.documentElement.style.width = viewportWidth + 'px';
@@ -616,6 +667,7 @@ function renderScreenshotRunMarker() {
 		}
 	}
 	document.body.append(canvas);
+	return canvas;
 }
 
 function crc16Ccitt(bytes) {
@@ -630,44 +682,46 @@ function crc16Ccitt(bytes) {
 }
 
 function getScrollElement(root) {
-  return root.querySelector('.bench-scroll, .virtual-scroll, [data-slot="data-grid-viewport"]') || root;
+  return root.querySelector('.bench-scroll, .virtual-scroll, [data-slot="data-grid-viewport"], .monaco-list > .monaco-scrollable-element') || root;
 }
 
-function getVisibleCell(scrollElement) {
-	const rect = scrollElement.getBoundingClientRect();
+function getVisibleCell(rendered) {
+	const viewportElement = rendered.viewport ?? rendered.scroll;
+	const rect = viewportElement.getBoundingClientRect();
 	const x = Math.min(rect.right - 1, rect.left + Math.max(1, Math.min(56, rect.width / 2)));
-	const y = Math.min(rect.bottom - 1, rect.top + HEADER_HEIGHT + ROW_HEIGHT / 2);
-	const cell = document.elementFromPoint(x, y)?.closest?.('td, .virtual-cell, [role="gridcell"]');
-	return cell && scrollElement.contains(cell) ? cell : null;
+	const y = Math.min(rect.bottom - 1, rect.top + (rendered.probeHeaderHeight ?? HEADER_HEIGHT) + ROW_HEIGHT / 2);
+	const cell = document.elementFromPoint(x, y)?.closest?.('td, .virtual-cell, .monaco-table-td, [role="gridcell"]');
+	return cell && viewportElement.contains(cell) ? cell : null;
 }
 
-function getVisibleRowIndex(scrollElement) {
-	const cell = getVisibleCell(scrollElement);
-	const row = cell?.closest?.('[data-row-index]');
-	const index = Number(row?.getAttribute('data-row-index'));
+function getVisibleRowIndex(rendered) {
+	const cell = getVisibleCell(rendered);
+	const row = cell?.closest?.('[data-row-index], .monaco-list-row[data-index]');
+	const index = Number(row?.getAttribute('data-row-index') ?? row?.getAttribute('data-index'));
 	if (!Number.isInteger(index) || cell.textContent?.trim() !== String(index)) return -1;
 	return index;
 }
 
-async function waitForVisibleCell(scrollElement) {
+async function waitForVisibleCell(rendered) {
 	for (let attempt = 0; attempt < SCROLL_COMMIT_ATTEMPTS; attempt += 1) {
-		const cell = getVisibleCell(scrollElement);
+		const cell = getVisibleCell(rendered);
 		if (cell?.textContent?.trim()) return cell;
 		await waitForPresentationOpportunity();
 	}
-	return getVisibleCell(scrollElement);
+	return getVisibleCell(rendered);
 }
 
 function expectedVisibleRowIndex(actualOffset) {
 	return Math.max(0, Math.min(rowCount - 1, Math.floor((actualOffset + ROW_HEIGHT / 2) / ROW_HEIGHT)));
 }
 
-async function commitScroll(scrollElement, targetOffset, sampleIndex) {
-	const startOffset = scrollElement.scrollTop;
+async function commitScroll(rendered, targetOffset, sampleIndex) {
+	const scrollController = rendered.scroll;
+	const startOffset = scrollController.scrollTop;
 	const startedAt = performance.now();
-	scrollElement.scrollTop = targetOffset;
+	scrollController.scrollTop = targetOffset;
 	const inputMs = performance.now() - startedAt;
-	let actualOffset = scrollElement.scrollTop;
+	let actualOffset = scrollController.scrollTop;
 	let expectedRowIndex = expectedVisibleRowIndex(actualOffset);
 	let visibleRowIndex = -1;
 	let rowDelta = Number.POSITIVE_INFINITY;
@@ -679,10 +733,10 @@ async function commitScroll(scrollElement, targetOffset, sampleIndex) {
 		await waitForPresentationOpportunity();
 		if (diagnosticProfile) presentationWaitMs += performance.now() - presentationStartedAt;
 		const validationStartedAt = diagnosticProfile ? performance.now() : 0;
-		void scrollElement.offsetHeight;
-		actualOffset = scrollElement.scrollTop;
+		void scrollController.offsetHeight;
+		actualOffset = scrollController.scrollTop;
 		expectedRowIndex = expectedVisibleRowIndex(actualOffset);
-		visibleRowIndex = getVisibleRowIndex(scrollElement);
+		visibleRowIndex = getVisibleRowIndex(rendered);
 		rowDelta = Math.abs(visibleRowIndex - expectedRowIndex);
 		if (diagnosticProfile) validationMs += performance.now() - validationStartedAt;
 		attempts += 1;
@@ -700,7 +754,7 @@ async function commitScroll(scrollElement, targetOffset, sampleIndex) {
 		startOffset,
 		targetOffset,
 		actualOffset,
-		scrollViewportHeight: scrollElement.clientHeight,
+		scrollViewportHeight: scrollController.clientHeight,
 		expectedRowIndex,
 		visibleRowIndex,
 		rowDelta,
@@ -752,14 +806,14 @@ async function measureScroll(rendered) {
 	}
 	await waitForPresentationOpportunity();
 	void rendered.scroll.offsetHeight;
-	const preposition = await commitScroll(rendered.scroll, maxOffset, -1);
+	const preposition = await commitScroll(rendered, maxOffset, -1);
 	if (!preposition.committed) {
 		throw new Error('Scroll workload could not preposition at its maximum offset.');
 	}
 	for (let sampleIndex = 0; sampleIndex < SCROLL_SAMPLE_COUNT; sampleIndex += 1) {
 		const [numerator, denominator] = SCROLL_TARGET_RATIOS[sampleIndex];
 		const targetOffset = maxOffset * numerator / denominator;
-		const sample = await commitScroll(rendered.scroll, targetOffset, sampleIndex);
+		const sample = await commitScroll(rendered, targetOffset, sampleIndex);
 		if (!sample.committed) {
 			throw new Error(
 				'Scroll sample ' + sampleIndex + ' did not commit: expected row ' + sample.expectedRowIndex +
@@ -799,10 +853,10 @@ function renderNative(root, rows, columns) {
   const body = document.createElement('tbody');
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) { const tr = document.createElement('tr'); tr.dataset.rowIndex = String(rowIndex); for (const value of rows[rowIndex]) { const td = document.createElement('td'); td.textContent = value === null ? 'NULL' : String(value); tr.append(td); } body.append(tr); }
   table.append(body); scroll.append(table); root.append(scroll);
-  return { scroll, totalHeight: rows.length * 28 + 28 };
+  return { scroll, viewport: scroll, totalHeight: rows.length * 28 + 28 };
 }
 
-function renderWorkbenchTable(root, rows, columns) {
+function renderWorkbenchTableCharacterization(root, rows, columns) {
   const scroll = document.createElement('div'); scroll.className = 'virtual-scroll';
   const header = document.createElement('div'); header.className = 'virtual-header';
   for (const column of columns) { const cell = document.createElement('div'); cell.className = 'virtual-cell'; cell.textContent = column.name; header.append(cell); }
@@ -821,7 +875,67 @@ function renderWorkbenchTable(root, rows, columns) {
     }
   };
   scroll.addEventListener('scroll', renderWindow, { passive: true }); renderWindow();
-  return { scroll, totalHeight: rows.length * 28 + 28 };
+  return {
+    scroll,
+    viewport: scroll,
+    totalHeight: rows.length * 28 + 28,
+    implementation: {
+      id: WORKBENCH_TABLE_CHARACTERIZATION_ID,
+      runtimeProof: 'standalone-contract-v1',
+      exactPrototype: false,
+      domVerified: false
+    }
+  };
+}
+
+function waitForRealWorkbenchTableBundle() {
+  if (typeof globalThis.__NYALA_CREATE_WORKBENCH_TABLE_BENCHMARK__ === 'function') return Promise.resolve();
+  return new Promise((resolveReady, rejectReady) => {
+    const timeout = setTimeout(() => {
+      globalThis.removeEventListener('nyala-workbench-table-benchmark-ready', onReady);
+      rejectReady(new Error('Real WorkbenchTable benchmark bundle did not become ready.'));
+    }, 5000);
+    const onReady = () => {
+      clearTimeout(timeout);
+      if (typeof globalThis.__NYALA_CREATE_WORKBENCH_TABLE_BENCHMARK__ !== 'function') {
+        rejectReady(new Error('Real WorkbenchTable benchmark bundle did not expose its factory.'));
+        return;
+      }
+      resolveReady();
+    };
+    globalThis.addEventListener('nyala-workbench-table-benchmark-ready', onReady, { once: true });
+  });
+}
+
+function renderWorkbenchTable(root, rows, columns) {
+  if (workbenchTableImplementation !== 'real') return renderWorkbenchTableCharacterization(root, rows, columns);
+  const factory = globalThis.__NYALA_CREATE_WORKBENCH_TABLE_BENCHMARK__;
+  if (typeof factory !== 'function') throw new Error('Real WorkbenchTable benchmark factory is unavailable.');
+  const rendered = factory(root, rows, columns, {
+    width: viewportWidth,
+    height: Math.max(1, viewportHeight - 20),
+    rowHeight: ROW_HEIGHT,
+    headerHeight: HEADER_HEIGHT
+  });
+  const implementation = rendered?.implementation;
+  if (
+    implementation?.id !== WORKBENCH_TABLE_IMPLEMENTATION_ID ||
+    implementation?.runtimeProof !== WORKBENCH_TABLE_RUNTIME_PROOF ||
+    implementation?.exactPrototype !== true ||
+    implementation?.domVerified !== true ||
+    !/^[a-f0-9]{64}$/.test(WORKBENCH_TABLE_BUNDLE_SHA256 || '')
+  ) {
+    rendered?.dispose?.();
+    throw new Error('Real WorkbenchTable renderer implementation proof is invalid.');
+  }
+  return {
+    ...rendered,
+	probeHeaderHeight: 0,
+    implementation: {
+      ...implementation,
+      bundleSha256: WORKBENCH_TABLE_BUNDLE_SHA256
+    }
+  };
 }
 
 async function renderZeus(root, rows, columns) {
@@ -829,26 +943,21 @@ async function renderZeus(root, rows, columns) {
   const grid = document.createElement('zw-data-grid');
   grid.setAttribute('aria-label', 'SQL result benchmark');
   grid.virtual = true; grid.rowHeight = ROW_HEIGHT; grid.overscan = 4; grid.overscanColumns = 1; grid.keyboardNavigation = true; grid.selectionMode = 'single';
-  grid.columns = columns.map(column => ({ id: column.id, header: column.name, field: column.id, width: 112, minWidth: 80, maxWidth: 480, sortable: false, resizable: false }));
-	const mappedRows = new Array(rows.length);
-	for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-		const record = { key: 'row-' + rowIndex };
-		for (let columnIndex = 0; columnIndex < rows[rowIndex].length; columnIndex += 1) {
-			record['c' + columnIndex] = rows[rowIndex][columnIndex] === null ? 'NULL' : String(rows[rowIndex][columnIndex]);
-		}
-		mappedRows[rowIndex] = record;
-	}
-	grid.rows = mappedRows;
+  grid.columns = columns.map(column => ({ id: column.id, header: column.name, field: String(column.ordinal), width: 112, minWidth: 80, maxWidth: 480, sortable: false, resizable: false }));
+	grid.rows = rows;
 	root.append(grid);
 	if (grid.componentOnReady) await grid.componentOnReady();
-	if (grid.refreshViewport) await grid.refreshViewport();
 	void root.offsetHeight;
-	return { scroll: getScrollElement(root), totalHeight: rows.length * 28 + 28, grid };
+	const scroll = getScrollElement(root);
+	return { scroll, viewport: scroll, totalHeight: rows.length * 28 + 28, grid };
 }
 
 async function main() {
   const root = document.getElementById('root');
   root.style.width = viewportWidth + 'px'; root.style.height = viewportHeight + 'px';
+	if (renderer === 'workbench-table' && workbenchTableImplementation === 'real') {
+		await waitForRealWorkbenchTableBundle();
+	}
   if (renderer === 'zeus' && !customElements.get('zw-data-grid')) {
     await Promise.race([
       customElements.whenDefined('zw-data-grid'),
@@ -876,41 +985,76 @@ async function main() {
 	void root.offsetHeight;
 	const scroll = await measureScroll(rendered);
 	const presentationFloor = diagnosticProfile ? await measurePresentationFloor() : undefined;
-	const reset = await commitScroll(rendered.scroll, 0, -1);
+	const reset = await commitScroll(rendered, 0, -1);
 	if (!reset.committed) throw new Error('Renderer did not reset to its first visible row.');
 	await waitForPresentationOpportunity();
 	void root.offsetHeight;
   const afterHeap = measureHeap();
-	const firstCell = getVisibleCell(rendered.scroll);
-	const visibleFirstCell = firstCell?.textContent?.trim() ? firstCell : await waitForVisibleCell(rendered.scroll);
+	const firstCell = getVisibleCell(rendered);
+	const visibleFirstCell = firstCell?.textContent?.trim() ? firstCell : await waitForVisibleCell(rendered);
 	const firstCellRect = visibleFirstCell?.getBoundingClientRect();
 	const rootRect = root.getBoundingClientRect();
-	const renderedRows = renderer === 'native' ? rowCount : document.querySelectorAll('[data-row-index], .virtual-row, tbody tr').length;
+	const renderedRows = renderer === 'native' ? rowCount : root.querySelectorAll('[data-row-index], .virtual-row, tbody tr').length;
+	const domNodes = measureDomNodes();
+	let runMarker;
+	if (screenshotRunMarkerHex) {
+		runMarker = renderScreenshotRunMarker();
+		await waitForPresentationOpportunity();
+		await waitForPresentationOpportunity();
+	}
+	const documentElement = document.documentElement;
+	const documentViewport = {
+		clientWidth: documentElement.clientWidth,
+		clientHeight: documentElement.clientHeight,
+		scrollWidth: documentElement.scrollWidth,
+		scrollHeight: documentElement.scrollHeight
+	};
+	const runMarkerRect = runMarker?.getBoundingClientRect();
+	const runMarkerBounds = runMarkerRect ? {
+		left: runMarkerRect.left,
+		top: runMarkerRect.top,
+		right: runMarkerRect.right,
+		bottom: runMarkerRect.bottom,
+		width: runMarkerRect.width,
+		height: runMarkerRect.height
+	} : undefined;
 	  const result = {
 	    status: 'ok',
 	    userAgent: navigator.userAgent, formatMs: formatted.formatMs, parseMs, renderMs,
-    scroll, domNodes: measureDomNodes(), fixtureBytes,
+	    scroll, domNodes, fixtureBytes,
+		rendererImplementation: rendered.implementation,
 		diagnostics: diagnosticProfile ? { presentationFloor } : undefined,
     heapBytes: beforeHeap !== null && afterHeap !== null && afterHeap > beforeHeap ? afterHeap - beforeHeap : null,
 	    renderedRows,
 	    visualProbe: {
       rootWidth: root.getBoundingClientRect().width,
       rootHeight: root.getBoundingClientRect().height,
-      headerText: root.querySelector('th, .virtual-header .virtual-cell, [role="columnheader"]')?.textContent || '',
+	      headerText: root.querySelector('th, .virtual-header .virtual-cell, .monaco-table-th, [role="columnheader"]')?.textContent || '',
 		firstVisibleCellText: visibleFirstCell?.textContent || '',
 		firstCellInViewport: Boolean(firstCellRect && firstCellRect.bottom > rootRect.top && firstCellRect.top < rootRect.bottom),
-		virtualRowsBounded: renderer === 'native' || renderedRows < rowCount,
-      visibleTextLength: (root.innerText || root.textContent || '').trim().length
+		virtualRowsBounded:
+			renderer === 'native' || (renderedRows > 0 && renderedRows <= maximumVirtualRenderedRows(workload)),
+		documentViewport,
+		outerDocumentOverflowFree:
+			documentViewport.scrollWidth === documentViewport.clientWidth &&
+			documentViewport.scrollHeight === documentViewport.clientHeight,
+		runMarkerBounds,
+		runMarkerAnchored: !screenshotRunMarkerHex || Boolean(
+			runMarkerBounds &&
+			Math.abs(runMarkerBounds.left - RUN_MARKER_LAYOUT.left) <= 0.5 &&
+			Math.abs(documentViewport.clientHeight - runMarkerBounds.bottom - RUN_MARKER_LAYOUT.bottom) <= 0.5
+		),
+	      visibleTextLength: (root.innerText || root.textContent || '').trim().length
 	    }
 	  };
-		  if (screenshotRunMarkerHex) {
-		    renderScreenshotRunMarker();
-		    await waitForPresentationOpportunity();
-		    await waitForPresentationOpportunity();
-		  }
 		  writeBenchmarkResult(result);
 	}
-	main().catch(error => { writeBenchmarkResult({ status: 'error', error: String(error && error.stack || error) }); });
+	function formatBenchmarkError(error) {
+		const message = String(error && error.message || error);
+		const stack = String(error && error.stack || '');
+		return stack && !stack.includes(message) ? message + String.fromCharCode(10) + stack : stack || message;
+	}
+	main().catch(error => { writeBenchmarkResult({ status: 'error', error: formatBenchmarkError(error) }); });
 </script>`;
 }
 

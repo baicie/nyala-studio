@@ -9,10 +9,13 @@ import {
 	createBalancedBenchmarkPlan,
 	EXECUTION_ORDER,
 	isBenchmarkResultForRun,
+	isValidWorkbenchTableRendererImplementation,
 	isValidVisibleRowIndex,
 	MEASUREMENT_CONTRACT_VERSION,
 	SCROLL_COMMIT_BOUNDARY,
 	SCROLL_TARGET_RATIOS,
+	WORKBENCH_TABLE_IMPLEMENTATION_ID,
+	WORKBENCH_TABLE_RUNTIME_PROOF,
 	waitForPresentationOpportunity
 } from './sql-result-grid-benchmark-contract.mjs';
 
@@ -118,6 +121,39 @@ test('benchmark CLI accepts -h as the help alias', async () => {
 	assert.match(stdout, /--diagnostic-profile/);
 });
 
+test('benchmark CLI requires an explicit Zeus bundle before emitting a page', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-sql-result-grid-zeus-input-test-'));
+	const page = join(root, 'benchmark.html');
+	try {
+		await assert.rejects(
+			execFileAsync(process.execPath, [benchmarkScript.pathname, '--emit-page', page, '--renderer', 'zeus'], {
+				env: { ...process.env, NYALA_ZEUS_BUNDLE: '' },
+				timeout: 5_000
+			}),
+			/Zeus renderer requires --zeus-bundle <path> or NYALA_ZEUS_BUNDLE/
+		);
+		assert.equal(await exists(page), false);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('benchmark CLI reads an explicit Zeus bundle from NYALA_ZEUS_BUNDLE', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-sql-result-grid-zeus-env-test-'));
+	const page = join(root, 'benchmark.html');
+	const bundle = join(root, 'data-grid-bundle.js');
+	try {
+		await writeFile(bundle, 'globalThis.__NYALA_TEST_ZEUS_BUNDLE__ = true;\n', 'utf8');
+		await execFileAsync(process.execPath, [benchmarkScript.pathname, '--emit-page', page, '--renderer', 'zeus'], {
+			env: { ...process.env, NYALA_ZEUS_BUNDLE: bundle },
+			timeout: 5_000
+		});
+		assert.match(await readFile(page, 'utf8'), /__NYALA_TEST_ZEUS_BUNDLE__/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test('benchmark script exposes the required workload and renderer vocabulary', async () => {
 	const source = await import('node:fs/promises').then(fs =>
 		fs.readFile(new URL('./benchmark-sql-result-grid.mjs', import.meta.url), 'utf8')
@@ -145,6 +181,9 @@ test('benchmark script exposes the required workload and renderer vocabulary', a
 test('package benchmark command captures a balanced three-repeat admission run', async () => {
 	const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 	assert.match(manifest.scripts['benchmark:sql-result-grid'], /--repeat 3(?:\s|$)/);
+	assert.match(manifest.scripts['benchmark:sql-result-grid'], /--renderer all/);
+	assert.match(manifest.scripts['benchmark:sql-result-grid'], /--workbench-table-implementation real/);
+	assert.match(manifest.scripts['benchmark:sql-result-grid'], /--require-zeus true/);
 	assert.doesNotMatch(manifest.scripts['benchmark:sql-result-grid'], /--diagnostic-profile/);
 });
 
@@ -155,7 +194,34 @@ test('package profiler command runs a six-repeat 10k floor characterization', as
 	assert.match(command, /--repeat 6/);
 	assert.match(command, /--workload 10k-x-50/);
 	assert.match(command, /--renderer workbench-table,zeus/);
+	assert.match(command, /--workbench-table-implementation real/);
 	assert.match(command, /--require-zeus true/);
+});
+
+test('real WorkbenchTable implementation proof is exact and bundle-bound', () => {
+	const bundleSha256 = 'a'.repeat(64);
+	const implementation = {
+		id: WORKBENCH_TABLE_IMPLEMENTATION_ID,
+		runtimeProof: WORKBENCH_TABLE_RUNTIME_PROOF,
+		exactPrototype: true,
+		domVerified: true,
+		bundleSha256
+	};
+
+	assert.equal(isValidWorkbenchTableRendererImplementation(implementation, bundleSha256), true);
+	assert.equal(isValidWorkbenchTableRendererImplementation(undefined, bundleSha256), false);
+	assert.equal(
+		isValidWorkbenchTableRendererImplementation(
+			{ ...implementation, id: 'nyala.benchmark.fixed-row-virtual-list-characterization' },
+			bundleSha256
+		),
+		false
+	);
+	assert.equal(
+		isValidWorkbenchTableRendererImplementation({ ...implementation, exactPrototype: false }, bundleSha256),
+		false
+	);
+	assert.equal(isValidWorkbenchTableRendererImplementation(implementation, 'b'.repeat(64)), false);
 });
 
 test('benchmark script keeps the browser outside the production workbench', async () => {
@@ -233,7 +299,9 @@ test('scroll metric uses one completion contract for every renderer', async () =
 	assert.doesNotMatch(source, /dispatchEvent\(new Event\('scroll'\)\)/);
 	assert.match(source, /document\.elementFromPoint/);
 	assert.match(source, /function getVisibleCell/);
-	assert.match(source, /const firstCell = getVisibleCell\(rendered\.scroll\)/);
+	assert.match(source, /const firstCell = getVisibleCell\(rendered\)/);
+	assert.match(source, /const scrollController = rendered\.scroll/);
+	assert.match(source, /const viewportElement = rendered\.viewport \?\? rendered\.scroll/);
 	assert.doesNotMatch(source, /const firstCell = root\.querySelector/);
 	assert.match(presentationSource, /function waitForPresentationOpportunity/);
 	assert.match(presentationSource, /requestAnimationFrame/);
@@ -265,7 +333,7 @@ test('scroll metric uses one completion contract for every renderer', async () =
 	assert.match(source, /firstCellInViewport/);
 	assert.match(source, /virtualRowsBounded/);
 	assert.match(source, /\[data-slot="data-grid-viewport"\]/);
-	assert.match(source, /scrollElement\.contains\(cell\)/);
+	assert.match(source, /viewportElement\.contains\(cell\)/);
 	assert.match(source, /cell\.textContent\?\.trim\(\) !== String\(index\)/);
 	assert.match(source, /\[data-slot="data-grid-body"\].*position: absolute/);
 	assert.doesNotMatch(source, /function nextFrame/);
@@ -280,6 +348,20 @@ test('diagnostic profile measures twenty no-op presentation opportunities after 
 	assert.match(source, /await waitForPresentationOpportunity\(\)/);
 	assert.match(source, /const scroll = await measureScroll\(rendered\);[\s\S]*measurePresentationFloor/);
 	assert.match(source, /diagnostics:\s*diagnosticProfile/);
+	assert.match(source, /explicitRefreshViewport:\s*false/);
+	assert.match(source, /overscan:\s*4/);
+	assert.match(source, /rowShape:\s*'array-index'/);
+});
+
+test('Zeus adapter reuses formatted row arrays without a redundant viewport refresh', async () => {
+	const source = await import('node:fs/promises').then(fs =>
+		fs.readFile(new URL('./benchmark-sql-result-grid.mjs', import.meta.url), 'utf8')
+	);
+	assert.match(source, /grid\.overscan = 4/);
+	assert.match(source, /field: String\(column\.ordinal\)/);
+	assert.match(source, /grid\.rows = rows/);
+	assert.doesNotMatch(source, /mappedRows/);
+	assert.doesNotMatch(source, /refreshViewport/);
 });
 
 test('presentation completion waits for the task after the animation frame', async () => {
