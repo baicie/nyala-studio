@@ -181,7 +181,7 @@ try {
 	browserProcess.kill('SIGTERM');
 	await Promise.race([new Promise(resolve => browserProcess.once('exit', resolve)), delay(3_000)]);
 	if (browserProcess.exitCode === null) browserProcess.kill('SIGKILL');
-	await rm(profileDir, { recursive: true, force: true });
+	await rm(profileDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 }
 
 async function collectTabOrder(client) {

@@ -502,6 +502,7 @@ impl ClientHandler {
 impl client::Handler for ClientHandler {
     type Error = anyhow::Error;
 
+    #[allow(unknown_lints, clippy::unused_async_trait_impl)]
     async fn check_server_key(
         &mut self,
         server_public_key: &PublicKey,
@@ -866,7 +867,7 @@ impl SshTransport {
     }
 
     /// Reverse port forward: remote -> local.
-    #[allow(clippy::unused_async)]
+    #[allow(unknown_lints, clippy::unused_async, clippy::unused_async_trait_impl)]
     pub async fn reverse_forward_port(
         &self,
         remote_port: u16,

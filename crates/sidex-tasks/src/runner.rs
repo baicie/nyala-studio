@@ -77,7 +77,7 @@ impl TaskRunner {
     }
 
     /// Runs a task, spawning it as a child process.
-    #[allow(clippy::unused_async)]
+    #[allow(unknown_lints, clippy::unused_async, clippy::unused_async_trait_impl)]
     pub async fn run(&mut self, task: &Task, workspace_root: &Path) -> Result<TaskExecution> {
         let (cmd, args) = build_command(task);
 
