@@ -1,10 +1,14 @@
 export const MEASUREMENT_CONTRACT_VERSION = 6;
 export const EXECUTION_ORDER = 'renderer-balanced-rotation-v1';
 export const SCROLL_COMMIT_BOUNDARY = 'post-presentation-opportunity';
+export const WORKBENCH_TABLE_IMPLEMENTATION_ID = 'vs.platform.list.browser.WorkbenchTable';
+export const WORKBENCH_TABLE_RUNTIME_PROOF = 'exact-prototype-and-monaco-dom-v1';
+export const WORKBENCH_TABLE_CHARACTERIZATION_ID = 'nyala.benchmark.fixed-row-virtual-list-characterization';
 export const ROW_HEIGHT = 28;
 export const HEADER_HEIGHT = 28;
 export const RESERVED_VIEWPORT_HEIGHT = 20;
 export const SCROLLBAR_THICKNESS_ESTIMATE = 15;
+export const MAX_VIRTUAL_ROW_OVERSCAN = 16;
 export const SCROLL_VIEWPORT_TOLERANCE = 16;
 export const SCROLL_ROW_TOLERANCE = 2;
 export const SCROLL_OFFSET_TOLERANCE = 1;
@@ -62,6 +66,15 @@ export function maximumScrollOffset(rowCount, scrollViewportHeight) {
 	return Math.max(0, rowCount * ROW_HEIGHT + HEADER_HEIGHT - scrollViewportHeight);
 }
 
+export function maximumVirtualRenderedRows(workload) {
+	const viewportHeight = workload?.height ?? workload?.viewportHeight;
+	if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return 0;
+	const visibleRows = Math.ceil(
+		Math.max(0, viewportHeight - RESERVED_VIEWPORT_HEIGHT - SCROLLBAR_THICKNESS_ESTIMATE) / ROW_HEIGHT
+	);
+	return visibleRows + MAX_VIRTUAL_ROW_OVERSCAN;
+}
+
 export function scrollTargetOffset(maximumOffset, sampleIndex) {
 	const ratio = SCROLL_TARGET_RATIOS[sampleIndex];
 	if (!ratio) throw new RangeError(`Unknown scroll sample index ${sampleIndex}`);
@@ -74,6 +87,19 @@ export function expectedVisibleRowIndex(actualOffset, rowCount) {
 
 export function isValidVisibleRowIndex(index, rowCount) {
 	return Number.isInteger(index) && index >= 0 && index < rowCount;
+}
+
+export function isValidWorkbenchTableRendererImplementation(implementation, expectedBundleSha256) {
+	return Boolean(
+		implementation &&
+		implementation.id === WORKBENCH_TABLE_IMPLEMENTATION_ID &&
+		implementation.runtimeProof === WORKBENCH_TABLE_RUNTIME_PROOF &&
+		implementation.exactPrototype === true &&
+		implementation.domVerified === true &&
+		typeof implementation.bundleSha256 === 'string' &&
+		/^[a-f0-9]{64}$/.test(implementation.bundleSha256) &&
+		(expectedBundleSha256 === undefined || implementation.bundleSha256 === expectedBundleSha256)
+	);
 }
 
 export function waitForPresentationOpportunity(options = {}) {
@@ -131,6 +157,9 @@ export function isBenchmarkResultForRun(record, expected) {
 		record.workload?.columns === expected.workload.columns &&
 		record.workload?.wide === expected.workload.wide &&
 		record.workload?.viewportWidth === expected.workload.width &&
-		record.workload?.viewportHeight === expected.workload.height
+		record.workload?.viewportHeight === expected.workload.height &&
+		(expected.workbenchTableImplementation !== 'real' ||
+			record.renderer !== 'workbench-table' ||
+			isValidWorkbenchTableRendererImplementation(record.rendererImplementation, expected.workbenchTableBundleSha256))
 	);
 }
