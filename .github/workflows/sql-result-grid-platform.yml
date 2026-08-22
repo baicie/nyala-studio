@@ -62,8 +62,8 @@ jobs:
         shell: bash
         run: |
           printf '{"name":"nyala-zeus-audit","private":true}\n' > "$AUDIT_DIR/package.json"
-          pnpm add --dir "$AUDIT_DIR" --save-exact @zeus-web/data-grid@0.1.0-beta.2 esbuild@0.28.1
-          pnpm view @zeus-web/data-grid@0.1.0-beta.2 \
+          pnpm add --dir "$AUDIT_DIR" --save-exact @zeus-web/data-grid@0.1.0-beta.4 esbuild@0.28.1
+          pnpm view @zeus-web/data-grid@0.1.0-beta.4 \
             name version license dist.integrity dist.unpackedSize dependencies peerDependencies \
             --json > "$AUDIT_DIR/registry.json"
           entry="$AUDIT_DIR/node_modules/@zeus-web/data-grid/dist/wc/auto.js"
@@ -90,6 +90,7 @@ jobs:
           node scripts/benchmark-sql-result-grid.mjs \
             --renderer all \
             --repeat 3 \
+            --workbench-table-implementation real \
             --require-zeus true \
             --zeus-bundle "$AUDIT_DIR/data-grid-bundle.js" \
             --output "$AUDIT_DIR/phase-z1-benchmark.json" \

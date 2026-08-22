@@ -45,6 +45,7 @@ const requiredZ1BenchmarkCheckIds = new Set([
 	'chromium-benchmark-measurement-contract-version',
 	'chromium-benchmark-scroll-commit-boundary',
 	'chromium-benchmark-execution-order',
+	'chromium-benchmark-workbench-table-implementation',
 	'chromium-benchmark-record-contract',
 	'chromium-benchmark-summary-integrity',
 	'chromium-benchmark-provenance'
@@ -80,7 +81,9 @@ const requiredZ1ProvenanceCheckIds = new Set([
 	'platform-provenance-workflowRunId',
 	'platform-provenance-workflowRunAttempt',
 	'platform-provenance-zeusBundleSha256',
-	'zeus-bundle-provenance'
+	'platform-provenance-workbenchTableBundleSha256',
+	'zeus-bundle-provenance',
+	'workbench-table-bundle-provenance'
 ]);
 const packageJson = JSON.parse(await readFile(resolve(repositoryRoot, 'package.json'), 'utf8'));
 const z1GateBytes = await readFile(z1GatePath);
@@ -392,11 +395,11 @@ function validateZ1Gate(gate, expectedRevision, options) {
 	}
 	if (
 		dependency?.package?.name !== '@zeus-web/data-grid' ||
-		dependency?.package?.version !== '0.1.0-beta.2' ||
+		dependency?.package?.version !== '0.1.0-beta.4' ||
 		dependency?.package?.license !== 'MIT' ||
 		dependency?.package?.integrity !==
-			'sha512-Tmw5sldixp52arDoGJC8HbeUJvSw6Yr9mRgMBT08zvZiFhLa0n2Ifnf7IrU1IgoAT/uZqfPsyeo8cdFS5cNGNw==' ||
-		dependency?.package?.unpackedSize !== 279_075
+			'sha512-hiaTjf29UY8E/hrMkDm81nVORNWSrqTcInJXQcxZ7azfCfVkN82M8UMe/GDlbQBWksJetq8lT3GbapJEbqZbHA==' ||
+		dependency?.package?.unpackedSize !== 341_232
 	) {
 		reasons.push('Zeus package audit summary is invalid');
 	}
@@ -404,6 +407,7 @@ function validateZ1Gate(gate, expectedRevision, options) {
 		gate?.benchmark?.measurementContractVersion !== MEASUREMENT_CONTRACT_VERSION ||
 		gate?.benchmark?.scrollCommitBoundary !== SCROLL_COMMIT_BOUNDARY ||
 		gate?.benchmark?.executionOrder !== EXECUTION_ORDER ||
+		gate?.benchmark?.workbenchTableImplementation !== 'real' ||
 		gate?.benchmark?.repeat !== 3 ||
 		gate?.benchmark?.recordCount !== 36 ||
 		!isSha256(gate?.benchmark?.sha256)
@@ -518,7 +522,8 @@ function validateZ1PlatformSummary(summary, platform, expectedRevision, reasons)
 	if (
 		summary?.provenance?.sourceRevision !== expectedRevision ||
 		!isSha256(summary?.provenance?.binarySha256) ||
-		!isSha256(summary?.provenance?.zeusBundleSha256)
+		!isSha256(summary?.provenance?.zeusBundleSha256) ||
+		!isSha256(summary?.provenance?.workbenchTableBundleSha256)
 	) {
 		reasons.push(`${label} source/binary/bundle provenance summary is invalid`);
 	}
@@ -548,6 +553,14 @@ function validateZ1ProvenanceSummary(gate, expectedRevision, reasons) {
 	];
 	if (!bundleHashes.every(value => isSha256(value) && value === bundleHashes[0])) {
 		reasons.push('Z1 Zeus bundle SHA-256 provenance summary does not match');
+	}
+	const workbenchTableBundleHashes = [
+		gate?.benchmark?.provenance?.workbenchTableBundleSha256,
+		gate?.platformEvidence?.macosWebKit?.provenance?.workbenchTableBundleSha256,
+		gate?.platformEvidence?.windowsWebView2?.provenance?.workbenchTableBundleSha256
+	];
+	if (!workbenchTableBundleHashes.every(value => isSha256(value) && value === workbenchTableBundleHashes[0])) {
+		reasons.push('Z1 WorkbenchTable bundle SHA-256 provenance summary does not match');
 	}
 }
 

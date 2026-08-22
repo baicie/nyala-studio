@@ -23,7 +23,9 @@ import {
 	MEASUREMENT_CONTRACT_VERSION,
 	SCROLL_COMMIT_BOUNDARY,
 	SCROLL_TARGET_RATIOS,
-	scrollTargetOffset
+	scrollTargetOffset,
+	WORKBENCH_TABLE_IMPLEMENTATION_ID,
+	WORKBENCH_TABLE_RUNTIME_PROOF
 } from './sql-result-grid-benchmark-contract.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -35,6 +37,7 @@ const repository = 'baicie/nyala-studio';
 const workflowRunId = '123456789';
 const zeusBundle = Buffer.from('customElements.define("zw-data-grid", class extends HTMLElement {});\n');
 const zeusBundleSha256 = createHash('sha256').update(zeusBundle).digest('hex');
+const workbenchTableBundleSha256 = 'd'.repeat(64);
 const expectedProvenanceEnv = {
 	NYALA_EXPECTED_REPOSITORY: repository,
 	NYALA_EXPECTED_SOURCE_REVISION: sourceRevision,
@@ -62,6 +65,7 @@ function createSyntheticBenchmark() {
 		executionOrder: EXECUTION_ORDER,
 		browser: '/private/tmp/nyala-secret/synthetic-gate-fixture',
 		repeat: 3,
+		workbenchTableImplementation: 'real',
 		provenance: {
 			repository,
 			sourceRevision,
@@ -69,7 +73,8 @@ function createSyntheticBenchmark() {
 			sourceRef,
 			workflowRunId,
 			workflowRunAttempt: 1,
-			zeusBundleSha256
+			zeusBundleSha256,
+			workbenchTableBundleSha256
 		},
 		summary: summarize(records),
 		records
@@ -84,7 +89,8 @@ async function createEmbeddedPlatformEvidence(root) {
 		workflowRunId,
 		workflowRunAttempt: 1,
 		binarySha256: 'b'.repeat(64),
-		zeusBundleSha256
+		zeusBundleSha256,
+		workbenchTableBundleSha256
 	};
 	return {
 		version: 1,
@@ -213,6 +219,17 @@ function createPlatformRecord(platformName, workload, renderer, iteration, execu
 		fixtureBytes: workload.rows * workload.columns * 12,
 		heapBytes: 1_000_000 + iteration,
 		renderedRows,
+		...(renderer === 'workbench-table'
+			? {
+					rendererImplementation: {
+						id: WORKBENCH_TABLE_IMPLEMENTATION_ID,
+						runtimeProof: WORKBENCH_TABLE_RUNTIME_PROOF,
+						exactPrototype: true,
+						domVerified: true,
+						bundleSha256: workbenchTableBundleSha256
+					}
+				}
+			: {}),
 		visualProbe: {
 			rootWidth: workload.width,
 			rootHeight: workload.height,
@@ -220,6 +237,14 @@ function createPlatformRecord(platformName, workload, renderer, iteration, execu
 			firstVisibleCellText: '0',
 			firstCellInViewport: true,
 			virtualRowsBounded: true,
+			documentViewport: {
+				clientWidth: workload.width,
+				clientHeight: workload.height,
+				scrollWidth: workload.width,
+				scrollHeight: workload.height
+			},
+			outerDocumentOverflowFree: true,
+			runMarkerAnchored: true,
 			visibleTextLength: 100
 		},
 		workloadId: workload.id,
@@ -473,20 +498,20 @@ async function writeSyntheticBenchmark(root) {
 			},
 			package: {
 				name: '@zeus-web/data-grid',
-				version: '0.1.0-beta.2',
+				version: '0.1.0-beta.4',
 				license: 'MIT',
-				integrity: 'sha512-Tmw5sldixp52arDoGJC8HbeUJvSw6Yr9mRgMBT08zvZiFhLa0n2Ifnf7IrU1IgoAT/uZqfPsyeo8cdFS5cNGNw==',
-				unpackedSize: 279_075,
+				integrity: 'sha512-hiaTjf29UY8E/hrMkDm81nVORNWSrqTcInJXQcxZ7azfCfVkN82M8UMe/GDlbQBWksJetq8lT3GbapJEbqZbHA==',
+				unpackedSize: 341_232,
 				dependencies: {
-					'@zeus-js/output-react-wrapper': '0.1.0-beta.8',
-					'@zeus-js/output-vue-wrapper': '0.1.0-beta.8',
-					'@zeus-js/runtime-dom': '0.1.0-beta.8',
-					'@zeus-js/web-c-runtime': '0.1.0-beta.8',
-					'@zeus-web/virtual': '0.1.0-beta.2',
-					'@zeus-web/zeus-compat': '0.1.0-beta.2'
+					'@zeus-js/output-react-wrapper': '0.1.1-beta.2',
+					'@zeus-js/output-vue-wrapper': '0.1.1-beta.2',
+					'@zeus-js/runtime-dom': '0.1.1-beta.2',
+					'@zeus-js/web-c-runtime': '0.1.1-beta.2',
+					'@zeus-web/virtual': '0.1.0-beta.4',
+					'@zeus-web/zeus-compat': '0.1.0-beta.4'
 				},
 				peerDependencies: {
-					'@zeus-js/zeus': '0.1.0-beta.8',
+					'@zeus-js/zeus': '0.1.1-beta.2',
 					react: '>=18 || >=19',
 					vue: '>=3'
 				}
@@ -714,6 +739,91 @@ test('Z1.3 verifier rejects a Chromium benchmark without the balanced execution 
 			delete benchmark.executionOrder;
 		},
 		/Chromium benchmark.*execution order.*renderer-balanced-rotation-v1/i
+	);
+});
+
+test('Z1.3 verifier requires the real WorkbenchTable benchmark mode', async () => {
+	await assertBenchmarkRejected(
+		'nyala-z1-benchmark-workbench-mode-test-',
+		benchmark => {
+			benchmark.workbenchTableImplementation = 'characterization';
+		},
+		/Chromium benchmark WorkbenchTable implementation.*expected real/i
+	);
+});
+
+test('Z1.3 verifier rejects a missing WorkbenchTable runtime proof', async () => {
+	await assertBenchmarkRejected(
+		'nyala-z1-benchmark-workbench-proof-test-',
+		benchmark => {
+			const record = benchmark.records.find(candidate => candidate.renderer === 'workbench-table');
+			assert.ok(record);
+			delete record.rendererImplementation;
+		},
+		/WorkbenchTable implementation proof is invalid/i
+	);
+});
+
+test('Z1.3 verifier binds every WorkbenchTable record to the report bundle digest', async () => {
+	await assertBenchmarkRejected(
+		'nyala-z1-benchmark-workbench-digest-test-',
+		benchmark => {
+			const record = benchmark.records.find(candidate => candidate.renderer === 'workbench-table');
+			assert.ok(record);
+			record.rendererImplementation.bundleSha256 = 'e'.repeat(64);
+		},
+		/WorkbenchTable implementation proof is invalid/i
+	);
+});
+
+test('Z1.3 verifier rejects platform WorkbenchTable evidence from another bundle', async () => {
+	await assertPlatformEvidenceRejected(
+		'nyala-z1-platform-workbench-digest-test-',
+		evidence => {
+			evidence.windowsWebView2.provenance.workbenchTableBundleSha256 = 'e'.repeat(64);
+			for (const record of evidence.windowsWebView2.records.filter(
+				candidate => candidate.renderer === 'workbench-table'
+			)) {
+				record.rendererImplementation.bundleSha256 = 'e'.repeat(64);
+			}
+		},
+		/WorkbenchTable bundle SHA-256 provenance does not match/i
+	);
+});
+
+test('Z1.3 verifier recomputes bounded virtual rows instead of trusting the producer flag', async () => {
+	await assertBenchmarkRejected(
+		'nyala-z1-benchmark-bounded-rows-test-',
+		benchmark => {
+			const record = benchmark.records.find(candidate => candidate.renderer === 'workbench-table');
+			assert.ok(record);
+			record.renderedRows = record.workload.rows;
+			record.visualProbe.virtualRowsBounded = true;
+		},
+		/visual probe is invalid/i
+	);
+});
+
+test('Z1.3 verifier rejects an almost-full virtual rowset as unbounded', async () => {
+	await assertBenchmarkRejected(
+		'nyala-z1-benchmark-almost-full-rows-test-',
+		benchmark => {
+			const record = benchmark.records.find(candidate => candidate.renderer === 'workbench-table');
+			assert.ok(record);
+			record.renderedRows = record.workload.rows - 1;
+			record.visualProbe.virtualRowsBounded = true;
+		},
+		/visual probe is invalid/i
+	);
+});
+
+test('Z1.3 verifier requires overflow-free document geometry in raw records', async () => {
+	await assertBenchmarkRejected(
+		'nyala-z1-benchmark-document-geometry-test-',
+		benchmark => {
+			benchmark.records[0].visualProbe.outerDocumentOverflowFree = false;
+		},
+		/visual probe is invalid/i
 	);
 });
 

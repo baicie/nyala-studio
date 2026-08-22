@@ -17,6 +17,7 @@ const execFileAsync = promisify(execFile);
 
 function createValidZ1Gate(sourceRevision) {
 	const bundleSha256 = 'b'.repeat(64);
+	const workbenchTableBundleSha256 = 'e'.repeat(64);
 	const commonProvenance = {
 		repository: 'baicie/nyala-studio',
 		sourceRevision,
@@ -53,7 +54,8 @@ function createValidZ1Gate(sourceRevision) {
 					provenance: {
 						...commonProvenance,
 						binarySha256: String(platformIndex + 1).repeat(64),
-						zeusBundleSha256: bundleSha256
+						zeusBundleSha256: bundleSha256,
+						workbenchTableBundleSha256
 					},
 					records: platformPlan.map(({ workload, renderer, iteration, executionOrdinal }) => ({
 						status: 'ok',
@@ -101,10 +103,11 @@ function createValidZ1Gate(sourceRevision) {
 			measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
 			scrollCommitBoundary: SCROLL_COMMIT_BOUNDARY,
 			executionOrder: EXECUTION_ORDER,
+			workbenchTableImplementation: 'real',
 			repeat: 3,
 			recordCount: 36,
 			sha256: 'd'.repeat(64),
-			provenance: { ...commonProvenance, zeusBundleSha256: bundleSha256 }
+			provenance: { ...commonProvenance, zeusBundleSha256: bundleSha256, workbenchTableBundleSha256 }
 		},
 		metricChecks: [passed('1k-x-20 scroll interaction'), passed('10k-x-50-primary')],
 		benchmarkEvidenceChecks: [
@@ -112,6 +115,7 @@ function createValidZ1Gate(sourceRevision) {
 			passed('chromium-benchmark-measurement-contract-version'),
 			passed('chromium-benchmark-scroll-commit-boundary'),
 			passed('chromium-benchmark-execution-order'),
+			passed('chromium-benchmark-workbench-table-implementation'),
 			passed('chromium-benchmark-record-contract'),
 			passed('chromium-benchmark-summary-integrity'),
 			passed('chromium-benchmark-provenance')
@@ -130,10 +134,17 @@ function createValidZ1Gate(sourceRevision) {
 			passed('trusted-expected-workflow-provenance'),
 			passed('macOS WebKit-provenance'),
 			passed('Windows WebView2-provenance'),
-			...['repository', 'sourceRevision', 'sourceRef', 'workflowRunId', 'workflowRunAttempt', 'zeusBundleSha256'].map(
-				field => passed(`platform-provenance-${field}`)
-			),
-			passed('zeus-bundle-provenance')
+			...[
+				'repository',
+				'sourceRevision',
+				'sourceRef',
+				'workflowRunId',
+				'workflowRunAttempt',
+				'zeusBundleSha256',
+				'workbenchTableBundleSha256'
+			].map(field => passed(`platform-provenance-${field}`)),
+			passed('zeus-bundle-provenance'),
+			passed('workbench-table-bundle-provenance')
 		],
 		dependencyCheck: {
 			passed: true,
@@ -143,10 +154,10 @@ function createValidZ1Gate(sourceRevision) {
 			bundleSha256,
 			package: {
 				name: '@zeus-web/data-grid',
-				version: '0.1.0-beta.2',
+				version: '0.1.0-beta.4',
 				license: 'MIT',
-				integrity: 'sha512-Tmw5sldixp52arDoGJC8HbeUJvSw6Yr9mRgMBT08zvZiFhLa0n2Ifnf7IrU1IgoAT/uZqfPsyeo8cdFS5cNGNw==',
-				unpackedSize: 279_075
+				integrity: 'sha512-hiaTjf29UY8E/hrMkDm81nVORNWSrqTcInJXQcxZ7azfCfVkN82M8UMe/GDlbQBWksJetq8lT3GbapJEbqZbHA==',
+				unpackedSize: 341_232
 			},
 			provenance: commonProvenance
 		},
@@ -907,6 +918,34 @@ test('R0 verifier rejects a Z1 GO that omits the v6 measurement and execution-or
 		}
 	});
 	assert.equal(report.checks.find(check => check.id === 'z1-go')?.passed, false);
+});
+
+test('R0 verifier rejects a Z1 GO that omits real WorkbenchTable identity or bundle binding checks', async () => {
+	const report = await runZ1ReleaseScenario({
+		mutate: ({ gate }) => {
+			gate.benchmarkEvidenceChecks = gate.benchmarkEvidenceChecks.filter(
+				check => check.id !== 'chromium-benchmark-workbench-table-implementation'
+			);
+			gate.provenanceChecks = gate.provenanceChecks.filter(
+				check =>
+					!['platform-provenance-workbenchTableBundleSha256', 'workbench-table-bundle-provenance'].includes(check.id)
+			);
+		}
+	});
+	assert.equal(report.checks.find(check => check.id === 'z1-go')?.passed, false);
+});
+
+test('R0 verifier rejects mismatched WorkbenchTable bundle provenance summaries', async () => {
+	const report = await runZ1ReleaseScenario({
+		mutate: ({ gate }) => {
+			gate.platformEvidence.windowsWebView2.provenance.workbenchTableBundleSha256 = 'f'.repeat(64);
+		}
+	});
+	assert.equal(report.checks.find(check => check.id === 'z1-go')?.passed, false);
+	assert.match(
+		report.checks.find(check => check.id === 'z1-go')?.reason ?? '',
+		/WorkbenchTable bundle SHA-256 provenance summary does not match/
+	);
 });
 
 test('R0 verifier rejects a Z1 GO with a forged platform execution plan', async () => {

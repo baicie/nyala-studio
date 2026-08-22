@@ -13,6 +13,7 @@ import {
 	expectedScrollViewportHeight,
 	expectedVisibleRowIndex,
 	isValidVisibleRowIndex,
+	maximumVirtualRenderedRows,
 	maximumScrollOffset,
 	MEASUREMENT_CONTRACT_VERSION,
 	SCROLL_COMMIT_BOUNDARY,
@@ -22,7 +23,8 @@ import {
 	SCROLL_TARGET_RATIOS,
 	SCROLL_VIEWPORT_TOLERANCE,
 	SCROLL_TIMING_TOLERANCE_MS,
-	scrollTargetOffset
+	scrollTargetOffset,
+	isValidWorkbenchTableRendererImplementation
 } from './sql-result-grid-benchmark-contract.mjs';
 import {
 	hasVisiblePngDiversity,
@@ -43,20 +45,20 @@ const expectedWorkloads = new Map(
 const expectedRenderers = ['native', 'workbench-table', 'zeus'];
 const expectedZeusPackage = {
 	name: '@zeus-web/data-grid',
-	version: '0.1.0-beta.2',
+	version: '0.1.0-beta.4',
 	license: 'MIT',
-	integrity: 'sha512-Tmw5sldixp52arDoGJC8HbeUJvSw6Yr9mRgMBT08zvZiFhLa0n2Ifnf7IrU1IgoAT/uZqfPsyeo8cdFS5cNGNw==',
-	unpackedSize: 279_075,
+	integrity: 'sha512-hiaTjf29UY8E/hrMkDm81nVORNWSrqTcInJXQcxZ7azfCfVkN82M8UMe/GDlbQBWksJetq8lT3GbapJEbqZbHA==',
+	unpackedSize: 341_232,
 	dependencies: {
-		'@zeus-js/output-react-wrapper': '0.1.0-beta.8',
-		'@zeus-js/output-vue-wrapper': '0.1.0-beta.8',
-		'@zeus-js/runtime-dom': '0.1.0-beta.8',
-		'@zeus-js/web-c-runtime': '0.1.0-beta.8',
-		'@zeus-web/virtual': '0.1.0-beta.2',
-		'@zeus-web/zeus-compat': '0.1.0-beta.2'
+		'@zeus-js/output-react-wrapper': '0.1.1-beta.2',
+		'@zeus-js/output-vue-wrapper': '0.1.1-beta.2',
+		'@zeus-js/runtime-dom': '0.1.1-beta.2',
+		'@zeus-js/web-c-runtime': '0.1.1-beta.2',
+		'@zeus-web/virtual': '0.1.0-beta.4',
+		'@zeus-web/zeus-compat': '0.1.0-beta.4'
 	},
 	peerDependencies: {
-		'@zeus-js/zeus': '0.1.0-beta.8',
+		'@zeus-js/zeus': '0.1.1-beta.2',
 		react: '>=18 || >=19',
 		vue: '>=3'
 	}
@@ -97,7 +99,8 @@ const runIdentityChecks = evaluateGlobalRunTokenUniqueness(benchmark, platformEv
 const provenanceChecks = [
 	evaluateTrustedExpectedProvenance(expectedProvenance),
 	...evaluatePlatformProvenance(platformEvidence, expectedProvenance),
-	...evaluateZeusBundleBinding(benchmark, platformEvidence, dependencyCheck)
+	...evaluateZeusBundleBinding(benchmark, platformEvidence, dependencyCheck),
+	...evaluateWorkbenchTableBundleBinding(benchmark, platformEvidence)
 ];
 const benchmarkEvidenceChecks = benchmarkIntegrity.checks;
 const reasons = [
@@ -122,6 +125,7 @@ const report = {
 		measurementContractVersion: benchmark.measurementContractVersion,
 		scrollCommitBoundary: benchmark.scrollCommitBoundary,
 		executionOrder: benchmark.executionOrder,
+		workbenchTableImplementation: benchmark.workbenchTableImplementation,
 		repeat: benchmark.repeat,
 		recordCount: benchmark.records?.length ?? 0,
 		browser: displayExecutable(benchmark.browser),
@@ -197,7 +201,8 @@ function evaluatePlatformProvenance(platforms, expected) {
 		const provenance = evidence.provenance;
 		const mismatches = validateProvenanceFields(provenance, expected, {
 			requireBinarySha256: true,
-			requireZeusBundleSha256: true
+			requireZeusBundleSha256: true,
+			requireWorkbenchTableBundleSha256: true
 		});
 		return {
 			id: `${evidence.label}-provenance`,
@@ -214,7 +219,8 @@ function evaluatePlatformProvenance(platforms, expected) {
 		'sourceRef',
 		'workflowRunId',
 		'workflowRunAttempt',
-		'zeusBundleSha256'
+		'zeusBundleSha256',
+		'workbenchTableBundleSha256'
 	]) {
 		const values = entries.map(evidence => evidence.provenance?.[field]);
 		const passed = values[0] !== undefined && values[0] === values[1];
@@ -286,6 +292,14 @@ function validateBenchmarkEvidence(report, expected) {
 				report.executionOrder === EXECUTION_ORDER
 					? `Chromium benchmark execution order ${EXECUTION_ORDER} verified`
 					: `Chromium benchmark execution order is ${report.executionOrder ?? 'missing'}, expected ${EXECUTION_ORDER}`
+		},
+		{
+			id: 'chromium-benchmark-workbench-table-implementation',
+			passed: report.workbenchTableImplementation === 'real',
+			reason:
+				report.workbenchTableImplementation === 'real'
+					? 'Chromium benchmark uses the real WorkbenchTable implementation'
+					: `Chromium benchmark WorkbenchTable implementation is ${report.workbenchTableImplementation ?? 'missing'}, expected real`
 		}
 	];
 	const records = validateRawRecords(report, {
@@ -313,7 +327,8 @@ function validateBenchmarkEvidence(report, expected) {
 	const provenanceErrors = validateProvenanceFields(report.provenance, expected, {
 		requireBinarySha256: false,
 		requireSourceTreeClean: true,
-		requireZeusBundleSha256: true
+		requireZeusBundleSha256: true,
+		requireWorkbenchTableBundleSha256: true
 	});
 	checks.push({
 		id: 'chromium-benchmark-provenance',
@@ -329,7 +344,12 @@ function validateBenchmarkEvidence(report, expected) {
 function validateProvenanceFields(
 	provenance,
 	expected,
-	{ requireBinarySha256 = false, requireSourceTreeClean = false, requireZeusBundleSha256 = false } = {}
+	{
+		requireBinarySha256 = false,
+		requireSourceTreeClean = false,
+		requireZeusBundleSha256 = false,
+		requireWorkbenchTableBundleSha256 = false
+	} = {}
 ) {
 	const mismatches = [];
 	if (!isRepository(provenance?.repository)) mismatches.push('repository is missing or invalid');
@@ -347,6 +367,9 @@ function validateProvenanceFields(
 	}
 	if (requireZeusBundleSha256 && !isSha256(provenance?.zeusBundleSha256)) {
 		mismatches.push('zeusBundleSha256 is missing or invalid');
+	}
+	if (requireWorkbenchTableBundleSha256 && !isSha256(provenance?.workbenchTableBundleSha256)) {
+		mismatches.push('workbenchTableBundleSha256 is missing or invalid');
 	}
 	for (const [field, expectedValue] of Object.entries(expected)) {
 		if (provenance?.[field] !== expectedValue) {
@@ -475,6 +498,28 @@ function evaluateZeusBundleBinding(benchmark, platforms, dependency) {
 				isSha256(expected) && mismatches.length === 0
 					? 'dependency audit, Chromium, WKWebView, and WebView2 use the same Zeus bundle SHA-256'
 					: `Zeus bundle SHA-256 provenance does not match (${mismatches.join(', ') || 'audit digest missing'})`
+		}
+	];
+}
+
+function evaluateWorkbenchTableBundleBinding(benchmark, platforms) {
+	const expected = benchmark.provenance?.workbenchTableBundleSha256;
+	const sources = [
+		['Chromium benchmark', expected],
+		['macOS WebKit', platforms.macosWebKit.provenance?.workbenchTableBundleSha256],
+		['Windows WebView2', platforms.windowsWebView2.provenance?.workbenchTableBundleSha256]
+	];
+	const mismatches = sources
+		.filter(([, value]) => !isSha256(value) || value !== expected)
+		.map(([label, value]) => `${label}=${formatIdentityValue(value)}`);
+	return [
+		{
+			id: 'workbench-table-bundle-provenance',
+			passed: isSha256(expected) && mismatches.length === 0,
+			reason:
+				isSha256(expected) && mismatches.length === 0
+					? 'Chromium, WKWebView, and WebView2 use the same WorkbenchTable benchmark bundle SHA-256'
+					: `WorkbenchTable bundle SHA-256 provenance does not match (${mismatches.join(', ') || 'benchmark digest missing'})`
 		}
 	];
 }
@@ -629,6 +674,15 @@ function validateRawRecords(evidence, { expectedRuns, runCount, requireScreensho
 			);
 		}
 		if (record.status !== 'ok') errors.push(`${tuple} status is not ok`);
+		if (
+			record.renderer === 'workbench-table' &&
+			!isValidWorkbenchTableRendererImplementation(
+				record.rendererImplementation,
+				evidence.provenance?.workbenchTableBundleSha256
+			)
+		) {
+			errors.push(`${tuple} WorkbenchTable implementation proof is invalid`);
+		}
 		if (!matchesWorkload(record.workload, workload)) errors.push(`${tuple} workload shape is invalid`);
 		if (!hasValidBrowserViewport(record.browserViewport, workload)) {
 			errors.push(`${tuple} browser viewport does not match the workload`);
@@ -645,7 +699,7 @@ function validateRawRecords(evidence, { expectedRuns, runCount, requireScreensho
 		}
 		const scrollSampleError = validateScrollSamples(record.scroll, workload);
 		if (scrollSampleError) errors.push(`${tuple} ${scrollSampleError}`);
-		if (!hasValidVisualProbe(record.visualProbe, workload)) errors.push(`${tuple} visual probe is invalid`);
+		if (!hasValidVisualProbe(record, workload)) errors.push(`${tuple} visual probe is invalid`);
 		if (requireScreenshots && record.iteration === 1) {
 			if (!isSafePngName(record.screenshot) || record.screenshotProbe?.passed !== true) {
 				errors.push(`${tuple} first-run screenshot probe is invalid`);
@@ -916,7 +970,14 @@ function approximatelyEqual(actual, expected, tolerance) {
 	return Number.isFinite(actual) && Number.isFinite(expected) && Math.abs(actual - expected) <= tolerance;
 }
 
-function hasValidVisualProbe(probe, workload) {
+function hasValidVisualProbe(record, workload) {
+	const probe = record?.visualProbe;
+	const renderedRowsValid =
+		record.renderer === 'native'
+			? record.renderedRows === workload.rows
+			: Number.isInteger(record.renderedRows) &&
+				record.renderedRows > 0 &&
+				record.renderedRows <= maximumVirtualRenderedRows(workload);
 	return Boolean(
 		probe &&
 		probe.rootWidth >= Math.min(workload.width, 300) &&
@@ -927,6 +988,13 @@ function hasValidVisualProbe(probe, workload) {
 		probe.firstVisibleCellText.length > 0 &&
 		probe.firstCellInViewport === true &&
 		probe.virtualRowsBounded === true &&
+		renderedRowsValid &&
+		probe.outerDocumentOverflowFree === true &&
+		probe.runMarkerAnchored === true &&
+		probe.documentViewport?.clientWidth === workload.width &&
+		probe.documentViewport?.clientHeight === workload.height &&
+		probe.documentViewport?.scrollWidth === workload.width &&
+		probe.documentViewport?.scrollHeight === workload.height &&
 		Number.isInteger(probe.visibleTextLength) &&
 		probe.visibleTextLength > 0
 	);

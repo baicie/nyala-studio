@@ -7,9 +7,10 @@ import { gzipSync } from 'node:zlib';
 
 const expectedPackage = {
 	name: '@zeus-web/data-grid',
-	version: '0.1.0-beta.2',
+	version: '0.1.0-beta.4',
 	license: 'MIT',
-	integrity: 'sha512-Tmw5sldixp52arDoGJC8HbeUJvSw6Yr9mRgMBT08zvZiFhLa0n2Ifnf7IrU1IgoAT/uZqfPsyeo8cdFS5cNGNw=='
+	integrity: 'sha512-hiaTjf29UY8E/hrMkDm81nVORNWSrqTcInJXQcxZ7azfCfVkN82M8UMe/GDlbQBWksJetq8lT3GbapJEbqZbHA==',
+	unpackedSize: 341_232
 };
 const cli = parseArgs(process.argv.slice(2));
 const outputPath = resolve(required(cli.output, '--output'));
@@ -38,11 +39,6 @@ try {
 				? `${field} matches the pre-registered value`
 				: `${field}=${JSON.stringify(observed[field])} does not match ${JSON.stringify(expected)}`
 	}));
-	checks.push({
-		id: 'package-unpacked-size',
-		passed: Number.isInteger(observed.unpackedSize) && observed.unpackedSize > 0,
-		reason: `registry unpacked size is ${String(observed.unpackedSize)}`
-	});
 	for (const [field, validator] of Object.entries({
 		repository: value => typeof value === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value),
 		sourceRevision: value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value),
