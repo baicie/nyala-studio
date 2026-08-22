@@ -7,6 +7,8 @@ on:
       - 'scripts/benchmark-sql-result-grid.mjs'
       - 'scripts/capture-sql-result-grid-visual.mjs'
       - 'scripts/capture-sql-result-grid-visual.test.mjs'
+      - 'scripts/sql-result-grid-workbench-table-bundle.mjs'
+      - 'scripts/sql-result-grid-workbench-table-entry.ts'
       - 'scripts/capture-sql-agent-workbench.mjs'
       - 'scripts/capture-sql-agent-workbench.test.mjs'
       - 'scripts/sql-agent-workbench-visual-contract.mjs'
@@ -47,10 +49,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.33.4
+
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Verify Chrome is available
         run: |
