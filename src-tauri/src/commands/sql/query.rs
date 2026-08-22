@@ -18,16 +18,14 @@ pub async fn sql_execute_query(
 ) -> Result<SqlQueryResult, SqlCommandError> {
     let store = state.inner().clone();
     let connection_id = request.connection_id.clone();
-    let invalidates_schema =
-        store
-            .open_connection_info(&connection_id)
-            .ok()
-            .is_some_and(|connection| {
-                query_may_change_schema(
-                    &request.sql,
-                    SqlDialect::from_connection_kind(connection.kind),
-                )
-            });
+    let invalidates_schema = store
+        .open_connection_info(&connection_id)
+        .is_ok_and(|connection| {
+            query_may_change_schema(
+                &request.sql,
+                SqlDialect::from_connection_kind(connection.kind),
+            )
+        });
 
     let result = tauri::async_runtime::spawn_blocking(move || store.execute_query(request))
         .await
