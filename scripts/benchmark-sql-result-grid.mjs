@@ -563,6 +563,7 @@ const MAX_VIRTUAL_ROW_OVERSCAN = ${MAX_VIRTUAL_ROW_OVERSCAN};
 const SCROLL_TARGET_RATIOS = ${JSON.stringify(SCROLL_TARGET_RATIOS)};
 const SCROLL_SAMPLE_COUNT = SCROLL_TARGET_RATIOS.length;
 const PRESENTATION_FLOOR_SAMPLE_COUNT = ${SQL_RESULT_GRID_PRESENTATION_FLOOR_SAMPLE_COUNT};
+const PRESENTATION_OPPORTUNITY_TIMEOUT_MS = 15_000;
 const SCROLL_ROW_TOLERANCE = ${SCROLL_ROW_TOLERANCE};
 const SCROLL_OFFSET_TOLERANCE = ${SCROLL_OFFSET_TOLERANCE};
 const SCROLL_COMMIT_ATTEMPTS = ${SCROLL_COMMIT_ATTEMPTS};
@@ -706,7 +707,7 @@ async function waitForVisibleCell(rendered) {
 	for (let attempt = 0; attempt < SCROLL_COMMIT_ATTEMPTS; attempt += 1) {
 		const cell = getVisibleCell(rendered);
 		if (cell?.textContent?.trim()) return cell;
-		await waitForPresentationOpportunity();
+		await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
 	}
 	return getVisibleCell(rendered);
 }
@@ -730,7 +731,7 @@ async function commitScroll(rendered, targetOffset, sampleIndex) {
 	let validationMs = 0;
 	for (; attempts < SCROLL_COMMIT_ATTEMPTS; ) {
 		const presentationStartedAt = diagnosticProfile ? performance.now() : 0;
-		await waitForPresentationOpportunity();
+		await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
 		if (diagnosticProfile) presentationWaitMs += performance.now() - presentationStartedAt;
 		const validationStartedAt = diagnosticProfile ? performance.now() : 0;
 		void scrollController.offsetHeight;
@@ -785,7 +786,7 @@ async function measurePresentationFloor() {
 	const samples = [];
 	for (let sampleIndex = 0; sampleIndex < PRESENTATION_FLOOR_SAMPLE_COUNT; sampleIndex += 1) {
 		const startedAt = performance.now();
-		await waitForPresentationOpportunity();
+		await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
 		samples.push({ sampleIndex, totalMs: performance.now() - startedAt });
 	}
 	const total = summarizeSamples(samples, 'totalMs');
@@ -804,7 +805,7 @@ async function measureScroll(rendered) {
 	if (maxOffset <= SCROLL_OFFSET_TOLERANCE * 2) {
 		throw new Error('Scroll workload does not expose enough range for displacement samples.');
 	}
-	await waitForPresentationOpportunity();
+	await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
 	void rendered.scroll.offsetHeight;
 	const preposition = await commitScroll(rendered, maxOffset, -1);
 	if (!preposition.committed) {
@@ -987,7 +988,7 @@ async function main() {
 	const presentationFloor = diagnosticProfile ? await measurePresentationFloor() : undefined;
 	const reset = await commitScroll(rendered, 0, -1);
 	if (!reset.committed) throw new Error('Renderer did not reset to its first visible row.');
-	await waitForPresentationOpportunity();
+	await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
 	void root.offsetHeight;
   const afterHeap = measureHeap();
 	const firstCell = getVisibleCell(rendered);
@@ -999,8 +1000,8 @@ async function main() {
 	let runMarker;
 	if (screenshotRunMarkerHex) {
 		runMarker = renderScreenshotRunMarker();
-		await waitForPresentationOpportunity();
-		await waitForPresentationOpportunity();
+		await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
+		await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
 	}
 	const documentElement = document.documentElement;
 	const documentViewport = {

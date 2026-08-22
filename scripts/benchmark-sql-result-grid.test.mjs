@@ -315,7 +315,7 @@ test('scroll metric uses one completion contract for every renderer', async () =
 	assert.doesNotMatch(source, /if \(attempts > 0\)/);
 	assert.match(
 		source,
-		/for \(; attempts < SCROLL_COMMIT_ATTEMPTS; \) \{[\s\S]*?await waitForPresentationOpportunity\(\)/
+		/for \(; attempts < SCROLL_COMMIT_ATTEMPTS; \) \{[\s\S]*?await waitForPresentationOpportunity\(\{ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS \}\)/
 	);
 	assert.match(source, /expectedRowIndex/);
 	assert.match(source, /visibleRowIndex/);
@@ -345,7 +345,7 @@ test('diagnostic profile measures twenty no-op presentation opportunities after 
 	);
 	assert.match(source, /SQL_RESULT_GRID_PRESENTATION_FLOOR_SAMPLE_COUNT/);
 	assert.match(source, /async function measurePresentationFloor/);
-	assert.match(source, /await waitForPresentationOpportunity\(\)/);
+	assert.match(source, /await waitForPresentationOpportunity\(\{ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS \}\)/);
 	assert.match(source, /const scroll = await measureScroll\(rendered\);[\s\S]*measurePresentationFloor/);
 	assert.match(source, /diagnostics:\s*diagnosticProfile/);
 	assert.match(source, /explicitRefreshViewport:\s*false/);
