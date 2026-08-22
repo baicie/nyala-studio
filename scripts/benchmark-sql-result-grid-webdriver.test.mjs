@@ -54,6 +54,10 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /createBalancedBenchmarkPlan/);
 	assert.match(source, /executionOrdinal/);
 	assert.match(source, /convergeWindowRectForCssViewport/);
+	assert.match(
+		source,
+		/await resetPageForViewportCalibration\(driverUrl, sessionId\);\s*const viewportCalibration = await calibrateCssViewport/
+	);
 	assert.match(source, /readCssViewport/);
 	assert.match(source, /viewportCalibration/);
 	assert.match(source, /devicePixelRatio/);
