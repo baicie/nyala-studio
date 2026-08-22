@@ -22,9 +22,11 @@ export const ISqlEditorEventService = createDecorator<ISqlEditorEventService>('s
 
 export interface SqlEditorQueryStartedEvent {
 	readonly editorId: string;
+	readonly editorVersionId?: number;
 	readonly connectionId: string;
 	readonly sql: string;
 	readonly source: SqlEditorExecutionSource;
+	readonly statementCount?: number;
 	readonly startedAt: number;
 	readonly executionId?: string;
 }

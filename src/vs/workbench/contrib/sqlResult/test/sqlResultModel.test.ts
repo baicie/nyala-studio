@@ -112,8 +112,11 @@ test('createSuccessSqlResultState summarizes affected rows when there are no col
 test('createErrorSqlResultState stores error message', () => {
 	const state = createErrorSqlResultState({
 		editorId: 'query-1',
+		editorVersionId: 7,
 		connectionId: 'local',
 		sql: 'SELECT FROM',
+		source: SqlEditorExecutionSource.All,
+		statementCount: 1,
 		startedAt: 10,
 		completedAt: 20,
 		error: new Error('syntax error')
@@ -121,6 +124,9 @@ test('createErrorSqlResultState stores error message', () => {
 
 	assert.equal(state.kind, SqlResultStateKind.Error);
 	assert.equal(state.errorMessage, 'syntax error');
+	assert.equal(state.query.editorVersionId, 7);
+	assert.equal(state.query.source, SqlEditorExecutionSource.All);
+	assert.equal(state.query.statementCount, 1);
 	assert.equal(getSqlResultSummary(state), 'Query failed: syntax error');
 });
 
@@ -139,6 +145,11 @@ test('createErrorSqlResultState preserves structured error code and multiline de
 	assert.equal(state.errorCode, 'sqlite_prepare');
 	assert.equal(state.errorMessage, 'syntax error');
 	assert.equal(state.errorDetail, 'syntax error\nnear "FROM"');
+	assert.deepEqual(state.errorContext, {
+		code: 'sqlite_prepare',
+		message: 'syntax error',
+		detail: 'syntax error\nnear "FROM"'
+	});
 	assert.equal(getSqlResultSummary(state), 'Query failed [sqlite_prepare]: syntax error');
 });
 
@@ -174,15 +185,20 @@ test('createCancelledSqlResultState falls back when message is empty', () => {
 test('createSuccessResultSnapshotFromEvent creates success snapshot', () => {
 	const snapshot = createSuccessResultSnapshotFromEvent({
 		editorId: 'query-1',
+		editorVersionId: 5,
 		connectionId: 'local',
 		sql: 'SELECT 1',
 		source: SqlEditorExecutionSource.All,
+		statementCount: 1,
 		startedAt: 1,
 		completedAt: 2,
 		result: snapshotResult
 	});
 
 	assert.equal(snapshot.kind, SqlResultSnapshotKind.Success);
+	assert.equal(snapshot.editorVersionId, 5);
+	assert.equal(snapshot.source, SqlEditorExecutionSource.All);
+	assert.equal(snapshot.statementCount, 1);
 	assert.equal(snapshot.createdAt, 2);
 	assert.equal(snapshot.id, createResultSnapshotId('query-1', 2));
 });
@@ -190,9 +206,11 @@ test('createSuccessResultSnapshotFromEvent creates success snapshot', () => {
 test('createErrorResultSnapshotFromEvent creates error snapshot', () => {
 	const snapshot = createErrorResultSnapshotFromEvent({
 		editorId: 'query-2',
+		editorVersionId: 7,
 		connectionId: 'local',
 		sql: 'SELECT FROM',
 		source: SqlEditorExecutionSource.All,
+		statementCount: 1,
 		startedAt: 3,
 		completedAt: 4,
 		error: new Error('syntax error')
@@ -200,6 +218,9 @@ test('createErrorResultSnapshotFromEvent creates error snapshot', () => {
 
 	assert.equal(snapshot.kind, SqlResultSnapshotKind.Error);
 	assert.equal(snapshot.errorMessage, 'syntax error');
+	assert.equal(snapshot.editorVersionId, 7);
+	assert.equal(snapshot.source, SqlEditorExecutionSource.All);
+	assert.equal(snapshot.statementCount, 1);
 	assert.equal(snapshot.startedAt, 3);
 	assert.equal(snapshot.createdAt, 4);
 });
@@ -207,15 +228,20 @@ test('createErrorResultSnapshotFromEvent creates error snapshot', () => {
 test('snapshot helpers create terminal snapshots from editor events', () => {
 	const snapshot = createCancelledResultSnapshotFromEvent({
 		editorId: 'query-1',
+		editorVersionId: 6,
 		connectionId: 'local',
 		sql: 'SELECT sleep(10)',
 		source: SqlEditorExecutionSource.All,
+		statementCount: 1,
 		startedAt: 10,
 		completedAt: 20,
 		message: 'cancelled'
 	});
 
 	assert.equal(snapshot.kind, SqlResultSnapshotKind.Cancelled);
+	assert.equal(snapshot.editorVersionId, 6);
+	assert.equal(snapshot.source, SqlEditorExecutionSource.All);
+	assert.equal(snapshot.statementCount, 1);
 	assert.equal(snapshot.createdAt, 20);
 	assert.equal(snapshot.message, 'cancelled');
 });
@@ -433,6 +459,7 @@ test('SqlResultService preserves successful statements before a failed statement
 
 	service.setError({
 		editorId: 'query-1',
+		editorVersionId: 9,
 		connectionId: 'local',
 		sql: 'SELECT 1; SELECT FROM;',
 		source: SqlEditorExecutionSource.All,
@@ -472,6 +499,16 @@ test('SqlResultService preserves successful statements before a failed statement
 		]
 	);
 	assert.equal(getActiveSqlResultSnapshot(service.panelState)?.id, 'execution-2-result-2');
+	const failedSnapshot = getActiveSqlResultSnapshot(service.panelState);
+	assert.equal(failedSnapshot?.editorVersionId, 9);
+	assert.equal(failedSnapshot?.source, SqlEditorExecutionSource.All);
+	assert.equal(failedSnapshot?.statementCount, 2);
+	if (failedSnapshot?.kind === SqlResultSnapshotKind.Error) {
+		assert.deepEqual(failedSnapshot.errorContext, {
+			message: 'syntax error',
+			detail: 'syntax error'
+		});
+	}
 });
 
 test('SqlResultService keeps completed statements visible when a batch is cancelled', () => {
@@ -921,8 +958,11 @@ test('getSqlResultPanelContentState preserves error code detail and timing from 
 	const snapshot = createErrorResultSnapshot({
 		id: 'error',
 		editorId: 'e',
+		editorVersionId: 7,
 		connectionId: 'c',
 		sql: 'select from',
+		source: SqlEditorExecutionSource.All,
+		statementCount: 1,
 		error,
 		startedAt: 10,
 		createdAt: 25
@@ -935,6 +975,9 @@ test('getSqlResultPanelContentState preserves error code detail and timing from 
 		assert.equal(contentState.errorCode, 'sqlite_prepare');
 		assert.equal(contentState.errorMessage, 'syntax error');
 		assert.equal(contentState.errorDetail, 'syntax error\nnear "FROM"');
+		assert.equal(contentState.query.editorVersionId, 7);
+		assert.equal(contentState.query.source, SqlEditorExecutionSource.All);
+		assert.equal(contentState.query.statementCount, 1);
 		assert.equal(contentState.query.startedAt, 10);
 		assert.equal(contentState.query.completedAt, 25);
 	}

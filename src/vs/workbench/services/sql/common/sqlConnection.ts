@@ -117,6 +117,14 @@ import type {
 
 export const ISqlConnectionService = createDecorator<ISqlConnectionService>('sqlConnectionService');
 
+export const ISqlConnectionChangeService = createDecorator<ISqlConnectionChangeService>('sqlConnectionChangeService');
+
+export interface ISqlConnectionChangeService {
+	readonly _serviceBrand: undefined;
+	readonly onDidChangeConnections: import('vs/base/common/event').Event<void>;
+	notifyConnectionsChanged(): void;
+}
+
 export interface ISqlConnectionService {
 	readonly _serviceBrand: undefined;
 

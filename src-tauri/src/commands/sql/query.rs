@@ -1,3 +1,6 @@
+use super::connection_manager::SharedConnectionManager;
+use super::dialect::SqlDialect;
+use super::sql_analysis::{analyze_sql, StatementRisk};
 use super::state::SqlConnectionStore;
 use super::types::{
     SqlCancelQueryRequest, SqlCancelQueryResult, SqlCommandError, SqlExecuteQueryRequest,
@@ -10,16 +13,43 @@ use tauri::State;
 #[tauri::command]
 pub async fn sql_execute_query(
     state: State<'_, Arc<SqlConnectionStore>>,
+    manager: State<'_, SharedConnectionManager>,
     request: SqlExecuteQueryRequest,
 ) -> Result<SqlQueryResult, SqlCommandError> {
     let store = state.inner().clone();
+    let connection_id = request.connection_id.clone();
+    let invalidates_schema = store
+        .open_connection_info(&connection_id)
+        .is_ok_and(|connection| {
+            query_may_change_schema(
+                &request.sql,
+                SqlDialect::from_connection_kind(connection.kind),
+            )
+        });
 
-    tauri::async_runtime::spawn_blocking(move || store.execute_query(request))
+    let result = tauri::async_runtime::spawn_blocking(move || store.execute_query(request))
         .await
         .map_err(|err| {
             SqlCommandError::new("internal", format!("sql_execute_query task failed: {err}"))
         })?
-        .map_err(map_query_error)
+        .map_err(map_query_error)?;
+
+    if invalidates_schema {
+        if let Err(error) = manager.bump_metadata_revision(&connection_id) {
+            log::warn!(
+                "schema metadata revision could not advance after a successful query: {error}"
+            );
+        }
+    }
+
+    Ok(result)
+}
+
+fn query_may_change_schema(sql: &str, dialect: SqlDialect) -> bool {
+    !matches!(
+        analyze_sql(sql, dialect).risk,
+        StatementRisk::Metadata | StatementRisk::ReadOnly | StatementRisk::ExplainReadOnly
+    )
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -80,6 +110,26 @@ mod tests {
         assert!(matches!(
             map_query_error("read-only connection only allows SELECT".to_string()),
             SqlCommandError::Validation { .. }
+        ));
+    }
+
+    #[test]
+    fn schema_mutations_invalidate_metadata_but_reads_do_not() {
+        assert!(query_may_change_schema(
+            "CREATE TABLE users (id INTEGER)",
+            SqlDialect::Sqlite
+        ));
+        assert!(query_may_change_schema(
+            "UPDATE users SET id = 1",
+            SqlDialect::Sqlite
+        ));
+        assert!(!query_may_change_schema(
+            "SELECT * FROM users",
+            SqlDialect::Sqlite
+        ));
+        assert!(!query_may_change_schema(
+            "EXPLAIN QUERY PLAN SELECT 1",
+            SqlDialect::Sqlite
         ));
     }
 }

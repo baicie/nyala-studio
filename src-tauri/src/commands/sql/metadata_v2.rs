@@ -57,6 +57,126 @@ pub struct SchemaObjectDto {
     pub primary_key: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "the max_ prefix makes hard-limit semantics explicit at call sites"
+)]
+pub struct MetadataSnapshotLimits {
+    pub max_objects: usize,
+    pub max_columns: usize,
+    pub max_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoundedSchemaObjectDto {
+    pub object: SchemaObjectDto,
+    pub columns_truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoundedSchemaSnapshotDto {
+    pub objects: Vec<BoundedSchemaObjectDto>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ForeignKeyColumnDto {
+    pub ordinal: i32,
+    pub source_column: String,
+    pub target_column: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ForeignKeyDto {
+    pub source_schema: String,
+    pub source_table: String,
+    pub target_schema: String,
+    pub target_table: String,
+    pub columns: Vec<ForeignKeyColumnDto>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "the max_ prefix makes hard-limit semantics explicit at call sites"
+)]
+pub struct MetadataForeignKeyLimits {
+    pub max_tables: usize,
+    pub max_foreign_keys: usize,
+    pub max_columns: usize,
+    pub max_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoundedForeignKeySnapshotDto {
+    pub foreign_keys: Vec<ForeignKeyDto>,
+    pub scanned_table_count: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexOriginDto {
+    Created,
+    UniqueConstraint,
+    PrimaryKey,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexColumnKindDto {
+    Column,
+    Expression,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexColumnDto {
+    pub ordinal: i32,
+    pub name: Option<String>,
+    pub kind: IndexColumnKindDto,
+    pub descending: bool,
+    pub collation: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexDto {
+    pub schema: String,
+    pub table: String,
+    pub name: String,
+    pub unique: bool,
+    pub partial: bool,
+    pub origin: IndexOriginDto,
+    pub columns: Vec<IndexColumnDto>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "the max_ prefix makes hard-limit semantics explicit at call sites"
+)]
+pub struct MetadataIndexLimits {
+    pub max_tables: usize,
+    pub max_indexes: usize,
+    pub max_columns: usize,
+    pub max_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoundedIndexSnapshotDto {
+    pub indexes: Vec<IndexDto>,
+    pub scanned_table_count: usize,
+    pub truncated: bool,
+}
+
 /// Errors surfaced to the UI. Mirrors the Phase 01 `SqlCommandError`
 /// shape so callers can render them uniformly.
 pub type MetadataResult<T> = Result<T, SqlCommandError>;
@@ -175,6 +295,62 @@ mod tests {
         let json = serde_json::to_string(&value).unwrap();
         assert!(json.contains("\"kind\":\"table\""));
         assert!(json.contains("\"primaryKey\":[\"id\"]"));
+    }
+
+    #[test]
+    fn foreign_key_dto_round_trip_preserves_composite_column_order() {
+        let value = ForeignKeyDto {
+            source_schema: "main".into(),
+            source_table: "order_items".into(),
+            target_schema: "main".into(),
+            target_table: "products".into(),
+            columns: vec![
+                ForeignKeyColumnDto {
+                    ordinal: 0,
+                    source_column: "product_tenant".into(),
+                    target_column: Some("tenant_id".into()),
+                },
+                ForeignKeyColumnDto {
+                    ordinal: 1,
+                    source_column: "product_id".into(),
+                    target_column: Some("id".into()),
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&value).unwrap();
+        let decoded: ForeignKeyDto = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(decoded, value);
+        assert!(json.contains("\"sourceTable\":\"order_items\""));
+        assert!(json.contains("\"targetColumn\":\"tenant_id\""));
+    }
+
+    #[test]
+    fn index_dto_round_trip_preserves_typed_origin_and_expression() {
+        let value = IndexDto {
+            schema: "main".into(),
+            table: "users".into(),
+            name: "idx_users_lower_name".into(),
+            unique: false,
+            partial: true,
+            origin: IndexOriginDto::Created,
+            columns: vec![IndexColumnDto {
+                ordinal: 0,
+                name: None,
+                kind: IndexColumnKindDto::Expression,
+                descending: true,
+                collation: Some("NOCASE".into()),
+            }],
+        };
+
+        let json = serde_json::to_string(&value).unwrap();
+        let decoded: IndexDto = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(decoded, value);
+        assert!(json.contains("\"origin\":\"created\""));
+        assert!(json.contains("\"kind\":\"expression\""));
+        assert!(json.contains("\"partial\":true"));
     }
 
     #[test]

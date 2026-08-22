@@ -19,10 +19,7 @@
  *   because Generate / Optimize output drafts only.
  *--------------------------------------------------------------------------------------------*/
 
-import {
-	SqlStudioPluginCapability,
-	SqlStudioPluginManifest
-} from './sqlAdvancedPluginApi.js';
+import { SqlStudioPluginCapability, SqlStudioPluginManifest } from './sqlAdvancedPluginApi.js';
 
 export const builtinSqlPlugins: readonly SqlStudioPluginManifest[] = [
 	{
@@ -44,12 +41,14 @@ export const builtinSqlPlugins: readonly SqlStudioPluginManifest[] = [
 		capabilities: [SqlStudioPluginCapability.DatabaseExecuteRead],
 		contributes: {
 			commands: [{ id: 'sql.explain', title: 'Explain Query', category: 'SQL' }],
-			sqlActions: [{
-				id: 'sql.action.explain',
-				title: 'Explain Query',
-				command: 'sql.explain',
-				when: 'sqlEditorHasSelection || sqlEditorHasText'
-			}]
+			sqlActions: [
+				{
+					id: 'sql.action.explain',
+					title: 'Explain Query',
+					command: 'sql.explain',
+					when: 'sqlEditorHasSelection || sqlEditorHasText'
+				}
+			]
 		}
 	},
 	{
@@ -57,13 +56,11 @@ export const builtinSqlPlugins: readonly SqlStudioPluginManifest[] = [
 		name: 'Nyala SQL AI Helper',
 		version: '0.1.0',
 		activationEvents: ['onSqlEditor'],
-		capabilities: [
-			SqlStudioPluginCapability.DatabaseReadMetadata,
-			SqlStudioPluginCapability.AgentTool
-		],
+		capabilities: [SqlStudioPluginCapability.DatabaseReadMetadata, SqlStudioPluginCapability.AgentTool],
 		contributes: {
 			commands: [
 				{ id: 'sql.ai.explainError', title: 'AI: Explain Error', category: 'SQL AI' },
+				{ id: 'sql.ai.fixError', title: 'AI: Fix Error', category: 'SQL AI' },
 				{ id: 'sql.ai.generateQuery', title: 'AI: Generate Query', category: 'SQL AI' },
 				{ id: 'sql.ai.optimizeQuery', title: 'AI: Optimize Query', category: 'SQL AI' }
 			],
@@ -72,6 +69,12 @@ export const builtinSqlPlugins: readonly SqlStudioPluginManifest[] = [
 					id: 'sql.action.ai.explainError',
 					title: 'AI: Explain Error',
 					command: 'sql.ai.explainError',
+					when: 'sqlEditorHasError'
+				},
+				{
+					id: 'sql.action.ai.fixError',
+					title: 'AI: Fix Error',
+					command: 'sql.ai.fixError',
 					when: 'sqlEditorHasError'
 				},
 				{

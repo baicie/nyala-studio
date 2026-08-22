@@ -20,10 +20,7 @@ impl SecretsStore {
 }
 
 pub fn initialize(app: &AppHandle) -> Result<(), String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir: {e}"))?;
+    let data_dir = super::os::resolve_app_data_dir(app)?;
     let db_path = data_dir.join("UserData").join("secrets-index.db");
     let storage = SecretStorage::open(db_path).map_err(|e| e.to_string())?;
     app.manage(Arc::new(SecretsStore::new(storage)));

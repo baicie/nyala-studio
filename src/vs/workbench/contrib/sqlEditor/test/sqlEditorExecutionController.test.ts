@@ -140,6 +140,7 @@ test('execute emits completed event and resets state', async () => {
 
 	const result = await controller.execute({
 		editorId: 'editor-1',
+		editorVersionId: 7,
 		connectionId: 'conn-1',
 		fullSql: 'select 1',
 		source: SqlEditorExecutionSource.All
@@ -149,9 +150,13 @@ test('execute emits completed event and resets state', async () => {
 	assert.equal(result.started.startedAt, 10);
 	assert.equal(result.started.source, SqlEditorExecutionSource.All);
 	assert.equal(result.started.connectionId, 'conn-1');
+	assert.equal(result.started.editorVersionId, 7);
+	assert.equal(result.started.statementCount, 1);
 	assert.equal(result.started.sql, 'select 1');
 
 	assert.ok(result.completed);
+	assert.equal(result.completed?.editorVersionId, 7);
+	assert.equal(result.completed?.statementCount, 1);
 	assert.equal(result.completed?.completedAt, 11);
 	assert.equal(result.completed?.result.rowCount, 1);
 	assert.equal(result.failed, undefined);
@@ -387,6 +392,7 @@ test('cancel returns cancelled event while a query is running and canCancel is a
 
 	const executePromise = controller.execute({
 		editorId: 'editor-1',
+		editorVersionId: 9,
 		connectionId: 'conn-1',
 		fullSql: 'select 1',
 		source: SqlEditorExecutionSource.All
@@ -400,7 +406,9 @@ test('cancel returns cancelled event while a query is running and canCancel is a
 
 	assert.ok(cancelled);
 	assert.equal(cancelled?.editorId, 'editor-1');
+	assert.equal(cancelled?.editorVersionId, 9);
 	assert.equal(cancelled?.source, SqlEditorExecutionSource.All);
+	assert.equal(cancelled?.statementCount, 1);
 	assert.equal(cancelled?.startedAt, 100);
 	assert.equal(cancelled?.completedAt, 101);
 	assert.equal(cancelled?.message, 'stopped');

@@ -43,6 +43,73 @@ export interface SqlEditorToolbarState {
 	readonly canCancel: boolean;
 }
 
+export interface SqlEditorConnectionIdentity {
+	readonly id: string;
+}
+
+export interface SqlEditorConnectionRefreshOptions {
+	readonly inputConnectionId?: string;
+	readonly preserveCurrentSelection?: boolean;
+	readonly getCurrentSelection: () => string | undefined;
+}
+
+export type SqlEditorConnectionRefreshResult<T extends SqlEditorConnectionIdentity> =
+	| {
+			readonly succeeded: true;
+			readonly connections: T[];
+			readonly selectedConnectionId?: string;
+	  }
+	| {
+			readonly succeeded: false;
+			readonly connections: [];
+			readonly error: unknown;
+	  };
+
+export class SqlEditorConnectionRefreshCoordinator<T extends SqlEditorConnectionIdentity> {
+	private version = 0;
+
+	async load(
+		loadConnections: () => Promise<T[]>,
+		options: SqlEditorConnectionRefreshOptions
+	): Promise<SqlEditorConnectionRefreshResult<T> | undefined> {
+		const version = ++this.version;
+
+		try {
+			const connections = await loadConnections();
+			if (version !== this.version) {
+				return undefined;
+			}
+
+			const candidates = options.preserveCurrentSelection
+				? [options.getCurrentSelection(), options.inputConnectionId]
+				: [options.inputConnectionId];
+			const selectedConnectionId = candidates
+				.map(normalizeOptionalString)
+				.find(candidate => candidate && connections.some(connection => connection.id === candidate));
+
+			return {
+				succeeded: true,
+				connections,
+				selectedConnectionId: selectedConnectionId ?? connections[0]?.id
+			};
+		} catch (error) {
+			if (version !== this.version) {
+				return undefined;
+			}
+
+			return {
+				succeeded: false,
+				connections: [],
+				error
+			};
+		}
+	}
+
+	invalidate(): void {
+		this.version++;
+	}
+}
+
 export function normalizeSqlEditorOptions(
 	options: SqlEditorOptions,
 	defaultSql: string,

@@ -23,6 +23,10 @@ import {
 
 const resultGridStyles = readFileSync(new URL('../browser/media/sqlResult.css', import.meta.url), 'utf8');
 const resultViewSource = readFileSync(new URL('../browser/sqlResultView.ts', import.meta.url), 'utf8');
+const advancedActionsSource = readFileSync(
+	new URL('../../sqlAdvanced/browser/sqlAdvancedActions.ts', import.meta.url),
+	'utf8'
+);
 
 const sampleResult: SqlQueryResult = {
 	columns: [
@@ -126,6 +130,16 @@ test('result toolbar, tabs, and status expose their interaction semantics', () =
 	assert.match(resultViewSource, /role: 'toolbar', 'aria-label': 'Result actions'/);
 	assert.match(resultViewSource, /'aria-orientation': 'horizontal'/);
 	assert.match(resultViewSource, /role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true'/);
+});
+
+test('result error surface exposes the Fix with Agent command affordance', () => {
+	assert.match(resultViewSource, /Fix with Agent/);
+	assert.match(resultViewSource, /SQL_AI_FIX_ERROR_COMMAND_ID/);
+	assert.match(resultViewSource, /'aria-label': 'Fix with Agent'/);
+	assert.match(
+		advancedActionsSource,
+		/getSqlResultPanelContentState\(resultService\.state,\s*resultService\.panelState\)/
+	);
 });
 
 test('buildSqlResultGrid keeps column and cell metadata', () => {

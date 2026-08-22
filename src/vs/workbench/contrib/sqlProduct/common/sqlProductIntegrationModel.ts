@@ -3,6 +3,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { SqlProductPreferences } from './sqlProductPreferences.js';
+import {
+	resolveSqlResultRenderer,
+	SqlResultRendererAvailability,
+	SqlResultRendererSelection
+} from '../../sqlResult/common/sqlResultRenderer.js';
 
 export function shouldRestoreSqlEditorDrafts(preferences: SqlProductPreferences): boolean {
 	return preferences.restoreEditorDraftsOnStartup && preferences.maxRestoredEditorDrafts > 0;
@@ -22,4 +27,11 @@ export function shouldAutoSaveSqlEditorDraft(preferences: SqlProductPreferences)
 
 export function getPreferredResultMaxRows(preferences: SqlProductPreferences): number {
 	return preferences.resultMaxRows;
+}
+
+export function getPreferredResultRenderer(
+	preferences: SqlProductPreferences,
+	availability: SqlResultRendererAvailability
+): SqlResultRendererSelection {
+	return resolveSqlResultRenderer(preferences.resultRenderer, availability);
 }

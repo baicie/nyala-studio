@@ -2,10 +2,9 @@
  * SQL Studio Next - lightweight plugin API.
  *
  * Phase 07 MVP manifest schema:
- * - capabilities are declared (readMetadata / executeRead / executeWrite /
- *   filesystem.read / filesystem.write / network.request / agent.tool) but
- *   not enforced in MVP. Bridge consumers should still surface the declared
- *   capabilities so later phases can apply policy without rewriting plugins.
+ * - capabilities use the canonical SQL service vocabulary. The Rust Agent
+ *   policy re-validates them before any tool can run; this registry remains a
+ *   UI-side declaration and is not itself an authorization boundary.
  * - activationEvents are strings (`onSqlEditor`, etc.). They are stored as-is
  *   in MVP so contribution wiring can opt into `*` / `onCommand:foo` /
  *   `onView:bar` activation without changing this registry.
@@ -21,22 +20,16 @@
  * `builtinSqlPlugins.ts` only.
  *--------------------------------------------------------------------------------------------*/
 
-export const enum SqlStudioPluginCapability {
-	DatabaseReadMetadata = 'database.readMetadata',
-	DatabaseExecuteRead = 'database.executeRead',
-	DatabaseExecuteWrite = 'database.executeWrite',
-	FilesystemRead = 'filesystem.read',
-	FilesystemWrite = 'filesystem.write',
-	NetworkRequest = 'network.request',
-	AgentTool = 'agent.tool'
-}
+import { isSqlCapability, SqlCapability } from '../../../services/sql/common/sqlCapabilities.js';
+
+export { SqlCapability as SqlStudioPluginCapability } from '../../../services/sql/common/sqlCapabilities.js';
 
 export interface SqlStudioPluginManifest {
 	readonly id: string;
 	readonly name: string;
 	readonly version: string;
 	readonly activationEvents?: readonly string[];
-	readonly capabilities?: readonly SqlStudioPluginCapability[];
+	readonly capabilities?: readonly SqlCapability[];
 	readonly contributes?: {
 		readonly commands?: readonly SqlStudioPluginCommandContribution[];
 		readonly sqlActions?: readonly SqlStudioPluginSqlActionContribution[];
@@ -159,9 +152,7 @@ export class SqlStudioPluginRegistry {
 		}
 
 		if (!this.commands.has(normalized.command)) {
-			throw new Error(
-				`Plugin SQL action '${normalized.id}' references unknown command '${normalized.command}'`
-			);
+			throw new Error(`Plugin SQL action '${normalized.id}' references unknown command '${normalized.command}'`);
 		}
 
 		this.sqlActions.set(normalized.id, { ...normalized, pluginId });
@@ -217,8 +208,14 @@ function normalizePanel(panel: SqlStudioPluginPanelContribution): SqlStudioPlugi
 	};
 }
 
-export function normalizeCapabilities(values: readonly SqlStudioPluginCapability[] | undefined): SqlStudioPluginCapability[] {
-	return [...new Set(values ?? [])];
+export function normalizeCapabilities(values: readonly SqlCapability[] | undefined): SqlCapability[] {
+	const normalized = [...new Set(values ?? [])];
+	for (const value of normalized) {
+		if (!isSqlCapability(value)) {
+			throw new Error(`Unsupported SQL capability '${value}'`);
+		}
+	}
+	return normalized;
 }
 
 export function normalizeStringArray(values: readonly string[] | undefined): string[] {

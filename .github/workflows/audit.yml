@@ -54,16 +54,21 @@ jobs:
         run: cargo install cargo-audit --locked
 
       - name: Run cargo audit
-        # Tauri's Linux GTK3 stack and build-only HTML parser still carry two
+        # Tauri's Linux GTK3 stack and build-only HTML parser still carry
         # upstream advisories. rust_decimal also records optional rkyv 0.7 in
         # Cargo.lock, but no active workspace feature or target enables it
-        # (`cargo tree -e features -i rkyv@0.7.46` is empty).
+        # (`cargo tree -e features -i rkyv@0.7.46` is empty). mysql 28 pins
+        # lru 0.16.x; its statement cache uses u32 keys and Arc/Vec values, so
+        # the RUSTSEC-2026-0253 path requiring a panicking key Drop is not
+        # reachable through this application. Keep this ignore narrow until
+        # mysql releases a dependency update to lru 0.18.2+.
         # Deny every other current or future unsound warning.
         run: >-
           cargo audit --file Cargo.lock --deny unsound
           --ignore RUSTSEC-2024-0429
           --ignore RUSTSEC-2026-0097
           --ignore RUSTSEC-2026-0235
+          --ignore RUSTSEC-2026-0253
 
   pnpm-audit:
     name: pnpm audit

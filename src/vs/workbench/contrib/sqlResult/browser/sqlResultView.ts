@@ -12,6 +12,7 @@ import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
@@ -42,6 +43,8 @@ import {
 	SqlResultGrid
 } from '../common/sqlResultGridModel.js';
 import { getPreferredResultMaxRows } from '../../sqlProduct/common/sqlProductIntegrationModel.js';
+import { SqlResultNativeRendererAdapter } from './sqlResultNativeRenderer.js';
+import { SQL_AI_FIX_ERROR_COMMAND_ID } from '../../sqlAdvanced/common/sqlAdvanced.js';
 
 export class SqlResultView extends ViewPane {
 	static readonly ID = SQL_RESULT_VIEW_ID;
@@ -49,6 +52,7 @@ export class SqlResultView extends ViewPane {
 
 	private readonly contentRenderDisposables = this._register(new DisposableStore());
 	private readonly historyRenderDisposables = this._register(new DisposableStore());
+	private readonly nativeRenderer = new SqlResultNativeRendererAdapter();
 
 	private container!: HTMLElement;
 	private toolbarElement!: HTMLElement;
@@ -79,6 +83,7 @@ export class SqlResultView extends ViewPane {
 		@IOpenerService openerService: IOpenerService,
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
+		@ICommandService private readonly commandService: ICommandService,
 		@ISqlResultService private readonly sqlResultService: ISqlResultService,
 		@ISqlProductPreferencesService private readonly preferencesService: ISqlProductPreferencesService
 	) {
@@ -371,6 +376,22 @@ export class SqlResultView extends ViewPane {
 		if (state.errorDetail !== state.errorMessage) {
 			append(wrapper, $('pre.sql-result-error-detail', undefined, state.errorDetail));
 		}
+		const fixButton = append(
+			wrapper,
+			$('button.sql-result-fix-button', {
+				type: 'button',
+				title: 'Fix with Agent',
+				'aria-label': 'Fix with Agent'
+			})
+		) as HTMLButtonElement;
+		const fixIcon = append(fixButton, $('.codicon', { 'aria-hidden': 'true' }));
+		fixIcon.classList.add(...ThemeIcon.asClassNameArray(Codicon.wand));
+		append(fixButton, $('span', undefined, 'Fix with Agent'));
+		this.contentRenderDisposables.add(
+			addDisposableListener(fixButton, EventType.CLICK, () => {
+				void this.commandService.executeCommand(SQL_AI_FIX_ERROR_COMMAND_ID);
+			})
+		);
 		append(wrapper, $('pre.sql-result-sql', undefined, state.query.sql));
 	}
 
@@ -398,69 +419,12 @@ export class SqlResultView extends ViewPane {
 		this.currentGrid = grid;
 		this.setStatus(getSqlResultGridStatus(result, grid));
 
-		const wrapper = append(this.contentElement, $('.sql-result-table-wrapper', { tabIndex: 0 }));
-		const table = append(wrapper, $('table.sql-result-table'));
-
-		const thead = append(table, $('thead'));
-		const headerRow = append(thead, $('tr'));
-		append(headerRow, $('th.sql-result-row-number', undefined, '#'));
-
-		for (const column of grid.columns) {
-			const th = append(headerRow, $('th.sql-result-column-header', { title: column.name }, column.name));
-			th.style.width = `${column.width}px`;
-			th.style.maxWidth = `${column.width}px`;
-		}
-
-		const tbody = append(table, $('tbody'));
-
-		if (grid.isEmpty) {
-			const emptyRow = append(tbody, $('tr.sql-result-empty-row'));
-			const emptyCell = append(emptyRow, $('td', undefined, 'No rows returned.')) as HTMLTableCellElement;
-			emptyCell.colSpan = grid.columns.length + 1;
-		}
-
-		for (const row of grid.rows) {
-			const tr = append(tbody, $('tr.sql-result-row'));
-			append(tr, $('td.sql-result-row-number', undefined, String(row.index + 1)));
-
-			for (const cell of row.cells) {
-				const td = append(
-					tr,
-					$('td.sql-result-cell', {
-						title: cell.text,
-						tabIndex: 0,
-						'data-row-index': String(cell.rowIndex),
-						'data-column-index': String(cell.columnIndex)
-					})
-				);
-
-				td.classList.add(cell.className);
-				td.textContent = cell.text;
-			}
-		}
-
-		this.contentRenderDisposables.add(
-			addDisposableListener(wrapper, EventType.CLICK, event => {
-				this.handleGridActivation(event);
-			})
-		);
-
-		this.contentRenderDisposables.add(
-			addDisposableListener(wrapper, EventType.KEY_DOWN, event => {
-				if (event.key === 'Enter' || event.key === ' ') {
-					this.handleGridActivation(event);
-					event.preventDefault();
-				}
-			})
-		);
-
-		if (grid.truncatedByPanel || grid.truncatedByBackend) {
-			const message = grid.truncatedByPanel
-				? `Showing first ${grid.renderedRowCount} of ${grid.sourceRowCount} loaded row(s).`
-				: `Backend truncated result at ${grid.totalRowCount} row(s).`;
-
-			append(this.contentElement, $('.sql-result-truncated', undefined, message));
-		}
+		const rendered = this.nativeRenderer.render({
+			container: this.contentElement,
+			grid,
+			onGridActivation: event => this.handleGridActivation(event)
+		});
+		this.contentRenderDisposables.add(rendered.disposable);
 	}
 
 	private renderCurrentContent(): void {

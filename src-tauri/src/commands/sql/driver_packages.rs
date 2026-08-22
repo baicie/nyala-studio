@@ -7,7 +7,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use url::Url;
 
 const SIGNED_MANIFEST: &str = include_str!("sql-driver-manifest.json");
@@ -89,8 +89,7 @@ pub async fn sql_download_driver(
 }
 
 fn driver_package_root(app: &AppHandle) -> Result<PathBuf, SqlCommandError> {
-    app.path()
-        .app_data_dir()
+    super::super::os::resolve_app_data_dir(app)
         .map(|path| path.join(DRIVER_PACKAGE_DIRECTORY))
         .map_err(|error| {
             SqlCommandError::new(

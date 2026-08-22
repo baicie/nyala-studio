@@ -36,7 +36,15 @@ export type SqlCommandName =
 	// Phase 02 - Metadata Explorer commands.
 	| 'sql_list_schemas'
 	| 'sql_list_tables_v2'
-	| 'sql_list_columns_v2';
+	| 'sql_list_columns_v2'
+	// MVP vNext Agent A2.4 commands.
+	| 'sql_agent_start'
+	| 'sql_agent_run'
+	| 'sql_agent_cancel'
+	| 'sql_agent_get_run'
+	// MVP vNext Agent A3.1 read-only SQLite tools.
+	| 'sql_agent_explain'
+	| 'sql_agent_execute_readonly';
 
 export interface SqlCommandExecutorOptions {
 	readonly allowVoid?: boolean;

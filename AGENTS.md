@@ -25,9 +25,11 @@ Treat the SideX / VS Code workbench as vendor-grade. Do not casually rewrite it.
 
 Source of truth for phase progress: **`docs/sql-mvp-phases/README.md`** and the per-phase docs under `docs/sql-mvp-phases/`. Read those before checking off any roadmap work.
 
-- Branch under development: `mvp`. working tree clean.
+- Core MVP baseline: `mvp@1dca498f`; active work normally happens on topic branches, so never assume the current branch or worktree is clean.
 - MVP core loop (the 10-item Definition of Done) met on commit `60ab89c0`. Verification report: `docs/sql-mvp-phases/phase-do-d-verification.md`.
-- Phases 00–07 of the SQL roadmap are implemented at P0 scope and covered by `pnpm run test`. Phase 08 (packaging + demo flow + MySQL Preview validation) is still **pending**.
+- Phases 00–08 are implemented at P0 scope. Phase 08 native Demo and live MySQL Preview Validate were recorded complete on `mvp@1dca498f`.
+- The active MVP vNext route adds SQL Workspace Agent A0–A4 and a gated Zeus Data Grid Preview. Source of truth: `docs/sql-mvp-phases/mvp-vnext-agent-zeus-roadmap.md`.
+- Agent A0.1/A0.2, A1.1-A1.3, A2.1-A2.4, A3.1/A3.2, and A4.1/A4.2 are implemented; Checkpoint R is complete with automated and macOS native Generate/Fix/Explore evidence, while A4 Checkpoint W still needs native keyboard, Windows WebView2, and real VoiceOver/Narrator walkthroughs. A0.2 is a recorded parser No-Go, A1.2/A1.3 provide bounded schema/FK graph search and cache, A2.1-A2.4 provide the runtime domain, Rust policy, deterministic Suggest-only loop, and Workbench/Tauri bridge, A3.1/A3.2 provide SQLite read-only explain/execute plus bounded result shape/aggregate/sample policy, and A4.1/A4.2 provide stale-safe editor artifacts, Schema/Result actions, and the SQL Agent Panel. A2 remains Suggest Only with zero query calls; A3 requires an explicitly read-only SQLite connection and keeps rows out of default evidence. Zeus Z1.1/Z1.2 remain non-production audits/benchmarks; Z1.3 is `NO-GO` because the recorded performance thresholds fail and revision-bound macOS/Windows evidence plus a fresh bundle audit are missing. There is still no production Zeus dependency or renderer integration, and Z2 must not start.
 - Recent cleanup: SCM provider unloaded (`09bf4b65`), AGENTS Phase 7 dropped (`0306f70f`), AGENTS reorganized (`a0d56767`).
 
 **Never claim a phase is met from this file alone — open `docs/sql-mvp-phases/README.md` and the matching phase doc first.**
@@ -48,23 +50,31 @@ Always work in this order. Reordering requires explicit user request.
 
 ## High-Level Roadmap
 
-The authoritative roadmap lives in **`docs/sql-mvp-phases/README.md`** (Phase 00 – 08 + DoD verification). The summary below is a quick reference; **always open the per-phase doc before planning work on a phase.**
+The authoritative roadmap lives in **`docs/sql-mvp-phases/README.md`** (Core Phase 00–08 + MVP vNext + DoD verification). The summary below is a quick reference; **always open the per-phase or vNext doc before planning work.**
 
-| Phase | Doc | Scope |
-|---|---|---|
-| 00 | `phase-00-runtime-status.md` | runtime status surface, scripts/verify-sql-runtime-status.mjs |
-| 01 | `phase-01-connection-mvp.md` | SQLite connection lifecycle + secret hygiene |
-| 02 | `phase-02-metadata-explorer.md` | three-level tree, per-node error / refresh |
-| 03 | `phase-03-editor-execution.md` | execute all / selection / current + Ctrl+Enter |
-| 04 | `phase-04-result-panel.md` | columns / rows / affected / elapsed / error |
-| 05 | `phase-05-history-formatter-snippets-explain.md` | history, snippets, formatter, explain |
-| 06 | `phase-06-ai-helper-foundation.md` | deterministic provider + capability guard |
-| 07 | `phase-07-plugin-api-mvp.md` | 13 contribution points + local-only loader |
-| 08 | `phase-08-mvp-packaging.md` | **pending** — demo.db seed + welcome flow + MySQL Preview validation |
+| Phase | Doc                                              | Scope                                                               |
+| ----- | ------------------------------------------------ | ------------------------------------------------------------------- |
+| 00    | `phase-00-runtime-status.md`                     | runtime status surface, scripts/verify-sql-runtime-status.mjs       |
+| 01    | `phase-01-connection-mvp.md`                     | SQLite connection lifecycle + secret hygiene                        |
+| 02    | `phase-02-metadata-explorer.md`                  | three-level tree, per-node error / refresh                          |
+| 03    | `phase-03-editor-execution.md`                   | execute all / selection / current + Ctrl+Enter                      |
+| 04    | `phase-04-result-panel.md`                       | columns / rows / affected / elapsed / error                         |
+| 05    | `phase-05-history-formatter-snippets-explain.md` | history, snippets, formatter, explain                               |
+| 06    | `phase-06-ai-helper-foundation.md`               | deterministic provider + capability guard                           |
+| 07    | `phase-07-plugin-api-mvp.md`                     | 13 contribution points + local-only loader                          |
+| 08    | `phase-08-mvp-packaging.md`                      | **P0 met** — demo.db seed + welcome flow + MySQL Preview validation |
 
-Implementation order is strict: `00 → 01 → 02 → 03 → 04 → 05 → 06 → 07 → 08`. Do not start a phase before the previous one is at least at the README status row "部分" or "已具备雏形".
+Core implementation order remains the historical sequence `00 → 01 → 02 → 03 → 04 → 05 → 06 → 07 → 08`, now met.
 
-Legacy `AGENTS.md §Phase 1` – `§Phase 6` text (the original phase numbering) still applies as a code-path map, but the design contract for each phase lives in the matching doc under `docs/sql-mvp-phases/`.
+MVP vNext order is dependency-driven:
+
+```txt
+A0/A1 → A2 → A3 → A4 ─┐
+Z0 → Z1 ───────────────┤
+                        └→ Z2 → R0
+```
+
+Z1 may run in parallel because it is a non-production spike. Z2 must wait for both Agent A4 and a recorded Z1 Go decision. Never treat a Zeus evaluation or failed spike as completed integration.
 
 ---
 
@@ -72,13 +82,13 @@ Legacy `AGENTS.md §Phase 1` – `§Phase 6` text (the original phase numbering)
 
 ### Layer Boundaries
 
-| Layer | Path | Holds |
-|---|---|---|
-| Base | `src/vs/base` | low-level utilities |
-| Platform | `src/vs/platform` | platform services |
-| Editor | `src/vs/editor` | editor core integration |
+| Layer     | Path               | Holds                                  |
+| --------- | ------------------ | -------------------------------------- |
+| Base      | `src/vs/base`      | low-level utilities                    |
+| Platform  | `src/vs/platform`  | platform services                      |
+| Editor    | `src/vs/editor`    | editor core integration                |
 | Workbench | `src/vs/workbench` | product shell, services, contributions |
-| Native | `src-tauri` | Rust backend and native commands |
+| Native    | `src-tauri`        | Rust backend and native commands       |
 
 **Do:** keep SQL-specific frontend code under `src/vs/workbench/contrib/sql*` and `src/vs/workbench/services/sql*`.
 
@@ -219,7 +229,7 @@ Required for MVP:
 - elapsed time, row count
 - horizontal and vertical scrolling
 
-Out of scope for MVP (add later): column resizing, cell editing, infinite scrolling, copy range, CSV export, filtering, sorting, virtualization, large result streaming.
+Out of scope for the historical Core MVP: column resizing, cell editing, infinite scrolling, filtering, sorting, virtualization, and large result streaming. MVP vNext may add only the gated Zeus success-grid Preview defined in `mvp-vnext-agent-zeus-roadmap.md`; streaming and large-result transport remain out of scope.
 
 ### Status Bar
 
@@ -312,7 +322,9 @@ Avoid new dependencies unless clearly justified. Before adding one, check:
 - Does it noticeably increase bundle size?
 - Does it work in Tauri and the bundled webview?
 
-**Hard no for MVP:** heavy UI libraries for the result grid, ORM layers before the SQLite command bridge is stable, telemetry / crash-reporter packages without explicit user approval.
+**Hard no:** ORM layers that duplicate the stable SQL Core, telemetry / crash-reporter packages without explicit user approval, or any global UI framework migration.
+
+**Zeus exception for MVP vNext:** `@zeus-web/data-grid` may become an exact-pinned production dependency only after the Z1 dependency, bundle, performance, and two-WebView Go gate passes. It must stay inside the SQL Result contribution and retain the native renderer fallback. No other Zeus component is approved by that decision.
 
 ---
 
@@ -414,4 +426,4 @@ The 10-item Core MVP gate was met on commit `60ab89c0`. Verification report: `do
 9. `pnpm run rust:check` is clean.
 10. `pnpm run test` passes end to end (branding, runtime status, Rust + 8 frontend suites).
 
-This list is **read-only** and a historical anchor only. To check off additional work, look at the matching entry in `docs/sql-mvp-phases/README.md` (e.g. Phase 08 acceptance checklist).
+This list is **read-only** and a historical anchor only. Core phase evidence remains in the matching phase doc; all new Agent/Zeus work is checked against `docs/sql-mvp-phases/mvp-vnext-agent-zeus-roadmap.md`.

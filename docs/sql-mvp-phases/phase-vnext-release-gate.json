@@ -1,0 +1,251 @@
+{
+	"version": 3,
+	"generatedAt": "2026-08-16T18:04:18.986Z",
+	"sourceRevision": "63698263fa13cd9f114341bc04d360ed967d8c9b",
+	"decision": "NO-GO",
+	"checks": [
+		{
+			"id": "release-source-revision",
+			"passed": true,
+			"reason": "release source revision is 63698263fa13cd9f114341bc04d360ed967d8c9b"
+		},
+		{
+			"id": "agent-default-smoke",
+			"passed": true,
+			"reason": "pnpm run test includes test:sql-agent"
+		},
+		{
+			"id": "benchmark-default-smoke",
+			"passed": true,
+			"reason": "pnpm run test includes deterministic result-grid benchmark smoke"
+		},
+		{
+			"id": "z1-go",
+			"passed": false,
+			"reason": "Z1 gate decision/integrity failed: decision is NO-GO; metric checks have 1 failed checks: 10k-x-50-primary; benchmark evidence checks have 1 failed checks: chromium-benchmark-provenance; platform metric checks are missing 18 required checks; platform metric checks do not match the required contract; platform evidence checks have 14 failed checks: macOS WebKit-schema-version, macOS WebKit-measurement-contract-version, macOS WebKit-scroll-commit-boundary, macOS WebKit-execution-order, macOS WebKit-record-contract, macOS WebKit-summary-integrity, macOS WebKit-screenshot-integrity, Windows WebView2-schema-version, Windows WebView2-measurement-contract-version, Windows WebView2-scroll-commit-boundary, Windows WebView2-execution-order, Windows WebView2-record-contract, Windows WebView2-summary-integrity, Windows WebView2-screenshot-integrity; provenance checks have 10 failed checks: trusted-expected-workflow-provenance, macOS WebKit-provenance, Windows WebView2-provenance, platform-provenance-repository, platform-provenance-sourceRevision, platform-provenance-sourceRef, platform-provenance-workflowRunId, platform-provenance-workflowRunAttempt, platform-provenance-zeusBundleSha256, zeus-bundle-provenance; gate reasons are not empty; Zeus dependency/bundle audit summary is invalid; Zeus package audit summary is invalid; macOS WebKit identity/status summary is invalid; macOS WebKit raw record summary is invalid; macOS WebKit screenshot manifest summary is invalid; macOS WebKit source/binary/bundle provenance summary is invalid; Windows WebView2 identity/status summary is invalid; Windows WebView2 raw record summary is invalid; Windows WebView2 screenshot manifest summary is invalid; Windows WebView2 source/binary/bundle provenance summary is invalid; Z1 repository provenance summary does not match; Z1 sourceRevision provenance summary does not match; Z1 sourceRef provenance summary does not match; Z1 workflowRunId provenance summary does not match; Z1 workflowRunAttempt provenance summary does not match; Z1 provenance summary does not target the release revision; Z1 Zeus bundle SHA-256 provenance summary does not match; Z1 attestation manifest path is not configured; Z1 benchmark evidence path is not configured; Z1 platform evidence path is not configured; Z1 Zeus audit path is not configured; Z1 platform run metadata path is not configured; Z1 attestation run API metadata path is not configured; Z1 attestation artifact API metadata path is not configured; Z1 Zeus bundle path is not configured; Z1 attestation manifest is not a recorded GO; trusted expected repository is missing or invalid; trusted expected source ref is missing or invalid; Z1 attestation provenance is invalid or does not match the trusted release; Z1 attestation input digest contract is invalid; Z1 gate raw input digest does not match the attestation; Z1 benchmark raw input digest does not match the attestation; Z1 platformEvidence raw input digest does not match the attestation; Z1 zeusAudit raw input digest does not match the attestation; Z1 zeusBundle raw input digest does not match the attestation; Z1 platformRun raw input digest does not match the attestation; Z1 gate bundle provenance does not match the attested bundle bytes; Z1 platform run metadata summary is invalid; Z1 platform run provenance does not match the trusted release; Z1 aggregate platform artifact identity does not match the attestation; Z1 attestation workflow metadata is not verified: expected repository is invalid, expected attestation run id is invalid, expected protected source ref is invalid, attestation workflow name does not match, attestation workflow path does not match, attestation workflow id is invalid, attestation workflow event is not workflow_dispatch, attestation run status is not completed, attestation run conclusion is not success, attestation run head SHA is invalid, attestation run does not target the expected release revision, attestation run head branch is invalid, attestation run attempt is invalid, attestation run HTML URL does not match its repository and run id, attestation run artifacts URL does not match its repository and run id, attestation run creation timestamp is invalid, attestation run timestamps are invalid, attestation run must expose exactly 1 artifact, got undefined/0, expected exactly one sql-result-grid-gate-attestation artifact, got 0"
+		},
+		{
+			"id": "z1-source-revision",
+			"passed": true,
+			"reason": "Z1 gate targets release revision 63698263fa13cd9f114341bc04d360ed967d8c9b"
+		},
+		{
+			"id": "a4-checkpoint-w",
+			"passed": false,
+			"reason": "A4 Checkpoint W gate decision/integrity failed: decision is NO-GO; source revision does not match the release; trusted expected repository is missing or invalid; trusted expected source ref is missing or invalid; check capture-run-metadata is not a recorded pass; check macos-native-identity is not a recorded pass; check windows-native-identity is not a recorded pass; check macos-automated-surface is not a recorded pass; check windows-automated-surface is not a recorded pass; check provenance-match is not a recorded pass; check manual-attestation is not a recorded pass; check macos-native-keyboard is not a recorded pass; check macos-voiceover is not a recorded pass; check windows-native-keyboard is not a recorded pass; check windows-narrator is not a recorded pass; blockers are not empty; Checkpoint W input digests are invalid; macOS native evidence path is not configured; Windows native evidence path is not configured; manual attestation path is not configured; capture run metadata path is not configured; attestation run API metadata path is not configured; attestation artifact API metadata path is not configured; capture run metadata summary is not verified; capture workflow identity is invalid; capture run provenance is invalid; capture run identity or completion state is invalid; capture artifact summary count is invalid; sql-agent-native-macos artifact summary is invalid; sql-agent-native-windows artifact summary is invalid; macOS evidence version is invalid; macOS automated surface is not ready; macOS native identity summary is invalid; macOS revision/binary provenance is invalid; macOS desktop screenshot summary is invalid; macOS narrow screenshot summary is invalid; macOS screenshot summary count is invalid; Windows evidence version is invalid; Windows automated surface is not ready; Windows native identity summary is invalid; Windows revision/binary provenance is invalid; Windows desktop screenshot summary is invalid; Windows narrow screenshot summary is invalid; Windows screenshot summary count is invalid; manual evidence summary is not attested; manual evidence revision is invalid; manual reviewer provenance is invalid; manual review timestamp is invalid; manual capture workflow URL is invalid; manual attestation workflow provenance is invalid; manual gate-local evidence references are invalid; evidence summary repository provenance does not match; evidence summary sourceRevision provenance does not match; evidence summary sourceRef provenance does not match; evidence summary workflowRunId provenance does not match; evidence summary workflowRunAttempt provenance does not match; attestation workflow metadata is not verified: expected repository is invalid, expected attestation run id is invalid, expected protected source ref is invalid, attestation workflow name does not match, attestation workflow path does not match, attestation workflow id is invalid, attestation workflow event is not workflow_dispatch, attestation run status is not completed, attestation run conclusion is not success, attestation run head SHA is invalid, attestation run does not target the expected release revision, attestation run head branch is invalid, attestation run attempt is invalid, attestation run HTML URL does not match its repository and run id, attestation run artifacts URL does not match its repository and run id, attestation run creation timestamp is invalid, attestation run timestamps are invalid, attestation run must expose exactly 1 artifact, got undefined/0, expected exactly one sql-agent-checkpoint-w artifact, got 0"
+		},
+		{
+			"id": "a4-source-revision",
+			"passed": false,
+			"reason": "A4 Checkpoint W gate source revision missing does not match 63698263fa13cd9f114341bc04d360ed967d8c9b"
+		},
+		{
+			"id": "z2-production-dependency",
+			"passed": false,
+			"reason": "@zeus-web/data-grid is not an exact production dependency"
+		},
+		{
+			"id": "z2-roadmap-status",
+			"passed": false,
+			"reason": "roadmap does not record Z2 as completed"
+		},
+		{
+			"id": "z2-renderer-seam",
+			"passed": false,
+			"reason": "SQL Result is missing the Zeus adapter/native fallback seam"
+		},
+		{
+			"id": "zeus-import-boundary",
+			"passed": true,
+			"reason": "Zeus production imports stay inside the SQL Result contribution"
+		}
+	],
+	"blockers": [
+		"Z1 gate decision/integrity failed: decision is NO-GO; metric checks have 1 failed checks: 10k-x-50-primary; benchmark evidence checks have 1 failed checks: chromium-benchmark-provenance; platform metric checks are missing 18 required checks; platform metric checks do not match the required contract; platform evidence checks have 14 failed checks: macOS WebKit-schema-version, macOS WebKit-measurement-contract-version, macOS WebKit-scroll-commit-boundary, macOS WebKit-execution-order, macOS WebKit-record-contract, macOS WebKit-summary-integrity, macOS WebKit-screenshot-integrity, Windows WebView2-schema-version, Windows WebView2-measurement-contract-version, Windows WebView2-scroll-commit-boundary, Windows WebView2-execution-order, Windows WebView2-record-contract, Windows WebView2-summary-integrity, Windows WebView2-screenshot-integrity; provenance checks have 10 failed checks: trusted-expected-workflow-provenance, macOS WebKit-provenance, Windows WebView2-provenance, platform-provenance-repository, platform-provenance-sourceRevision, platform-provenance-sourceRef, platform-provenance-workflowRunId, platform-provenance-workflowRunAttempt, platform-provenance-zeusBundleSha256, zeus-bundle-provenance; gate reasons are not empty; Zeus dependency/bundle audit summary is invalid; Zeus package audit summary is invalid; macOS WebKit identity/status summary is invalid; macOS WebKit raw record summary is invalid; macOS WebKit screenshot manifest summary is invalid; macOS WebKit source/binary/bundle provenance summary is invalid; Windows WebView2 identity/status summary is invalid; Windows WebView2 raw record summary is invalid; Windows WebView2 screenshot manifest summary is invalid; Windows WebView2 source/binary/bundle provenance summary is invalid; Z1 repository provenance summary does not match; Z1 sourceRevision provenance summary does not match; Z1 sourceRef provenance summary does not match; Z1 workflowRunId provenance summary does not match; Z1 workflowRunAttempt provenance summary does not match; Z1 provenance summary does not target the release revision; Z1 Zeus bundle SHA-256 provenance summary does not match; Z1 attestation manifest path is not configured; Z1 benchmark evidence path is not configured; Z1 platform evidence path is not configured; Z1 Zeus audit path is not configured; Z1 platform run metadata path is not configured; Z1 attestation run API metadata path is not configured; Z1 attestation artifact API metadata path is not configured; Z1 Zeus bundle path is not configured; Z1 attestation manifest is not a recorded GO; trusted expected repository is missing or invalid; trusted expected source ref is missing or invalid; Z1 attestation provenance is invalid or does not match the trusted release; Z1 attestation input digest contract is invalid; Z1 gate raw input digest does not match the attestation; Z1 benchmark raw input digest does not match the attestation; Z1 platformEvidence raw input digest does not match the attestation; Z1 zeusAudit raw input digest does not match the attestation; Z1 zeusBundle raw input digest does not match the attestation; Z1 platformRun raw input digest does not match the attestation; Z1 gate bundle provenance does not match the attested bundle bytes; Z1 platform run metadata summary is invalid; Z1 platform run provenance does not match the trusted release; Z1 aggregate platform artifact identity does not match the attestation; Z1 attestation workflow metadata is not verified: expected repository is invalid, expected attestation run id is invalid, expected protected source ref is invalid, attestation workflow name does not match, attestation workflow path does not match, attestation workflow id is invalid, attestation workflow event is not workflow_dispatch, attestation run status is not completed, attestation run conclusion is not success, attestation run head SHA is invalid, attestation run does not target the expected release revision, attestation run head branch is invalid, attestation run attempt is invalid, attestation run HTML URL does not match its repository and run id, attestation run artifacts URL does not match its repository and run id, attestation run creation timestamp is invalid, attestation run timestamps are invalid, attestation run must expose exactly 1 artifact, got undefined/0, expected exactly one sql-result-grid-gate-attestation artifact, got 0",
+		"A4 Checkpoint W gate decision/integrity failed: decision is NO-GO; source revision does not match the release; trusted expected repository is missing or invalid; trusted expected source ref is missing or invalid; check capture-run-metadata is not a recorded pass; check macos-native-identity is not a recorded pass; check windows-native-identity is not a recorded pass; check macos-automated-surface is not a recorded pass; check windows-automated-surface is not a recorded pass; check provenance-match is not a recorded pass; check manual-attestation is not a recorded pass; check macos-native-keyboard is not a recorded pass; check macos-voiceover is not a recorded pass; check windows-native-keyboard is not a recorded pass; check windows-narrator is not a recorded pass; blockers are not empty; Checkpoint W input digests are invalid; macOS native evidence path is not configured; Windows native evidence path is not configured; manual attestation path is not configured; capture run metadata path is not configured; attestation run API metadata path is not configured; attestation artifact API metadata path is not configured; capture run metadata summary is not verified; capture workflow identity is invalid; capture run provenance is invalid; capture run identity or completion state is invalid; capture artifact summary count is invalid; sql-agent-native-macos artifact summary is invalid; sql-agent-native-windows artifact summary is invalid; macOS evidence version is invalid; macOS automated surface is not ready; macOS native identity summary is invalid; macOS revision/binary provenance is invalid; macOS desktop screenshot summary is invalid; macOS narrow screenshot summary is invalid; macOS screenshot summary count is invalid; Windows evidence version is invalid; Windows automated surface is not ready; Windows native identity summary is invalid; Windows revision/binary provenance is invalid; Windows desktop screenshot summary is invalid; Windows narrow screenshot summary is invalid; Windows screenshot summary count is invalid; manual evidence summary is not attested; manual evidence revision is invalid; manual reviewer provenance is invalid; manual review timestamp is invalid; manual capture workflow URL is invalid; manual attestation workflow provenance is invalid; manual gate-local evidence references are invalid; evidence summary repository provenance does not match; evidence summary sourceRevision provenance does not match; evidence summary sourceRef provenance does not match; evidence summary workflowRunId provenance does not match; evidence summary workflowRunAttempt provenance does not match; attestation workflow metadata is not verified: expected repository is invalid, expected attestation run id is invalid, expected protected source ref is invalid, attestation workflow name does not match, attestation workflow path does not match, attestation workflow id is invalid, attestation workflow event is not workflow_dispatch, attestation run status is not completed, attestation run conclusion is not success, attestation run head SHA is invalid, attestation run does not target the expected release revision, attestation run head branch is invalid, attestation run attempt is invalid, attestation run HTML URL does not match its repository and run id, attestation run artifacts URL does not match its repository and run id, attestation run creation timestamp is invalid, attestation run timestamps are invalid, attestation run must expose exactly 1 artifact, got undefined/0, expected exactly one sql-agent-checkpoint-w artifact, got 0",
+		"A4 Checkpoint W gate source revision missing does not match 63698263fa13cd9f114341bc04d360ed967d8c9b",
+		"@zeus-web/data-grid is not an exact production dependency",
+		"roadmap does not record Z2 as completed",
+		"SQL Result is missing the Zeus adapter/native fallback seam"
+	],
+	"inputs": {
+		"z1Decision": "NO-GO",
+		"z1Gate": "docs/sql-mvp-phases/phase-z1-gate.json",
+		"z1Evidence": {
+			"attestation": {
+				"path": null,
+				"sha256": null,
+				"error": "Z1 attestation manifest path is not configured"
+			},
+			"benchmark": {
+				"path": null,
+				"sha256": null,
+				"error": "Z1 benchmark evidence path is not configured"
+			},
+			"platformEvidence": {
+				"path": null,
+				"sha256": null,
+				"error": "Z1 platform evidence path is not configured"
+			},
+			"zeusAudit": {
+				"path": null,
+				"sha256": null,
+				"error": "Z1 Zeus audit path is not configured"
+			},
+			"platformRun": {
+				"path": null,
+				"sha256": null,
+				"error": "Z1 platform run metadata path is not configured"
+			},
+			"attestationRunMetadata": {
+				"path": null,
+				"sha256": null,
+				"error": "Z1 attestation run API metadata path is not configured"
+			},
+			"attestationArtifactMetadata": {
+				"path": null,
+				"sha256": null,
+				"error": "Z1 attestation artifact API metadata path is not configured"
+			},
+			"zeusBundle": {
+				"path": null,
+				"sha256": null,
+				"error": "Z1 Zeus bundle path is not configured"
+			}
+		},
+		"z1AttestationRun": {
+			"status": "blocked",
+			"workflow": {
+				"id": null,
+				"name": null,
+				"path": null,
+				"event": null
+			},
+			"run": {
+				"id": null,
+				"attempt": null,
+				"status": null,
+				"conclusion": null,
+				"headSha": null,
+				"headBranch": null,
+				"createdAt": null,
+				"runStartedAt": null,
+				"updatedAt": null,
+				"htmlUrl": null
+			},
+			"provenance": {
+				"repository": null,
+				"sourceRevision": null,
+				"sourceRef": null,
+				"workflowRunId": null,
+				"workflowRunAttempt": null
+			},
+			"artifacts": [],
+			"reasons": [
+				"expected repository is invalid",
+				"expected attestation run id is invalid",
+				"expected protected source ref is invalid",
+				"attestation workflow name does not match",
+				"attestation workflow path does not match",
+				"attestation workflow id is invalid",
+				"attestation workflow event is not workflow_dispatch",
+				"attestation run status is not completed",
+				"attestation run conclusion is not success",
+				"attestation run head SHA is invalid",
+				"attestation run does not target the expected release revision",
+				"attestation run head branch is invalid",
+				"attestation run attempt is invalid",
+				"attestation run HTML URL does not match its repository and run id",
+				"attestation run artifacts URL does not match its repository and run id",
+				"attestation run creation timestamp is invalid",
+				"attestation run timestamps are invalid",
+				"attestation run must expose exactly 1 artifact, got undefined/0",
+				"expected exactly one sql-result-grid-gate-attestation artifact, got 0"
+			]
+		},
+		"a4Decision": "NO-GO",
+		"a4Gate": "docs/sql-mvp-phases/phase-a4-checkpoint-w.json",
+		"a4Evidence": {
+			"macos": {
+				"path": null,
+				"sha256": null,
+				"error": "macOS native evidence path is not configured"
+			},
+			"windows": {
+				"path": null,
+				"sha256": null,
+				"error": "Windows native evidence path is not configured"
+			},
+			"manual": {
+				"path": null,
+				"sha256": null,
+				"error": "manual attestation path is not configured"
+			},
+			"captureRun": {
+				"path": null,
+				"sha256": null,
+				"error": "capture run metadata path is not configured"
+			},
+			"attestationRunMetadata": {
+				"path": null,
+				"sha256": null,
+				"error": "attestation run API metadata path is not configured"
+			},
+			"attestationArtifactMetadata": {
+				"path": null,
+				"sha256": null,
+				"error": "attestation artifact API metadata path is not configured"
+			}
+		},
+		"a4AttestationRun": {
+			"status": "blocked",
+			"workflow": {
+				"id": null,
+				"name": null,
+				"path": null,
+				"event": null
+			},
+			"run": {
+				"id": null,
+				"attempt": null,
+				"status": null,
+				"conclusion": null,
+				"headSha": null,
+				"headBranch": null,
+				"createdAt": null,
+				"runStartedAt": null,
+				"updatedAt": null,
+				"htmlUrl": null
+			},
+			"provenance": {
+				"repository": null,
+				"sourceRevision": null,
+				"sourceRef": null,
+				"workflowRunId": null,
+				"workflowRunAttempt": null
+			},
+			"artifacts": [],
+			"reasons": [
+				"expected repository is invalid",
+				"expected attestation run id is invalid",
+				"expected protected source ref is invalid",
+				"attestation workflow name does not match",
+				"attestation workflow path does not match",
+				"attestation workflow id is invalid",
+				"attestation workflow event is not workflow_dispatch",
+				"attestation run status is not completed",
+				"attestation run conclusion is not success",
+				"attestation run head SHA is invalid",
+				"attestation run does not target the expected release revision",
+				"attestation run head branch is invalid",
+				"attestation run attempt is invalid",
+				"attestation run HTML URL does not match its repository and run id",
+				"attestation run artifacts URL does not match its repository and run id",
+				"attestation run creation timestamp is invalid",
+				"attestation run timestamps are invalid",
+				"attestation run must expose exactly 1 artifact, got undefined/0",
+				"expected exactly one sql-agent-checkpoint-w artifact, got 0"
+			]
+		}
+	}
+}

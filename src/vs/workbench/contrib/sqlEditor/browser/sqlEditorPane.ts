@@ -22,7 +22,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
-import { ISqlConnectionService } from '../../../services/sql/common/sqlConnection.js';
+import { ISqlConnectionChangeService, ISqlConnectionService } from '../../../services/sql/common/sqlConnection.js';
 import { ISqlQueryService } from '../../../services/sql/common/sqlQuery.js';
 import { SqlConnection, SqlConnectionKind } from '../../../services/sql/common/sqlTypes.js';
 import { SqlEditorInput } from '../common/sqlEditorInput.js';
@@ -32,6 +32,7 @@ import {
 	findSqlStatementAtOffset,
 	getSqlEditorStatusLabel,
 	getSqlEditorToolbarState,
+	SqlEditorConnectionRefreshCoordinator,
 	SqlEditorExecutionSource
 } from '../common/sqlEditorModel.js';
 import { SqlEditorExecutionController, SqlEditorRunningState } from '../common/sqlEditorExecutionController.js';
@@ -42,12 +43,21 @@ import { shouldAutoSaveSqlEditorDraft } from '../../sqlProduct/common/sqlProduct
 import { formatSql } from '../../sqlAdvanced/common/sqlAdvancedFormatter.js';
 import { createExplainSql } from '../../sqlAdvanced/common/sqlAdvancedExplain.js';
 import { getDialectForConnectionKind } from '../../../services/sql/common/sqlDialect.js';
+import {
+	applySqlAgentArtifact,
+	SqlAgentArtifact,
+	SqlAgentArtifactApplyResult,
+	SqlAgentArtifactTarget
+} from '../../../services/sql/common/sqlAgentArtifacts.js';
 
 export interface SqlEditorAssistantContext {
+	readonly editorId?: string;
+	readonly connectionId?: string;
 	readonly connectionKind?: SqlConnectionKind;
 	readonly connectionName?: string;
 	readonly sql: string;
 	readonly selectedSql?: string;
+	readonly versionId?: number;
 }
 
 export class SqlEditorPane extends EditorPane {
@@ -69,6 +79,7 @@ export class SqlEditorPane extends EditorPane {
 	private editor: ICodeEditor | undefined;
 	private currentInput: SqlEditorInput | undefined;
 	private currentConnections: SqlConnection[] = [];
+	private readonly connectionRefreshCoordinator = new SqlEditorConnectionRefreshCoordinator<SqlConnection>();
 	private running = false;
 	private dirty = false;
 	private readonly executionController: SqlEditorExecutionController;
@@ -86,10 +97,19 @@ export class SqlEditorPane extends EditorPane {
 		@ISqlQueryService private readonly sqlQueryService: ISqlQueryService,
 		@ISqlEditorEventService private readonly sqlEditorEventService: ISqlEditorEventService,
 		@ISqlEditorDraftService private readonly draftService: ISqlEditorDraftService,
-		@ISqlProductPreferencesService private readonly preferencesService: ISqlProductPreferencesService
+		@ISqlProductPreferencesService private readonly preferencesService: ISqlProductPreferencesService,
+		@ISqlConnectionChangeService connectionChangeService: ISqlConnectionChangeService
 	) {
 		super(SqlEditorPane.ID, group, telemetryService, themeService, storageService);
 		this.executionController = new SqlEditorExecutionController(sqlQueryService);
+		this._register(
+			connectionChangeService.onDidChangeConnections(() => {
+				if (!this.currentInput || !this.connectionSelect) {
+					return;
+				}
+				this.refreshConnections(this.currentInput, true).catch(error => this.showError(error));
+			})
+		);
 	}
 
 	protected override createEditor(parent: HTMLElement): void {
@@ -234,12 +254,23 @@ export class SqlEditorPane extends EditorPane {
 	}
 
 	override clearInput(): void {
+		this.connectionRefreshCoordinator.invalidate();
+		this.currentConnections = [];
+		if (this.connectionSelect) {
+			this.connectionSelect.value = '';
+		}
 		this.modelDisposables.clear();
 		this.editor?.setModel(null);
 		this.currentInput = undefined;
 		this.dirty = false;
 		this.updateToolbarState();
 		super.clearInput();
+	}
+
+	override dispose(): void {
+		this.connectionRefreshCoordinator.invalidate();
+		this.currentInput = undefined;
+		super.dispose();
 	}
 
 	override layout(dimension: Dimension): void {
@@ -269,13 +300,47 @@ export class SqlEditorPane extends EditorPane {
 	getAssistantContext(): SqlEditorAssistantContext {
 		const connection = this.getSelectedConnection();
 		const selectedSql = this.getSelectedSql();
+		const model = this.editor?.getModel();
 
 		return {
+			editorId: this.currentInput?.id,
+			connectionId: connection?.id,
 			connectionKind: connection?.kind,
 			connectionName: connection?.name,
 			sql: this.getAllSql(),
-			selectedSql: selectedSql.trim() ? selectedSql : undefined
+			selectedSql: selectedSql.trim() ? selectedSql : undefined,
+			versionId: model?.getVersionId()
 		};
+	}
+
+	getAgentArtifactTarget(): SqlAgentArtifactTarget | undefined {
+		const model = this.editor?.getModel();
+		const editorId = this.currentInput?.id;
+		if (!model || !editorId) {
+			return undefined;
+		}
+		return {
+			editorId,
+			versionId: model.getVersionId(),
+			sql: model.getValue()
+		};
+	}
+
+	applyAgentArtifact(artifact: SqlAgentArtifact): SqlAgentArtifactApplyResult {
+		const model = this.editor?.getModel();
+		const target = this.getAgentArtifactTarget();
+		if (!model || !target) {
+			return { applied: false, reason: 'editor' };
+		}
+		const result = applySqlAgentArtifact(artifact, target);
+		if (result.applied) {
+			model.setValue(result.sql);
+			this.dirty = true;
+			this.saveCurrentDraft();
+			this.updateReadyStatus();
+			this.updateToolbarState();
+		}
+		return result;
 	}
 
 	async executeQuery(sourceOrSelectionOnly: SqlEditorExecutionSource | boolean): Promise<void> {
@@ -298,8 +363,10 @@ export class SqlEditorPane extends EditorPane {
 			}
 
 			const connection = this.getSelectedConnection();
+			const editorVersionId = this.editor?.getModel()?.getVersionId();
 			const executionPromise = this.executionController.execute({
 				editorId: input.id,
+				editorVersionId,
 				connectionId: connection?.id,
 				fullSql: this.getAllSql(),
 				selectedSql: this.getSelectedSql(),
@@ -325,10 +392,12 @@ export class SqlEditorPane extends EditorPane {
 			this.updateToolbarState();
 			this.sqlEditorEventService.fireQueryStarted({
 				editorId: runningState.editorId,
+				editorVersionId: runningState.editorVersionId,
 				executionId: runningState.executionId,
 				connectionId: runningState.connectionId,
 				sql: runningState.sql,
 				source: runningState.source,
+				statementCount: runningState.statementCount,
 				startedAt: runningState.startedAt
 			});
 
@@ -410,6 +479,7 @@ export class SqlEditorPane extends EditorPane {
 		const connection = this.getSelectedConnection();
 		const startedAt = Date.now();
 		let explainSql: string | undefined;
+		let editorVersionId: number | undefined;
 
 		try {
 			if (!input) {
@@ -420,6 +490,7 @@ export class SqlEditorPane extends EditorPane {
 				throw new Error('Select a SQL connection before explaining SQL.');
 			}
 
+			editorVersionId = this.editor?.getModel()?.getVersionId();
 			const sql = this.getCurrentStatementSql();
 
 			explainSql = createExplainSql({
@@ -432,9 +503,11 @@ export class SqlEditorPane extends EditorPane {
 
 			this.sqlEditorEventService.fireQueryStarted({
 				editorId: input.id,
+				editorVersionId,
 				connectionId: connection.id,
 				sql: explainSql,
 				source: SqlEditorExecutionSource.Statement,
+				statementCount: 1,
 				startedAt
 			});
 
@@ -447,9 +520,11 @@ export class SqlEditorPane extends EditorPane {
 
 			this.sqlEditorEventService.fireQueryCompleted({
 				editorId: input.id,
+				editorVersionId,
 				connectionId: connection.id,
 				sql: explainSql,
 				source: SqlEditorExecutionSource.Statement,
+				statementCount: 1,
 				startedAt,
 				completedAt,
 				result
@@ -464,9 +539,11 @@ export class SqlEditorPane extends EditorPane {
 			if (input && connection && explainSql) {
 				this.sqlEditorEventService.fireQueryFailed({
 					editorId: input.id,
+					editorVersionId,
 					connectionId: connection.id,
 					sql: explainSql,
 					source: SqlEditorExecutionSource.Statement,
+					statementCount: 1,
 					startedAt,
 					completedAt,
 					error: normalizedError
@@ -479,19 +556,34 @@ export class SqlEditorPane extends EditorPane {
 		}
 	}
 
-	private async refreshConnections(input: SqlEditorInput): Promise<void> {
-		if (!canLoadSqlEditorConnections(isTauri())) {
-			this.currentConnections = [];
-		} else {
-			try {
-				this.currentConnections = await this.sqlConnectionService.listConnections();
-			} catch (error) {
-				this.currentConnections = [];
-				this.showError(error);
+	private async refreshConnections(input: SqlEditorInput, preserveCurrentSelection = false): Promise<void> {
+		const result = await this.connectionRefreshCoordinator.load(
+			() =>
+				canLoadSqlEditorConnections(isTauri()) ? this.sqlConnectionService.listConnections() : Promise.resolve([]),
+			{
+				inputConnectionId: input.connectionId,
+				preserveCurrentSelection,
+				getCurrentSelection: () => this.connectionSelect?.value
 			}
+		);
+		if (!result) {
+			return;
 		}
 
+		this.currentConnections = result.connections;
+
 		clearNode(this.connectionSelect);
+
+		if ('error' in result) {
+			const option = document.createElement('option');
+			option.value = '';
+			option.textContent = 'No connection';
+			this.connectionSelect.appendChild(option);
+			this.connectionSelect.disabled = true;
+			this.showError(result.error);
+			this.updateToolbarState();
+			return;
+		}
 
 		if (this.currentConnections.length === 0) {
 			const option = document.createElement('option');
@@ -499,6 +591,8 @@ export class SqlEditorPane extends EditorPane {
 			option.textContent = 'No connection';
 			this.connectionSelect.appendChild(option);
 			this.connectionSelect.disabled = true;
+			this.updateReadyStatus();
+			this.updateToolbarState();
 			return;
 		}
 
@@ -511,13 +605,9 @@ export class SqlEditorPane extends EditorPane {
 			this.connectionSelect.appendChild(option);
 		}
 
-		const preferredConnectionId = input.connectionId;
-
-		if (preferredConnectionId && this.currentConnections.some(connection => connection.id === preferredConnectionId)) {
-			this.connectionSelect.value = preferredConnectionId;
-		} else {
-			this.connectionSelect.value = this.currentConnections[0].id;
-		}
+		this.connectionSelect.value = result.selectedConnectionId ?? this.currentConnections[0].id;
+		this.updateReadyStatus();
+		this.updateToolbarState();
 	}
 
 	private getSelectedConnectionId(): string | undefined {

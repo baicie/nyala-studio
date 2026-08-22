@@ -14,10 +14,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { builtinSqlPlugins } from '../common/builtinSqlPlugins.js';
-import {
-	SqlStudioPluginCapability,
-	SqlStudioPluginRegistry
-} from '../common/sqlAdvancedPluginApi.js';
+import { SqlStudioPluginCapability, SqlStudioPluginRegistry } from '../common/sqlAdvancedPluginApi.js';
 import { buildWorkbenchPluginContributions } from '../common/sqlPluginContributionBridge.js';
 
 function registerBuiltins(): SqlStudioPluginRegistry {
@@ -34,6 +31,7 @@ test('buildWorkbenchPluginContributions exposes built-in commands and sql action
 	assert.ok(contributions.commands.some(command => command.id === 'sql.format'));
 	assert.ok(contributions.commands.some(command => command.id === 'sql.explain'));
 	assert.ok(contributions.commands.some(command => command.id === 'sql.ai.generateQuery'));
+	assert.ok(contributions.commands.some(command => command.id === 'sql.ai.fixError'));
 	assert.ok(contributions.sqlActions.some(action => action.id === 'sql.action.explain'));
 	assert.ok(contributions.sqlActions.some(action => action.id === 'sql.action.ai.optimizeQuery'));
 });
@@ -65,6 +63,10 @@ test('buildWorkbenchPluginContributions stamps pluginId on every contribution', 
 	assert.equal(aiExplainError.pluginId, 'nyala.sql.ai');
 	assert.equal(aiExplainError.command, 'sql.ai.explainError');
 	assert.equal(aiExplainError.when, 'sqlEditorHasError');
+	const aiFixError = contributions.sqlActions.find(action => action.id === 'sql.action.ai.fixError');
+	assert.ok(aiFixError);
+	assert.equal(aiFixError.command, 'sql.ai.fixError');
+	assert.equal(aiFixError.when, 'sqlEditorHasError');
 });
 
 test('buildWorkbenchPluginContributions returns empty capabilities for actions without declarations', () => {

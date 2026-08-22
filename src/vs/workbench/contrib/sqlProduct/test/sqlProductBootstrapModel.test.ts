@@ -9,6 +9,7 @@ import {
 	createSqlProductStartupPlan,
 	dedupeStartupCommands,
 	isSqlProductDemoBootstrapSupported,
+	runSqlProductDemoBootstrap,
 	shouldRunSqlProductBootstrap,
 	SqlProductStartupCommandKind
 } from '../common/sqlProductBootstrapModel.js';
@@ -76,13 +77,65 @@ test('createSqlProductStartupPlan creates SQL layout plan from preferences', () 
 	);
 });
 
-test('createSqlProductStartupPlan skips when already bootstrapped', () => {
+test('createSqlProductStartupPlan silently restores Demo runtime after onboarding', () => {
 	const plan = createSqlProductStartupPlan({
 		alreadyBootstrapped: true,
 		preferences: DEFAULT_SQL_PRODUCT_PREFERENCES
 	});
 
-	assert.deepEqual(plan, []);
+	assert.deepEqual(plan, [
+		{
+			kind: SqlProductStartupCommandKind.BootstrapDemo,
+			commandId: SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID,
+			args: [{ silent: true }]
+		}
+	]);
+});
+
+test('silent Demo bootstrap refreshes cached connection consumers without reveal or notification', async () => {
+	const calls: string[] = [];
+
+	await runSqlProductDemoBootstrap(
+		{
+			bootstrapDemo: async () => {
+				calls.push('bootstrap');
+				return {
+					dbPath: '/data/demo.db',
+					reused: true,
+					connected: true,
+					sampleConnectionId: 'demo-sqlite'
+				};
+			},
+			notifyConnectionsChanged: () => calls.push('connectionsChanged'),
+			refreshConnections: async options => calls.push(`refresh:${JSON.stringify(options)}`),
+			notifySuccess: message => calls.push(`notify:${message}`)
+		},
+		{ silent: true }
+	);
+
+	assert.deepEqual(calls, ['bootstrap', 'connectionsChanged', 'refresh:{"existingViewOnly":true}']);
+});
+
+test('interactive Demo bootstrap reveals the connection and reports creation', async () => {
+	const calls: string[] = [];
+
+	await runSqlProductDemoBootstrap({
+		bootstrapDemo: async () => ({
+			dbPath: '/data/demo.db',
+			reused: false,
+			connected: true,
+			sampleConnectionId: 'demo-sqlite'
+		}),
+		notifyConnectionsChanged: () => calls.push('connectionsChanged'),
+		refreshConnections: async options => calls.push(`refresh:${JSON.stringify(options)}`),
+		notifySuccess: message => calls.push(`notify:${message}`)
+	});
+
+	assert.deepEqual(calls, [
+		'connectionsChanged',
+		'refresh:{"revealConnectionId":"demo-sqlite"}',
+		'notify:Demo SQLite database created: /data/demo.db'
+	]);
 });
 
 test('createSqlProductStartupPlan can skip layout restore while keeping onboarding', () => {

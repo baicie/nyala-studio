@@ -30,6 +30,7 @@ test('normalizeSqlProductPreferences normalizes booleans and numbers', () => {
 		autoSaveEditorDrafts: false,
 		resultMaxRows: 20_000,
 		maxRestoredEditorDrafts: 100,
+		resultRenderer: 'zeus-preview',
 		defaultQuery: 'SELECT 2;'
 	});
 
@@ -39,6 +40,7 @@ test('normalizeSqlProductPreferences normalizes booleans and numbers', () => {
 	assert.equal(preferences.autoSaveEditorDrafts, false);
 	assert.equal(preferences.resultMaxRows, 10_000);
 	assert.equal(preferences.maxRestoredEditorDrafts, 50);
+	assert.equal(preferences.resultRenderer, 'zeus-preview');
 	assert.equal(preferences.defaultQuery, 'SELECT 2;');
 });
 
@@ -57,12 +59,14 @@ test('normalizeSqlProductPreferences keeps fallback for invalid values', () => {
 		restoreSqlLayoutOnStartup: 'bad',
 		resultMaxRows: Number.NaN,
 		maxRestoredEditorDrafts: Number.POSITIVE_INFINITY,
+		resultRenderer: 'unsupported',
 		defaultQuery: '   '
 	});
 
 	assert.equal(preferences.restoreSqlLayoutOnStartup, DEFAULT_SQL_PRODUCT_PREFERENCES.restoreSqlLayoutOnStartup);
 	assert.equal(preferences.resultMaxRows, DEFAULT_SQL_PRODUCT_PREFERENCES.resultMaxRows);
 	assert.equal(preferences.maxRestoredEditorDrafts, DEFAULT_SQL_PRODUCT_PREFERENCES.maxRestoredEditorDrafts);
+	assert.equal(preferences.resultRenderer, DEFAULT_SQL_PRODUCT_PREFERENCES.resultRenderer);
 	assert.equal(preferences.defaultQuery, DEFAULT_SQL_PRODUCT_PREFERENCES.defaultQuery);
 });
 
@@ -81,6 +85,7 @@ test('serializeSqlProductPreferences and deserializeSqlProductPreferences round 
 
 	assert.equal(restored.restoreSqlLayoutOnStartup, false);
 	assert.equal(restored.resultMaxRows, 500);
+	assert.equal(restored.resultRenderer, DEFAULT_SQL_PRODUCT_PREFERENCES.resultRenderer);
 });
 
 test('deserializeSqlProductPreferences rejects unknown document', () => {
@@ -97,6 +102,11 @@ test('updateSqlProductPreference updates one preference', () => {
 
 	assert.equal(next.restoreSqlLayoutOnStartup, false);
 	assert.equal(next.openWelcomeQueryOnFirstLaunch, DEFAULT_SQL_PRODUCT_PREFERENCES.openWelcomeQueryOnFirstLaunch);
+
+	assert.equal(
+		updateSqlProductPreference(DEFAULT_SQL_PRODUCT_PREFERENCES, 'resultRenderer', 'zeus-preview').resultRenderer,
+		'zeus-preview'
+	);
 });
 
 test('resetSqlProductPreferences returns defaults', () => {
@@ -110,5 +120,6 @@ test('getSqlProductPreferenceLabel returns labels', () => {
 	assert.equal(getSqlProductPreferenceLabel('autoSaveEditorDrafts'), 'Auto save editor drafts');
 	assert.equal(getSqlProductPreferenceLabel('resultMaxRows'), 'Max result rows');
 	assert.equal(getSqlProductPreferenceLabel('maxRestoredEditorDrafts'), 'Max restored editor drafts');
+	assert.equal(getSqlProductPreferenceLabel('resultRenderer'), 'Result grid renderer');
 	assert.equal(getSqlProductPreferenceLabel('defaultQuery'), 'Default query');
 });

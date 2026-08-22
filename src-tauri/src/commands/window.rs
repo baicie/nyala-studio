@@ -124,7 +124,7 @@ pub fn restore_and_show(app: &tauri::App, db: &StorageDb) {
     if let Ok(Some(json)) = db.get(WINDOW_STATE_KEY) {
         if let Ok(state) = serde_json::from_str::<WindowState>(&json) {
             // Only restore if the frame lands on an available monitor.
-            let on_screen = app.available_monitors().ok().is_some_and(|monitors| {
+            let on_screen = app.available_monitors().is_ok_and(|monitors| {
                 monitors.iter().any(|m| {
                     let pos = m.position();
                     let size = m.size();

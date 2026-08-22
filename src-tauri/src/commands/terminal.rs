@@ -600,10 +600,7 @@ pub fn get_shell_integration_dir(app: tauri::AppHandle) -> Result<String, String
 #[tauri::command]
 #[allow(clippy::too_many_lines, clippy::needless_pass_by_value)]
 pub fn setup_zsh_dotdir(app: tauri::AppHandle) -> Result<String, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {e}"))?;
+    let data_dir = super::os::resolve_app_data_dir(&app)?;
     let zdotdir = data_dir.join("zsh-integration");
     std::fs::create_dir_all(&zdotdir).map_err(|e| format!("Failed to create zdotdir: {e}"))?;
 
