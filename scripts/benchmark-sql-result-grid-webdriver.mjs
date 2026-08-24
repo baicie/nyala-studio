@@ -8,8 +8,10 @@ import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+	applyWindowRectAndObserveCssViewport,
 	convergeWindowRectForCssViewport,
 	createEmbeddedWebdriverSession,
+	evaluateViaDirectEval,
 	identifyEmbeddedWebview,
 	launchTauriEmbeddedWebdriver,
 	unwrapWebdriverValue,
@@ -179,14 +181,14 @@ async function run() {
 			const url = `${benchmarkServer.url}?${new URLSearchParams(query)}`;
 			await webdriverRequest(driverUrl, `/session/${sessionId}/url`, 'POST', { url });
 			await waitForNavigation(driverUrl, sessionId, url);
-			const viewportCalibration = await calibrateCssViewport(driverUrl, sessionId, workload);
+			const viewportCalibration = await calibrateCssViewport(driverUrl, sessionId, workload, Boolean(appBinary));
 			if (!viewportCalibration.viewportConverged) {
 				throw new Error(
 					`CSS viewport did not converge for ${workload.id}: observed ${viewportCalibration.observedCssViewport.width}x${viewportCalibration.observedCssViewport.height}`
 				);
 			}
-			await startDeferredBenchmark(driverUrl, sessionId);
-			const record = await waitForResult(driverUrl, sessionId, {
+			await startDeferredBenchmark(driverUrl, sessionId, Boolean(appBinary));
+			const record = await waitForResult(driverUrl, sessionId, Boolean(appBinary), {
 				runToken,
 				renderer,
 				executionOrder: EXECUTION_ORDER,
@@ -392,27 +394,30 @@ async function createExternalSession(baseUrl, browserName) {
 	return { sessionId };
 }
 
-async function calibrateCssViewport(baseUrl, sessionId, workload) {
+async function calibrateCssViewport(baseUrl, sessionId, workload, embedded) {
 	return convergeWindowRectForCssViewport(
 		{ width: workload.width, height: workload.height },
-		async requestedWindowRect => {
-			const appliedPayload = await webdriverRequest(baseUrl, `/session/${sessionId}/window/rect`, 'POST', {
-				width: requestedWindowRect.width,
-				height: requestedWindowRect.height
-			});
-			let appliedWindowRect = normalizeWindowRect(unwrapWebdriverValue(appliedPayload));
-			if (!appliedWindowRect) {
-				const observedPayload = await webdriverRequest(baseUrl, `/session/${sessionId}/window/rect`);
-				appliedWindowRect = normalizeWindowRect(unwrapWebdriverValue(observedPayload));
-			}
-			if (!appliedWindowRect) throw new Error('WebDriver did not return an applied window rect.');
-			await delay(250);
-			const observed = await readCssViewport(baseUrl, sessionId);
-			return {
-				appliedWindowRect,
-				observedCssViewport: { width: observed.width, height: observed.height }
-			};
-		},
+		requestedWindowRect =>
+			applyWindowRectAndObserveCssViewport(requestedWindowRect, {
+				applyWindowRect: async appliedRequest => {
+					const appliedPayload = await webdriverRequest(baseUrl, `/session/${sessionId}/window/rect`, 'POST', {
+						width: appliedRequest.width,
+						height: appliedRequest.height
+					});
+					let appliedWindowRect = normalizeWindowRect(unwrapWebdriverValue(appliedPayload));
+					if (!appliedWindowRect) {
+						const observedPayload = await webdriverRequest(baseUrl, `/session/${sessionId}/window/rect`);
+						appliedWindowRect = normalizeWindowRect(unwrapWebdriverValue(observedPayload));
+					}
+					if (!appliedWindowRect) throw new Error('WebDriver did not return an applied window rect.');
+					return appliedWindowRect;
+				},
+				observeCssViewport: async () => {
+					const observed = await readCssViewport(baseUrl, sessionId, embedded);
+					return { width: observed.width, height: observed.height };
+				},
+				settleMs: 250
+			}),
 		{ maxAttempts: 4, tolerance: 1, initialWindowRect: { width: workload.width, height: workload.height } }
 	);
 }
@@ -440,8 +445,16 @@ async function resetPageForViewportCalibration(baseUrl, sessionId, embedded) {
 	throw new Error(`Timed out waiting for viewport calibration reset: ${blankUrl}`);
 }
 
-async function startDeferredBenchmark(baseUrl, sessionId) {
-	await executeSyncScript(baseUrl, sessionId, "window.dispatchEvent(new Event('nyala-benchmark-start')); return true;");
+async function startDeferredBenchmark(baseUrl, sessionId, embedded) {
+	const expression = "window.dispatchEvent(new Event('nyala-benchmark-start')), true";
+	if (embedded) {
+		await evaluateViaDirectEval(baseUrl, expression, { timeoutMs: scriptTimeoutMs });
+		return;
+	}
+	await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
+		script: `return (${expression});`,
+		args: []
+	});
 }
 
 function normalizeWindowRect(value) {
@@ -451,12 +464,20 @@ function normalizeWindowRect(value) {
 	return { width: value.width, height: value.height };
 }
 
-async function readCssViewport(baseUrl, sessionId) {
-	const viewport = await executeSyncScript(
-		baseUrl,
-		sessionId,
-		'return { width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio };'
-	);
+async function readCssViewport(baseUrl, sessionId, embedded) {
+	const viewport = embedded
+		? await evaluateViaDirectEval(
+				baseUrl,
+				'({ width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio })',
+				{ timeoutMs: scriptTimeoutMs }
+			)
+		: unwrapWebdriverValue(
+				await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
+					script:
+						'return { width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio };',
+					args: []
+				})
+			);
 	if (
 		!Number.isFinite(viewport?.width) ||
 		viewport.width <= 0 ||
@@ -494,15 +515,18 @@ async function setSessionTimeouts(baseUrl, sessionId, scriptMs) {
 	});
 }
 
-async function waitForResult(baseUrl, sessionId, expected) {
+async function waitForResult(baseUrl, sessionId, embedded, expected) {
 	const deadline = Date.now() + scriptTimeoutMs;
 	let lastMismatch;
 	while (Date.now() < deadline) {
-		const text = await executeSyncScript(
-			baseUrl,
-			sessionId,
-			"return document.querySelector('#benchmark-result')?.textContent || '';"
-		);
+		const text = embedded
+			? await readBenchmarkResultViaDirectEval(baseUrl)
+			: unwrapWebdriverValue(
+					await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
+						script: "return document.querySelector('#benchmark-result')?.textContent || '';",
+						args: []
+					})
+				);
 		if (typeof text === 'string' && text.trim()) {
 			const result = JSON.parse(text);
 			if (
@@ -518,14 +542,10 @@ async function waitForResult(baseUrl, sessionId, expected) {
 	throw new Error(`Timed out waiting for benchmark result.${lastMismatch ? ` ${lastMismatch}` : ''}`);
 }
 
-async function executeSyncScript(baseUrl, sessionId, script) {
-	return unwrapWebdriverValue(
-		await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', { script, args: [] })
-	);
-}
-
-function delay(milliseconds) {
-	return new Promise(resolveDelay => setTimeout(resolveDelay, milliseconds));
+async function readBenchmarkResultViaDirectEval(baseUrl) {
+	return evaluateViaDirectEval(baseUrl, "document.querySelector('#benchmark-result')?.textContent || ''", {
+		timeoutMs: scriptTimeoutMs
+	});
 }
 
 async function saveScreenshot(baseUrl, sessionId, path, browserViewport, runToken) {
@@ -646,10 +666,10 @@ function validateVisualProbe(record, workload) {
 		renderedRowsValid &&
 		probe.outerDocumentOverflowFree === true &&
 		probe.runMarkerAnchored === true &&
-		probe.documentViewport?.clientWidth === workload.width &&
-		probe.documentViewport?.clientHeight === workload.height &&
-		probe.documentViewport?.scrollWidth === workload.width &&
-		probe.documentViewport?.scrollHeight === workload.height &&
+		probe.documentViewport?.clientWidth === record.browserViewport?.width &&
+		probe.documentViewport?.clientHeight === record.browserViewport?.height &&
+		probe.documentViewport?.scrollWidth === record.browserViewport?.width &&
+		probe.documentViewport?.scrollHeight === record.browserViewport?.height &&
 		Number.isInteger(probe.visibleTextLength) &&
 		probe.visibleTextLength > 0;
 	return {

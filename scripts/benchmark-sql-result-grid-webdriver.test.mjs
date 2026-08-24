@@ -7,9 +7,12 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import {
+	applyWindowRectAndObserveCssViewport,
 	createEmbeddedWebdriverSession,
+	evaluateViaDirectEval,
 	identifyEmbeddedWebview,
 	parseLoopbackDriverUrl,
+	wrapDirectEvalExpression,
 	webdriverRequest
 } from './tauri-embedded-webdriver.mjs';
 import {
@@ -33,9 +36,9 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /waitForNavigation/);
 	assert.match(source, /setSessionTimeouts/);
 	assert.match(source, /script-timeout-ms/);
-	assert.match(source, /executeSyncScript/);
-	assert.doesNotMatch(source, /readBenchmarkResultViaDirectEval/);
-	assert.doesNotMatch(source, /\/wdio\/eval/);
+	assert.match(source, /evaluateViaDirectEval/);
+	assert.match(source, /readBenchmarkResultViaDirectEval/);
+	assert.doesNotMatch(source, /executeSyncScript/);
 	assert.match(source, /Nyala SQL result grid benchmark/);
 	assert.match(source, /validateVisualProbe/);
 	assert.match(source, /firstVisibleCellText/);
@@ -68,14 +71,16 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 		/await waitForNavigation\(driverUrl, sessionId, url\);\s*const viewportCalibration = await calibrateCssViewport/
 	);
 	assert.match(source, /deferStart: 'true'/);
-	assert.match(source, /await startDeferredBenchmark\(driverUrl, sessionId\)/);
+	assert.match(source, /await startDeferredBenchmark\(driverUrl, sessionId, Boolean\(appBinary\)\)/);
+	assert.match(source, /window\.dispatchEvent\(new Event\('nyala-benchmark-start'\)\), true/);
 	assert.match(source, /hasBenchmarkResult: Boolean\(document\.querySelector\("#benchmark-result"\)\)/);
 	assert.match(
 		source,
 		/if \(embedded\) \{\s*const urlPayload = await webdriverRequest\(baseUrl, `\/session\/\$\{sessionId\}\/url`\)/s
 	);
 	assert.match(source, /readCssViewport/);
-	assert.match(source, /await delay\(250\);\s*const observed = await readCssViewport/s);
+	assert.match(source, /applyWindowRectAndObserveCssViewport/);
+	assert.match(source, /settleMs: 250/);
 	assert.match(source, /viewportCalibration/);
 	assert.match(source, /devicePixelRatio/);
 	assert.match(source, /randomUUID/);
@@ -83,6 +88,106 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.doesNotMatch(source, /window\/rect[^\n]*\.catch/);
 	assert.match(source, /sha256: createHash\('sha256'\)/);
 	assert.match(source, /screenshots\.push\(\{/);
+});
+
+test('CSS viewport observation waits for the native resize to settle', async () => {
+	let viewport = { width: 1424, height: 412 };
+	const calls = [];
+	const observation = await applyWindowRectAndObserveCssViewport(
+		{ width: 1456, height: 428 },
+		{
+			applyWindowRect: async requestedWindowRect => {
+				calls.push(['apply', requestedWindowRect]);
+				return requestedWindowRect;
+			},
+			wait: async milliseconds => {
+				calls.push(['settle', milliseconds]);
+				viewport = { width: 1440, height: 420 };
+			},
+			observeCssViewport: async () => {
+				calls.push(['observe', viewport]);
+				return viewport;
+			},
+			settleMs: 250
+		}
+	);
+
+	assert.deepEqual(calls, [
+		['apply', { width: 1456, height: 428 }],
+		['settle', 250],
+		['observe', { width: 1440, height: 420 }]
+	]);
+	assert.deepEqual(observation, {
+		appliedWindowRect: { width: 1456, height: 428 },
+		observedCssViewport: { width: 1440, height: 420 }
+	});
+});
+
+test('embedded direct eval executes the deferred benchmark start as one expression', () => {
+	const expression = "window.dispatchEvent(new Event('nyala-benchmark-start')), true";
+	const callbacks = [];
+	const dispatched = [];
+	const execute = new Function('window', 'Event', wrapDirectEvalExpression(expression));
+	class TestEvent {
+		constructor(type) {
+			this.type = type;
+		}
+	}
+
+	execute({ dispatchEvent: event => dispatched.push(event.type) }, TestEvent, payload => callbacks.push(payload));
+
+	assert.deepEqual(dispatched, ['nyala-benchmark-start']);
+	assert.deepEqual(callbacks, [{ ok: true, value: true }]);
+	assert.throws(
+		() => wrapDirectEvalExpression("window.dispatchEvent(new Event('nyala-benchmark-start')); true"),
+		/valid JavaScript expression/
+	);
+});
+
+test('embedded direct eval reports expression failures through its callback', () => {
+	const callbacks = [];
+	const execute = new Function(wrapDirectEvalExpression('(() => { throw new Error("direct-eval-boom") })()'));
+	execute(payload => callbacks.push(payload));
+	assert.deepEqual(callbacks, [{ ok: false, error: 'Error: direct-eval-boom' }]);
+});
+
+test('embedded direct eval sends a bounded request to the main window', async () => {
+	let requestBody;
+	const server = createServer(async (request, response) => {
+		const chunks = [];
+		for await (const chunk of request) chunks.push(chunk);
+		requestBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+		assert.equal(request.method, 'POST');
+		assert.equal(request.url, '/wdio/eval');
+		response.setHeader('content-type', 'application/json');
+		response.end(JSON.stringify({ value: 'direct-eval-result' }));
+	});
+	await new Promise((resolveListen, rejectListen) => {
+		server.once('error', rejectListen);
+		server.listen(0, '127.0.0.1', () => {
+			server.off('error', rejectListen);
+			resolveListen();
+		});
+	});
+	const address = server.address();
+	assert.ok(address && typeof address !== 'string');
+	try {
+		const result = await evaluateViaDirectEval(
+			`http://127.0.0.1:${address.port}`,
+			"document.querySelector('#benchmark-result')?.textContent || ''",
+			{ timeoutMs: 1_234 }
+		);
+		assert.equal(result, 'direct-eval-result');
+		assert.equal(requestBody.window_label, 'main');
+		assert.equal(requestBody.timeout_ms, 1_234);
+		assert.equal(
+			requestBody.script,
+			wrapDirectEvalExpression("document.querySelector('#benchmark-result')?.textContent || ''")
+		);
+	} finally {
+		server.closeAllConnections();
+		await new Promise(resolveClose => server.close(resolveClose));
+	}
 });
 
 test('embedded WebDriver session creation waits for the native main window', async () => {
@@ -237,6 +342,9 @@ test('Chromium benchmark emits a reusable page without outer document scrollbars
 		]);
 		const source = await readFile(page, 'utf8');
 		assert.match(source, /html, body \{ width: 100%; height: 100%; margin: 0; overflow: hidden;/);
+		assert.match(source, /#root \{ width: 100vw; height: 100vh; overflow: hidden; \}/);
+		assert.doesNotMatch(source, /document\.documentElement\.style\.(?:width|height) = viewport/);
+		assert.doesNotMatch(source, /root\.style\.(?:width|height) = viewport/);
 		assert.match(source, /#benchmark-result \{ display: none; \}/);
 		assert.match(source, /formatBenchmarkError/);
 		assert.match(source, /runMarkerAnchored: !screenshotRunMarkerHex \|\| Boolean/);

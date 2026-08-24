@@ -571,10 +571,6 @@ ${isValidVisibleRowIndex.toString()}
 ${maximumVirtualRenderedRows.toString()}
 ${waitForPresentationOpportunity.toString()}
 const workload = { rows: rowCount, columns: columnCount, wide, viewportWidth, viewportHeight };
-document.documentElement.style.width = viewportWidth + 'px';
-document.documentElement.style.height = viewportHeight + 'px';
-document.body.style.width = viewportWidth + 'px';
-document.body.style.height = viewportHeight + 'px';
 
 function createFixture() {
   const columns = Array.from({ length: columnCount }, (_, index) => ({
@@ -955,7 +951,6 @@ async function renderZeus(root, rows, columns) {
 
 async function main() {
   const root = document.getElementById('root');
-  root.style.width = viewportWidth + 'px'; root.style.height = viewportHeight + 'px';
 	if (renderer === 'workbench-table' && workbenchTableImplementation === 'real') {
 		await waitForRealWorkbenchTableBundle();
 	}

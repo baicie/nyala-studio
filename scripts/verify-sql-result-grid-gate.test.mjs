@@ -685,6 +685,37 @@ test('Z1.3 verifier accepts embedded WKWebView and WebView2 evidence', async () 
 	}
 });
 
+test('Z1.3 verifier accepts contained document geometry at the calibrated viewport tolerance', async () => {
+	const tempRoot = await mkdtemp(join(tmpdir(), 'nyala-z1-viewport-tolerance-test-'));
+	try {
+		const evidencePath = join(tempRoot, 'platform-evidence.json');
+		const outputPath = join(tempRoot, 'gate.json');
+		const benchmarkPath = await writeSyntheticBenchmark(tempRoot);
+		const evidence = await createEmbeddedPlatformEvidence(tempRoot);
+		const record = evidence.windowsWebView2.records.find(
+			candidate =>
+				candidate.workloadId === 'narrow-panel' && candidate.renderer === 'workbench-table' && candidate.iteration === 2
+		);
+		assert.ok(record);
+		record.browserViewport.width = 391;
+		record.visualProbe.documentViewport.clientWidth = 391;
+		record.visualProbe.documentViewport.scrollWidth = 391;
+		record.viewportCalibration.observedCssViewport.width = 391;
+		record.viewportCalibration.calibrationAttempts.at(-1).observedCssViewport.width = 391;
+		await writeFile(evidencePath, `${JSON.stringify(evidence)}\n`, 'utf8');
+
+		const { stdout } = await execFileAsync(process.execPath, [verifierPath, benchmarkPath, outputPath], {
+			env: gateEnv(tempRoot, evidencePath),
+			cwd: new URL('..', import.meta.url).pathname
+		});
+		assert.match(stdout, /GO:/);
+		const report = JSON.parse(await readFile(outputPath, 'utf8'));
+		assert.equal(report.decision, 'GO');
+	} finally {
+		await rm(tempRoot, { recursive: true, force: true });
+	}
+});
+
 test('Z1.3 verifier cannot issue GO without trusted expected workflow provenance', async () => {
 	const tempRoot = await mkdtemp(join(tmpdir(), 'nyala-z1-trusted-provenance-test-'));
 	try {

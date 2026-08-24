@@ -991,10 +991,10 @@ function hasValidVisualProbe(record, workload) {
 		renderedRowsValid &&
 		probe.outerDocumentOverflowFree === true &&
 		probe.runMarkerAnchored === true &&
-		probe.documentViewport?.clientWidth === workload.width &&
-		probe.documentViewport?.clientHeight === workload.height &&
-		probe.documentViewport?.scrollWidth === workload.width &&
-		probe.documentViewport?.scrollHeight === workload.height &&
+		probe.documentViewport?.clientWidth === record.browserViewport?.width &&
+		probe.documentViewport?.clientHeight === record.browserViewport?.height &&
+		probe.documentViewport?.scrollWidth === record.browserViewport?.width &&
+		probe.documentViewport?.scrollHeight === record.browserViewport?.height &&
 		Number.isInteger(probe.visibleTextLength) &&
 		probe.visibleTextLength > 0
 	);
