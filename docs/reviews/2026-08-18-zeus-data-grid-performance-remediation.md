@@ -332,8 +332,9 @@ beta.4 相对 beta.3 的上游收口如下：
 - core 新增独立 `@zeus-js/signal/diagnostics` opt-in 入口，计数 effect/scope/ref/memo/proxy 及聚合
   allocation create/dispose；inactive effect/scope 保持原 prototype fast path，scheduler 完全未改。
 - PR #37 与 Zeus PR #88 的 GitHub review 列表为空，但两边 required CI 全绿；独立五轴只读审查未发现
-  P0/P1。残余非阻塞边界是 generated wrapper `.d.ts` 仍把 `diagnostics` 扩为
-  `Record<string, unknown>`。
+  P0/P1。beta.4 发布的 WC、JSX、React 与 Vue `.d.ts` 均完整保留 `DataGridDiagnostics`，包括
+  `rowIndexEntryCount`、`eagerRowWrapperAllocationCount`、`inputTime` 与
+  `rowWrapperAllocationCount`。
 
 完成审计另在同一 host 临时安装已发布的 `@zeus-js/signal@0.1.1-beta.1` 与 beta.2，用 ABBA 顺序、
 每 case 30 paired rounds、三个独立进程比较 diagnostics inactive path。三次 paired median overhead 中，
@@ -748,8 +749,9 @@ correctness blocks 与 wide/narrow guard 分开报告。
 2. **已完成：**修复 zeus-ui published-package smoke，由 Actions 发布 beta.4 并取得全绿 publish evidence；
    exact pin Zeus core beta.2，两个仓库均未修改 `latest`。
 3. **已完成既定范围：**Data Grid 补真实 input timestamp 与 wrapper/node diagnostics；core 补
-   effect/proxy/scope/ref/memo/allocation create/dispose counters并保持 scheduler 不变。generated wrapper
-   diagnostics d.ts 收窄仍是非阻塞后续；inactive published-package 差分微基准已记录，但尚未注册为 CI gate。
+   effect/proxy/scope/ref/memo/allocation create/dispose counters 并保持 scheduler 不变；published WC、JSX、
+   React 与 Vue 声明均强类型公开完整 `DataGridDiagnostics`。inactive published-package 差分微基准已记录，
+   但尚未注册为 CI gate。
 4. **已完成：**消除 Data Grid eager O(N) row wrappers、duplicate-key second `Set` 和导航 `findIndex`
    热点；10k/100k、focus、sort、replacement 与 allocation tests 已覆盖。
 5. **已完成有限范围：**core `@once` 与 keyed `For` 已发布；在新的 allocation/CPU 证据出现前不再盲目

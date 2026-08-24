@@ -386,8 +386,9 @@ O(1) row-key/column-id lookup、真实 input timestamp 与 wrapper allocation di
 benchmark 为 0 eager wrappers / 16 viewport wrappers。core
 [PR #88](https://github.com/baicie/zeus/pull/88) 增加 opt-in effect/proxy/scope/ref/memo/allocation
 create/dispose counters，inactive instances 保持 prototype fast path，scheduler 未改。两 PR 的 required
-CI 全绿；GitHub reviews 为空，独立只读审查没有 P0/P1。非阻塞边界是 generated wrapper d.ts 仍把
-`diagnostics` 扩为 `Record<string, unknown>`。
+CI 全绿；GitHub reviews 为空，独立只读审查没有 P0/P1。beta.4 发布的 WC、JSX、React 与 Vue `.d.ts`
+均完整保留 `DataGridDiagnostics`，包括 `rowIndexEntryCount`、`eagerRowWrapperAllocationCount`、
+`inputTime` 与 `rowWrapperAllocationCount`。
 
 完成审计在同一 host 对已发布 beta.1/beta.2 做三次 ABBA inactive-path 差分微基准；每 case 30 paired
 rounds。最差稳定 paired median 是 scope create/stop `+2.94%`，memo 最多 `+0.60%`，effect/proxy/ref
