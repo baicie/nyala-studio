@@ -179,14 +179,14 @@ async function run() {
 			const url = `${benchmarkServer.url}?${new URLSearchParams(query)}`;
 			await webdriverRequest(driverUrl, `/session/${sessionId}/url`, 'POST', { url });
 			await waitForNavigation(driverUrl, sessionId, url);
-			const viewportCalibration = await calibrateCssViewport(driverUrl, sessionId, workload, Boolean(appBinary));
+			const viewportCalibration = await calibrateCssViewport(driverUrl, sessionId, workload);
 			if (!viewportCalibration.viewportConverged) {
 				throw new Error(
 					`CSS viewport did not converge for ${workload.id}: observed ${viewportCalibration.observedCssViewport.width}x${viewportCalibration.observedCssViewport.height}`
 				);
 			}
-			await startDeferredBenchmark(driverUrl, sessionId, Boolean(appBinary));
-			const record = await waitForResult(driverUrl, sessionId, Boolean(appBinary), {
+			await startDeferredBenchmark(driverUrl, sessionId);
+			const record = await waitForResult(driverUrl, sessionId, {
 				runToken,
 				renderer,
 				executionOrder: EXECUTION_ORDER,
@@ -392,7 +392,7 @@ async function createExternalSession(baseUrl, browserName) {
 	return { sessionId };
 }
 
-async function calibrateCssViewport(baseUrl, sessionId, workload, embedded) {
+async function calibrateCssViewport(baseUrl, sessionId, workload) {
 	return convergeWindowRectForCssViewport(
 		{ width: workload.width, height: workload.height },
 		async requestedWindowRect => {
@@ -406,7 +406,8 @@ async function calibrateCssViewport(baseUrl, sessionId, workload, embedded) {
 				appliedWindowRect = normalizeWindowRect(unwrapWebdriverValue(observedPayload));
 			}
 			if (!appliedWindowRect) throw new Error('WebDriver did not return an applied window rect.');
-			const observed = await readCssViewport(baseUrl, sessionId, embedded);
+			await delay(250);
+			const observed = await readCssViewport(baseUrl, sessionId);
 			return {
 				appliedWindowRect,
 				observedCssViewport: { width: observed.width, height: observed.height }
@@ -439,16 +440,8 @@ async function resetPageForViewportCalibration(baseUrl, sessionId, embedded) {
 	throw new Error(`Timed out waiting for viewport calibration reset: ${blankUrl}`);
 }
 
-async function startDeferredBenchmark(baseUrl, sessionId, embedded) {
-	const expression = "window.dispatchEvent(new Event('nyala-benchmark-start')); true";
-	if (embedded) {
-		await evaluateViaDirectEval(baseUrl, expression);
-		return;
-	}
-	await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
-		script: `return ${expression};`,
-		args: []
-	});
+async function startDeferredBenchmark(baseUrl, sessionId) {
+	await executeSyncScript(baseUrl, sessionId, "window.dispatchEvent(new Event('nyala-benchmark-start')); return true;");
 }
 
 function normalizeWindowRect(value) {
@@ -458,19 +451,12 @@ function normalizeWindowRect(value) {
 	return { width: value.width, height: value.height };
 }
 
-async function readCssViewport(baseUrl, sessionId, embedded) {
-	const viewport = embedded
-		? await evaluateViaDirectEval(
-				baseUrl,
-				'({ width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio })'
-			)
-		: unwrapWebdriverValue(
-				await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
-					script:
-						'return { width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio };',
-					args: []
-				})
-			);
+async function readCssViewport(baseUrl, sessionId) {
+	const viewport = await executeSyncScript(
+		baseUrl,
+		sessionId,
+		'return { width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio };'
+	);
 	if (
 		!Number.isFinite(viewport?.width) ||
 		viewport.width <= 0 ||
@@ -508,18 +494,15 @@ async function setSessionTimeouts(baseUrl, sessionId, scriptMs) {
 	});
 }
 
-async function waitForResult(baseUrl, sessionId, embedded, expected) {
+async function waitForResult(baseUrl, sessionId, expected) {
 	const deadline = Date.now() + scriptTimeoutMs;
 	let lastMismatch;
 	while (Date.now() < deadline) {
-		const text = embedded
-			? await readBenchmarkResultViaDirectEval(baseUrl)
-			: unwrapWebdriverValue(
-					await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
-						script: "return document.querySelector('#benchmark-result')?.textContent || '';",
-						args: []
-					})
-				);
+		const text = await executeSyncScript(
+			baseUrl,
+			sessionId,
+			"return document.querySelector('#benchmark-result')?.textContent || '';"
+		);
 		if (typeof text === 'string' && text.trim()) {
 			const result = JSON.parse(text);
 			if (
@@ -535,27 +518,14 @@ async function waitForResult(baseUrl, sessionId, embedded, expected) {
 	throw new Error(`Timed out waiting for benchmark result.${lastMismatch ? ` ${lastMismatch}` : ''}`);
 }
 
-async function readBenchmarkResultViaDirectEval(baseUrl) {
-	return evaluateViaDirectEval(baseUrl, "document.querySelector('#benchmark-result')?.textContent || ''");
+async function executeSyncScript(baseUrl, sessionId, script) {
+	return unwrapWebdriverValue(
+		await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', { script, args: [] })
+	);
 }
 
-async function evaluateViaDirectEval(baseUrl, expression) {
-	const done = 'arguments[arguments.length - 1]';
-	const payload = await webdriverRequest(
-		baseUrl,
-		'/wdio/eval',
-		'POST',
-		{
-			script: `try { ${done}({ ok: true, value: (${expression}) }); } catch (error) { ${done}({ ok: false, error: String(error) }); }`,
-			window_label: 'main',
-			timeout_ms: scriptTimeoutMs
-		},
-		{ timeoutMs: scriptTimeoutMs + 5_000 }
-	);
-	if (payload.error) {
-		throw new Error(`Embedded WebDriver direct eval failed: ${JSON.stringify(payload).slice(0, 1_000)}`);
-	}
-	return payload.value;
+function delay(milliseconds) {
+	return new Promise(resolveDelay => setTimeout(resolveDelay, milliseconds));
 }
 
 async function saveScreenshot(baseUrl, sessionId, path, browserViewport, runToken) {

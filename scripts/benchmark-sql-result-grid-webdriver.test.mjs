@@ -33,8 +33,9 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /waitForNavigation/);
 	assert.match(source, /setSessionTimeouts/);
 	assert.match(source, /script-timeout-ms/);
-	assert.match(source, /readBenchmarkResultViaDirectEval/);
-	assert.match(source, /\/wdio\/eval/);
+	assert.match(source, /executeSyncScript/);
+	assert.doesNotMatch(source, /readBenchmarkResultViaDirectEval/);
+	assert.doesNotMatch(source, /\/wdio\/eval/);
 	assert.match(source, /Nyala SQL result grid benchmark/);
 	assert.match(source, /validateVisualProbe/);
 	assert.match(source, /firstVisibleCellText/);
@@ -67,13 +68,14 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 		/await waitForNavigation\(driverUrl, sessionId, url\);\s*const viewportCalibration = await calibrateCssViewport/
 	);
 	assert.match(source, /deferStart: 'true'/);
-	assert.match(source, /await startDeferredBenchmark\(driverUrl, sessionId, Boolean\(appBinary\)\)/);
+	assert.match(source, /await startDeferredBenchmark\(driverUrl, sessionId\)/);
 	assert.match(source, /hasBenchmarkResult: Boolean\(document\.querySelector\("#benchmark-result"\)\)/);
 	assert.match(
 		source,
 		/if \(embedded\) \{\s*const urlPayload = await webdriverRequest\(baseUrl, `\/session\/\$\{sessionId\}\/url`\)/s
 	);
 	assert.match(source, /readCssViewport/);
+	assert.match(source, /await delay\(250\);\s*const observed = await readCssViewport/s);
 	assert.match(source, /viewportCalibration/);
 	assert.match(source, /devicePixelRatio/);
 	assert.match(source, /randomUUID/);
