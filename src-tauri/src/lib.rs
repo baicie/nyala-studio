@@ -1,3 +1,6 @@
+// Keep explicit empty-state assertions in tests without widening their diffs.
+#![cfg_attr(test, allow(unknown_lints, clippy::assert_is_empty))]
+
 mod commands;
 pub(crate) mod product;
 pub mod runtime_status;
