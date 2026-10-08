@@ -303,6 +303,22 @@ test('Checkpoint W requires verified metadata from the exact native capture work
 	});
 });
 
+test('Checkpoint W accepts GitHub run and artifact timestamps without milliseconds', async () => {
+	await withEvidence(async paths => {
+		const captureRun = createCaptureRunMetadata();
+		captureRun.run.runStartedAt = '2026-08-16T01:00:00Z';
+		captureRun.run.updatedAt = '2026-08-16T02:00:00Z';
+		for (const artifact of captureRun.artifacts) {
+			artifact.createdAt = '2026-08-16T01:30:00Z';
+			artifact.updatedAt = '2026-08-16T01:31:00Z';
+		}
+		await writeFile(paths.captureRun, `${JSON.stringify(captureRun, null, 2)}\n`, 'utf8');
+		await runVerifier(paths);
+		const report = JSON.parse(await readFile(paths.output, 'utf8'));
+		assert.equal(report.checks.find(check => check.id === 'capture-run-metadata')?.passed, true);
+	});
+});
+
 test('Checkpoint W rejects manual evidence from a different workflow run', async () => {
 	await withEvidence(async paths => {
 		const manual = createManualAttestation();

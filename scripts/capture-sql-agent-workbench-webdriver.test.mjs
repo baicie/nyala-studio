@@ -14,6 +14,7 @@ import {
 	describeUntrustedUrl,
 	evaluateAutomatedSurfaceChecks,
 	executeWorkbenchCommandAndWait,
+	initialWindowRectForNativeViewport,
 	normalizeSqlProductBootstrapOutcome,
 	shouldOpenAgentPanel,
 	validateSqlProductBootstrapOutcome,
@@ -54,6 +55,17 @@ test('native Agent surface status excludes only declared manual keyboard gates',
 test('native Agent panel command runs only when the panel is hidden', () => {
 	assert.equal(shouldOpenAgentPanel(false), true);
 	assert.equal(shouldOpenAgentPanel(true), false);
+});
+
+test('Windows narrow native capture compensates for the WebView2 one-pixel window inset', () => {
+	assert.deepEqual(initialWindowRectForNativeViewport('windows', { id: 'narrow', width: 390, height: 844 }), {
+		width: 389,
+		height: 844
+	});
+	assert.deepEqual(initialWindowRectForNativeViewport('macos', { id: 'narrow', width: 390, height: 844 }), {
+		width: 390,
+		height: 844
+	});
 });
 
 test('native Agent frontend source accepts only the configured platform asset roots', () => {
