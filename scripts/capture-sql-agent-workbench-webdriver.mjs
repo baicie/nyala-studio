@@ -429,7 +429,8 @@ async function run() {
 			},
 			{
 				maxAttempts: viewportCalibrationMaxAttempts,
-				tolerance: viewportCalibrationTolerance
+				tolerance: viewportCalibrationTolerance,
+				initialWindowRect: initialWindowRectForNativeViewport(platform, viewport)
 			}
 		);
 		return {
@@ -688,6 +689,13 @@ export function validateRequestedViewport(requested, actual, calibration) {
 		passed: viewportConverged && dimensionsMatch,
 		reason: `${requested.id} requested ${requested.width}x${requested.height}; inner viewport ${actual.width}x${actual.height}; calibration ${viewportConverged ? 'converged' : 'did not converge'}`
 	};
+}
+
+export function initialWindowRectForNativeViewport(platform, viewport) {
+	if (platform === 'windows' && viewport?.id === 'narrow') {
+		return { width: Math.max(1, viewport.width - 1), height: viewport.height };
+	}
+	return { width: viewport.width, height: viewport.height };
 }
 
 export function validateScreenshotPhysicalDimensions(

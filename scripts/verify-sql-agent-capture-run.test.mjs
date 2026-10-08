@@ -94,6 +94,37 @@ test('verifies an immutable SQL Agent native capture run and its exact artifacts
 	assert.deepEqual(report.reasons, []);
 });
 
+test('accepts GitHub API UTC timestamps without milliseconds', () => {
+	const runMetadata = createRunMetadata();
+	runMetadata.run_started_at = '2026-08-16T01:00:00Z';
+	runMetadata.updated_at = '2026-08-16T02:00:00Z';
+	const artifactMetadata = createArtifactMetadata();
+	for (const artifact of artifactMetadata.artifacts) {
+		artifact.created_at = '2026-08-16T01:30:00Z';
+		artifact.updated_at = '2026-08-16T01:31:00Z';
+	}
+	const report = verifyCaptureRunMetadata({
+		runMetadata,
+		artifactMetadata,
+		expectedRepository: repository,
+		expectedRunId: runId
+	});
+	assert.equal(report.status, 'verified');
+});
+
+test('rejects non-UTC or non-canonical capture timestamps', () => {
+	const runMetadata = createRunMetadata();
+	runMetadata.run_started_at = '2026-08-16T01:00:00+00:00';
+	const report = verifyCaptureRunMetadata({
+		runMetadata,
+		artifactMetadata: createArtifactMetadata(),
+		expectedRepository: repository,
+		expectedRunId: runId
+	});
+	assert.equal(report.status, 'blocked');
+	assert.match(report.reasons.join('\n'), /capture run timestamps are invalid/i);
+});
+
 test('rejects a run from another workflow even when its artifact names match', () => {
 	const runMetadata = createRunMetadata();
 	runMetadata.path = '.github/workflows/forged.yml';
