@@ -1,8 +1,8 @@
 .sql-agent-view {
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
-	padding: 8px;
+	gap: 5px;
+	padding: 8px 8px 0;
 	box-sizing: border-box;
 	min-width: 0;
 }
@@ -44,24 +44,39 @@
 }
 
 @media (max-width: 420px) {
+	.sql-agent-view {
+		gap: 1px;
+		padding: 4px 8px 0;
+	}
+
+	.sql-agent-prompt {
+		min-height: 28px;
+	}
+
 	.sql-agent-controls {
 		align-items: stretch;
+		row-gap: 2px;
 	}
 
 	.sql-agent-mode,
 	.sql-agent-task {
-		flex-basis: 100%;
+		flex-basis: calc(50% - 3px);
 		min-height: 28px;
 	}
 
 	.sql-agent-start,
 	.sql-agent-cancel {
 		flex: 1 1 calc(50% - 3px);
+		min-height: 24px;
+		font-size: 14px;
 	}
 }
 
 .sql-agent-status {
-	min-height: 18px;
+	min-height: 14px;
+	font-size: 12px;
+	line-height: 14px;
+	overflow-wrap: anywhere;
 	color: var(--vscode-descriptionForeground);
 }
 
@@ -72,6 +87,13 @@
 	overflow: auto;
 	padding: 6px;
 	border: 1px solid var(--vscode-panel-border);
+}
+
+.sql-agent-answer:empty,
+.sql-agent-evidence:empty,
+.sql-agent-activity:empty,
+.sql-agent-warnings:empty {
+	display: none;
 }
 
 .sql-agent-sql-draft {

@@ -121,22 +121,51 @@ export async function allocateLoopbackDriverUrl() {
 	return `http://127.0.0.1:${address.port}`;
 }
 
-export async function createEmbeddedWebdriverSession(driverUrl) {
-	const payload = await webdriverRequest(driverUrl, '/session', 'POST', {
-		capabilities: {
-			alwaysMatch: {
-				browserName: 'tauri',
-				'wdio:tauriServiceOptions': { windowLabel: 'main' }
-			}
-		}
-	});
-	const value = payload.value ?? {};
-	const sessionId = payload.sessionId ?? value.sessionId;
-	const capabilities = value.capabilities ?? payload.capabilities;
-	if (!sessionId || !capabilities || typeof capabilities !== 'object') {
-		throw new Error(`Embedded WebDriver returned an invalid session: ${JSON.stringify(payload).slice(0, 1_000)}`);
+export async function createEmbeddedWebdriverSession(
+	driverUrl,
+	{ timeoutMs = defaultTimeoutMs, retryDelayMs = 100 } = {}
+) {
+	if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+		throw new Error(`Embedded WebDriver session timeout must be a positive integer, got ${timeoutMs}`);
 	}
-	return { sessionId, capabilities };
+	if (!Number.isInteger(retryDelayMs) || retryDelayMs < 1) {
+		throw new Error(`Embedded WebDriver session retry delay must be a positive integer, got ${retryDelayMs}`);
+	}
+	const deadline = Date.now() + timeoutMs;
+	let lastError;
+	while (Date.now() < deadline) {
+		try {
+			const payload = await webdriverRequest(
+				driverUrl,
+				'/session',
+				'POST',
+				{
+					capabilities: {
+						alwaysMatch: {
+							browserName: 'tauri',
+							'wdio:tauriServiceOptions': { windowLabel: 'main' }
+						}
+					}
+				},
+				{ timeoutMs: Math.max(1, Math.min(defaultRequestTimeoutMs, deadline - Date.now())) }
+			);
+			const value = payload.value ?? {};
+			const sessionId = payload.sessionId ?? value.sessionId;
+			const capabilities = value.capabilities ?? payload.capabilities;
+			if (!sessionId || !capabilities || typeof capabilities !== 'object') {
+				throw new Error(`Embedded WebDriver returned an invalid session: ${JSON.stringify(payload).slice(0, 1_000)}`);
+			}
+			return { sessionId, capabilities };
+		} catch (error) {
+			lastError = error;
+			const reason = error instanceof Error ? error.message : String(error);
+			if (!/no such window/i.test(reason)) throw error;
+			await delay(Math.min(retryDelayMs, Math.max(1, deadline - Date.now())));
+		}
+	}
+	throw new Error(
+		`Timed out waiting for embedded WebDriver main window${lastError ? `: ${lastError instanceof Error ? lastError.message : String(lastError)}` : ''}`
+	);
 }
 
 export function identifyEmbeddedWebview(capabilities, expectedPlatform, hostPlatform = process.platform) {
@@ -204,6 +233,47 @@ export async function webdriverRequest(
 	return payload;
 }
 
+export function wrapDirectEvalExpression(expression) {
+	if (typeof expression !== 'string' || expression.trim().length === 0) {
+		throw new Error('Embedded WebDriver direct eval requires a non-empty JavaScript expression');
+	}
+	try {
+		new Function(`return (${expression});`);
+	} catch (error) {
+		throw new Error('Embedded WebDriver direct eval requires a valid JavaScript expression', { cause: error });
+	}
+	const done = 'arguments[arguments.length - 1]';
+	return `try { ${done}({ ok: true, value: (${expression}) }); } catch (error) { ${done}({ ok: false, error: String(error) }); }`;
+}
+
+export async function evaluateViaDirectEval(
+	baseUrl,
+	expression,
+	{ timeoutMs = defaultTimeoutMs, windowLabel = 'main' } = {}
+) {
+	if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+		throw new Error(`Embedded WebDriver direct eval timeout must be a positive integer, got ${timeoutMs}`);
+	}
+	if (typeof windowLabel !== 'string' || windowLabel.length === 0) {
+		throw new Error('Embedded WebDriver direct eval requires a window label');
+	}
+	const payload = await webdriverRequest(
+		baseUrl,
+		'/wdio/eval',
+		'POST',
+		{
+			script: wrapDirectEvalExpression(expression),
+			window_label: windowLabel,
+			timeout_ms: timeoutMs
+		},
+		{ timeoutMs: timeoutMs + 5_000 }
+	);
+	if (payload.error) {
+		throw new Error(`Embedded WebDriver direct eval failed: ${JSON.stringify(payload).slice(0, 1_000)}`);
+	}
+	return payload.value;
+}
+
 export function unwrapWebdriverValue(payload) {
 	return payload?.value?.value ?? payload?.value;
 }
@@ -247,6 +317,25 @@ export function calibrateWindowRectForCssViewport(
 			scaleStep
 		)
 	};
+}
+
+export async function applyWindowRectAndObserveCssViewport(
+	requestedWindowRect,
+	{ applyWindowRect, observeCssViewport, settleMs = 250, wait = delay } = {}
+) {
+	if (typeof applyWindowRect !== 'function' || typeof observeCssViewport !== 'function') {
+		throw new Error('CSS viewport observation requires window apply and viewport observe functions');
+	}
+	if (!Number.isInteger(settleMs) || settleMs < 0) {
+		throw new Error(`CSS viewport settle time must be a non-negative integer, got ${settleMs}`);
+	}
+	if (typeof wait !== 'function') {
+		throw new Error('CSS viewport observation requires a wait function');
+	}
+	const appliedWindowRect = await applyWindowRect(requestedWindowRect);
+	await wait(settleMs);
+	const observedCssViewport = await observeCssViewport();
+	return { appliedWindowRect, observedCssViewport };
 }
 
 export async function convergeWindowRectForCssViewport(

@@ -15,6 +15,9 @@ test('benchmark-only bundle contains the real WorkbenchTable factory and require
 	assert.match(bundle.javascript, /__NYALA_CREATE_WORKBENCH_TABLE_BENCHMARK__/);
 	assert.match(bundle.javascript, new RegExp(WORKBENCH_TABLE_IMPLEMENTATION_ID.replaceAll('.', '\\.')));
 	assert.match(bundle.javascript, new RegExp(WORKBENCH_TABLE_RUNTIME_PROOF));
+	assert.match(bundle.javascript, /listview-prototype-wrapper-v1/);
+	assert.match(bundle.javascript, /WorkbenchTable diagnostics require the ListView prototype\./);
+	assert.match(bundle.javascript, /WorkbenchTable diagnostics require ListView\.prototype\./);
 	assert.match(bundle.css, /\.monaco-table/);
 	assert.match(bundle.css, /\.monaco-list-row/);
 	assert.doesNotMatch(bundle.javascript, /@zeus-web\/data-grid/);

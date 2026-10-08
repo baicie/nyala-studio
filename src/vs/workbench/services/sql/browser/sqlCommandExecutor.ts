@@ -37,6 +37,7 @@ export type SqlCommandName =
 	| 'sql_list_schemas'
 	| 'sql_list_tables_v2'
 	| 'sql_list_columns_v2'
+	| 'sql_refresh_metadata'
 	// MVP vNext Agent A2.4 commands.
 	| 'sql_agent_start'
 	| 'sql_agent_run'

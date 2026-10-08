@@ -112,6 +112,11 @@ function normalizeArtifact(artifact, index, expected, reasons) {
 	const prefix = `artifact ${index}`;
 	const id = normalizeId(artifact?.id);
 	const digest = normalizeArtifactDigest(artifact?.digest);
+	const archiveUrl =
+		artifact?.archive_download_url ===
+		`https://api.github.com/repos/${expected.repository ?? '<invalid>'}/actions/artifacts/${id ?? '<invalid>'}/zip`
+			? artifact.archive_download_url
+			: undefined;
 	if (!id) reasons.push(`${prefix} id is invalid`);
 	if (!expectedArtifactNames.includes(artifact?.name)) reasons.push(`${prefix} name is unexpected`);
 	if (!positiveInteger(artifact?.size_in_bytes)) reasons.push(`${prefix} size is invalid`);
@@ -120,12 +125,7 @@ function normalizeArtifact(artifact, index, expected, reasons) {
 	if (!validOrderedTimestamps(artifact?.created_at, artifact?.updated_at)) {
 		reasons.push(`${prefix} timestamps are invalid`);
 	}
-	if (
-		artifact?.archive_download_url !==
-		`https://api.github.com/repos/${expected.repository ?? '<invalid>'}/actions/artifacts/${id ?? '<invalid>'}/zip`
-	) {
-		reasons.push(`${prefix} archive URL is invalid`);
-	}
+	if (!archiveUrl) reasons.push(`${prefix} archive URL is invalid`);
 	if (normalizeId(artifact?.workflow_run?.id) !== expected.runId) {
 		reasons.push(`${prefix} workflow run id does not match`);
 	}
@@ -140,6 +140,7 @@ function normalizeArtifact(artifact, index, expected, reasons) {
 		name: artifact?.name ?? null,
 		bytes: positiveInteger(artifact?.size_in_bytes) ? artifact.size_in_bytes : null,
 		digest: digest ?? null,
+		archiveUrl: archiveUrl ?? null,
 		createdAt: artifact?.created_at ?? null,
 		updatedAt: artifact?.updated_at ?? null
 	};
@@ -173,17 +174,23 @@ async function runCli() {
 	await mkdir(dirname(outputPath), { recursive: true });
 	await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 	if (report.status === 'verified' && cli['github-output']) {
-		await appendFile(
-			resolve(cli['github-output']),
-			[
-				`artifact_ids=${report.artifactIds.join(',')}`,
-				`source_revision=${report.provenance.sourceRevision}`,
-				`source_ref=${report.provenance.sourceRef}`,
-				`capture_run_attempt=${report.provenance.workflowRunAttempt}`,
-				''
-			].join('\n'),
-			'utf8'
-		);
+		const outputs = [
+			`artifact_ids=${report.artifactIds.join(',')}`,
+			`source_revision=${report.provenance.sourceRevision}`,
+			`source_ref=${report.provenance.sourceRef}`,
+			`capture_run_attempt=${report.provenance.workflowRunAttempt}`
+		];
+		for (const [platform, name] of [
+			['macos', expectedArtifactNames[0]],
+			['windows', expectedArtifactNames[1]]
+		]) {
+			const artifact = report.artifacts.find(candidate => candidate.name === name);
+			outputs.push(
+				`${platform}_archive_url=${artifact?.archiveUrl ?? ''}`,
+				`${platform}_archive_digest=${artifact?.digest ?? ''}`
+			);
+		}
+		await appendFile(resolve(cli['github-output']), [...outputs, ''].join('\n'), 'utf8');
 	}
 	process.stdout.write(`${report.status}: ${outputPath}\n`);
 	for (const reason of report.reasons) process.stdout.write(`- ${reason}\n`);

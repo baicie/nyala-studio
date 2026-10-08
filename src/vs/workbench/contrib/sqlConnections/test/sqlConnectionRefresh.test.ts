@@ -8,6 +8,7 @@ import test from 'node:test';
 import {
 	indexSqlRestoreSavedConnectionErrors,
 	refreshAndRequireSqlConnection,
+	refreshSqlTableMetadata,
 	restoreSavedConnectionsForRefresh,
 	SqlConnectionRefreshOptions
 } from '../common/sqlConnectionRefresh.js';
@@ -106,4 +107,21 @@ test('refreshAndRequireSqlConnection accepts a connection returned by refresh', 
 		async () => {},
 		id => id === 'demo-sqlite'
 	);
+});
+
+test('refreshSqlTableMetadata advances metadata before loading columns', async () => {
+	const calls: string[] = [];
+
+	const columns = await refreshSqlTableMetadata(
+		async () => {
+			calls.push('refresh');
+		},
+		async () => {
+			calls.push('columns');
+			return ['id'];
+		}
+	);
+
+	assert.deepEqual(calls, ['refresh', 'columns']);
+	assert.deepEqual(columns, ['id']);
 });

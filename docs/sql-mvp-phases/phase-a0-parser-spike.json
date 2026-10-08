@@ -1,0 +1,661 @@
+{
+	"version": 2,
+	"status": "complete",
+	"generatedAt": "2026-08-17T17:47:16.326Z",
+	"recordedDecision": "NO-GO",
+	"decisionReasons": [
+		"4 of 11 fixtures expose parser gaps",
+		"the release harness grows by 5836912 bytes with default parser features",
+		"the candidate does not declare rust-version; repository MSRV 1.91.0 compatibility is not_run"
+	],
+	"measurementSha256": "e08e5dbbf5b9c8cfb048b5985e281272280c74bf5d48ada044a63eb1a5ae3375",
+	"measurementDigest": {
+		"algorithm": "sha256",
+		"canonicalization": "UTF-8 bytes of JSON.stringify(measurementDigest.payload)",
+		"sha256": "e08e5dbbf5b9c8cfb048b5985e281272280c74bf5d48ada044a63eb1a5ae3375",
+		"payload": {
+			"version": 1,
+			"harness": {
+				"temporaryOnly": true,
+				"candidate": "sqlparser =0.62.0",
+				"candidateDefaultFeatures": ["std", "recursive-protection"],
+				"fixtureCount": 11,
+				"runnerScriptSha256": "d0ed9957ca2785e4b908a51004a128d17c92fbf372a844946a5ddddb759dd1e7",
+				"cargoManifest": "[package]\nname = \"nyala-sqlparser-spike\"\nversion = \"0.0.0\"\nedition = \"2021\"\nrust-version = \"1.91.0\"\nlicense = \"MIT\"\n\n[[bin]]\nname = \"nyala-sqlparser-spike\"\npath = \"src.rs\"\n\n[features]\ndefault = []\nparser = [\"dep:sqlparser\"]\n\n[dependencies]\nsqlparser = { version = \"=0.62.0\", optional = true }\n",
+				"cargoManifestSha256": "b4af79a7190061a0d0ccab4b98eedb42f297ebea8a85c2adfe5f0407aabb6662",
+				"rustSource": "#[cfg(feature = \"parser\")]\nuse sqlparser::dialect::{GenericDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};\n#[cfg(feature = \"parser\")]\nuse sqlparser::parser::Parser;\n\n#[cfg(feature = \"parser\")]\nstruct Fixture {\n    id: &'static str,\n    dialect: &'static str,\n    sql: &'static str,\n}\n\n#[cfg(not(feature = \"parser\"))]\nfn main() {\n    println!(\"parser feature disabled\");\n}\n\n#[cfg(feature = \"parser\")]\nfn main() {\n    let fixtures = [\n        Fixture { id: \"sqlite-select\", dialect: \"sqlite\", sql: \"SELECT * FROM users\" },\n        Fixture { id: \"sqlite-explain-query-plan\", dialect: \"sqlite\", sql: \"EXPLAIN QUERY PLAN SELECT * FROM users\" },\n        Fixture { id: \"sqlite-cte-select\", dialect: \"sqlite\", sql: \"WITH recent AS (SELECT * FROM orders) SELECT * FROM recent\" },\n        Fixture { id: \"sqlite-pragma-assignment\", dialect: \"sqlite\", sql: \"PRAGMA journal_mode = WAL\" },\n        Fixture { id: \"mysql-into-outfile\", dialect: \"mysql\", sql: \"SELECT * FROM users INTO OUTFILE '/tmp/users.csv'\" },\n        Fixture { id: \"mysql-lock-in-share-mode\", dialect: \"mysql\", sql: \"SELECT * FROM users LOCK IN SHARE MODE\" },\n        Fixture { id: \"mysql-versioned-comment\", dialect: \"mysql\", sql: \"/*!50000 SELECT * FROM users */\" },\n        Fixture { id: \"postgres-for-no-key-update\", dialect: \"postgresql\", sql: \"SELECT * FROM users FOR NO KEY UPDATE\" },\n        Fixture { id: \"postgres-dollar-quoted-semicolon\", dialect: \"postgresql\", sql: \"SELECT $tag$semi;colon$tag$\" },\n        Fixture { id: \"sqlite-cte-update\", dialect: \"sqlite\", sql: \"WITH stale AS (SELECT id FROM users) UPDATE users SET active = 0\" },\n        Fixture { id: \"generic-select-drop\", dialect: \"generic\", sql: \"SELECT 1; DROP TABLE users\" },\n    ];\n\n    for fixture in fixtures {\n        let parsed = match fixture.dialect {\n            \"sqlite\" => Parser::parse_sql(&SQLiteDialect {}, fixture.sql),\n            \"mysql\" => Parser::parse_sql(&MySqlDialect {}, fixture.sql),\n            \"postgresql\" => Parser::parse_sql(&PostgreSqlDialect {}, fixture.sql),\n            \"generic\" => Parser::parse_sql(&GenericDialect {}, fixture.sql),\n            _ => unreachable!(\"fixed fixture dialect\"),\n        };\n        match parsed {\n            Ok(statements) => println!(\"{}\\tparsed\\t{}\\t\", fixture.id, statements.len()),\n            Err(error) => println!(\n                \"{}\\trejected\\t0\\t{}\",\n                fixture.id,\n                error\n                    .to_string()\n                    .replace('\\t', \" \")\n                    .replace('\\n', \" \")\n                    .replace('\\r', \" \")\n            ),\n        }\n    }\n}\n",
+				"rustSourceSha256": "3f132697d9244aeb63b4cd3a53b70110428fc2c8f5138ec253ac135d1f718a49",
+				"sourceSetSha256": "dceecd0d5da33a084e67c10ea9bbd2d9dd77f94ee6f0dd0631b62eb52518642c"
+			},
+			"environment": {
+				"platform": "darwin",
+				"architecture": "arm64",
+				"rustc": [
+					"rustc 1.96.0 (ac68faa20 2026-05-25)",
+					"binary: rustc",
+					"commit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96",
+					"commit-date: 2026-05-25",
+					"host: aarch64-apple-darwin",
+					"release: 1.96.0",
+					"LLVM version: 22.1.2"
+				],
+				"cargo": [
+					"cargo 1.96.0 (30a34c682 2026-05-25)",
+					"release: 1.96.0",
+					"commit-hash: 30a34c6821b57de0aaec83a901aca39f88f6778c",
+					"commit-date: 2026-05-25",
+					"host: aarch64-apple-darwin",
+					"libgit2: 1.9.2 (sys:0.20.4 vendored)",
+					"libcurl: 8.7.1 (sys:0.4.87+curl-8.19.0 system ssl:(SecureTransport) LibreSSL/3.3.6)",
+					"ssl: OpenSSL 3.5.4 30 Sep 2025",
+					"os: Mac OS 15.7.7 [64-bit]"
+				],
+				"repositoryMsrv": "1.91.0",
+				"candidateRustVersion": null,
+				"commandTimeoutMs": 300000,
+				"buildTimeoutMs": 600000,
+				"fetchTimeoutMs": 30000,
+				"maxFetchBodyBytes": 4194304,
+				"environmentPolicy": {
+					"inheritance": "allowlist",
+					"inheritedEnvironmentKeys": [
+						"HOME",
+						"LANG",
+						"LC_ALL",
+						"LC_CTYPE",
+						"LOGNAME",
+						"PATH",
+						"SHELL",
+						"TMPDIR",
+						"USER",
+						"all_proxy",
+						"http_proxy",
+						"https_proxy"
+					],
+					"discardedBuildEnvironmentKeys": [],
+					"forcedEnvironment": {
+						"CARGO_HOME": "<TEMP>/cargo-home",
+						"CARGO_INCREMENTAL": "0",
+						"CARGO_TARGET_DIR": "<TEMP>/target",
+						"CARGO_TERM_COLOR": "never"
+					}
+				},
+				"msrv": {
+					"status": "not_run",
+					"reason": "Rust 1.91.0 toolchain is not installed",
+					"installedToolchains": [
+						"nightly-2026-08-01-aarch64-apple-darwin",
+						"1.85.0-aarch64-apple-darwin",
+						"1.88-aarch64-apple-darwin",
+						"1.88.0-aarch64-apple-darwin",
+						"1.95-aarch64-apple-darwin",
+						"1.95.0-aarch64-apple-darwin",
+						"1.96.0-aarch64-apple-darwin (active, default)"
+					]
+				}
+			},
+			"dependencyClosure": {
+				"packageCountIncludingHarness": 21,
+				"licenses": [
+					"(MIT OR Apache-2.0) AND Unicode-3.0",
+					"Apache-2.0",
+					"Apache-2.0 OR MIT",
+					"Apache-2.0 WITH LLVM-exception",
+					"MIT",
+					"MIT OR Apache-2.0",
+					"Unlicense OR MIT"
+				],
+				"packages": [
+					{
+						"name": "ar_archive_writer",
+						"version": "0.5.3",
+						"license": "Apache-2.0 WITH LLVM-exception",
+						"rustVersion": "1.88.0",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/rust-lang/ar_archive_writer"
+					},
+					{
+						"name": "cc",
+						"version": "1.4.3",
+						"license": "MIT OR Apache-2.0",
+						"rustVersion": "1.65.0",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/rust-lang/cc-rs"
+					},
+					{
+						"name": "cfg-if",
+						"version": "1.0.4",
+						"license": "MIT OR Apache-2.0",
+						"rustVersion": "1.32",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/rust-lang/cfg-if"
+					},
+					{
+						"name": "find-msvc-tools",
+						"version": "0.1.11",
+						"license": "MIT OR Apache-2.0",
+						"rustVersion": "1.65.0",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/rust-lang/cc-rs"
+					},
+					{
+						"name": "libc",
+						"version": "0.2.189",
+						"license": "MIT OR Apache-2.0",
+						"rustVersion": "1.65",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/rust-lang/libc"
+					},
+					{
+						"name": "log",
+						"version": "0.4.33",
+						"license": "MIT OR Apache-2.0",
+						"rustVersion": "1.71.0",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/rust-lang/log"
+					},
+					{
+						"name": "memchr",
+						"version": "2.8.3",
+						"license": "Unlicense OR MIT",
+						"rustVersion": "1.61",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/BurntSushi/memchr"
+					},
+					{
+						"name": "nyala-sqlparser-spike",
+						"version": "0.0.0",
+						"license": "MIT",
+						"rustVersion": "1.91.0",
+						"source": null,
+						"repository": null
+					},
+					{
+						"name": "object",
+						"version": "0.39.1",
+						"license": "Apache-2.0 OR MIT",
+						"rustVersion": "1.65",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/gimli-rs/object"
+					},
+					{
+						"name": "proc-macro2",
+						"version": "1.0.107",
+						"license": "MIT OR Apache-2.0",
+						"rustVersion": "1.71",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/dtolnay/proc-macro2"
+					},
+					{
+						"name": "psm",
+						"version": "0.1.32",
+						"license": "MIT OR Apache-2.0",
+						"rustVersion": "1.88.0",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/rust-lang/stacker/"
+					},
+					{
+						"name": "quote",
+						"version": "1.0.47",
+						"license": "MIT OR Apache-2.0",
+						"rustVersion": "1.71",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/dtolnay/quote"
+					},
+					{
+						"name": "recursive",
+						"version": "0.1.1",
+						"license": "MIT",
+						"rustVersion": null,
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/orlp/recursive"
+					},
+					{
+						"name": "recursive-proc-macro-impl",
+						"version": "0.1.1",
+						"license": "MIT",
+						"rustVersion": null,
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/orlp/recursive"
+					},
+					{
+						"name": "shlex",
+						"version": "2.0.1",
+						"license": "MIT OR Apache-2.0",
+						"rustVersion": "1.46.0",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/comex/rust-shlex"
+					},
+					{
+						"name": "sqlparser",
+						"version": "0.62.0",
+						"license": "Apache-2.0",
+						"rustVersion": null,
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/apache/datafusion-sqlparser-rs"
+					},
+					{
+						"name": "stacker",
+						"version": "0.1.25",
+						"license": "MIT OR Apache-2.0",
+						"rustVersion": "1.63",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/rust-lang/stacker"
+					},
+					{
+						"name": "syn",
+						"version": "2.0.119",
+						"license": "MIT OR Apache-2.0",
+						"rustVersion": "1.71",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/dtolnay/syn"
+					},
+					{
+						"name": "unicode-ident",
+						"version": "1.0.24",
+						"license": "(MIT OR Apache-2.0) AND Unicode-3.0",
+						"rustVersion": "1.71",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/dtolnay/unicode-ident"
+					},
+					{
+						"name": "windows-link",
+						"version": "0.2.1",
+						"license": "MIT OR Apache-2.0",
+						"rustVersion": "1.71",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/microsoft/windows-rs"
+					},
+					{
+						"name": "windows-sys",
+						"version": "0.61.2",
+						"license": "MIT OR Apache-2.0",
+						"rustVersion": "1.71",
+						"source": "registry+https://github.com/rust-lang/crates.io-index",
+						"repository": "https://github.com/microsoft/windows-rs"
+					}
+				],
+				"packagesSha256": "cd031965b00ed68cc3ef995438277fa9239035d893e4be88ef1079a29199fe1d",
+				"cargoTree": "nyala-sqlparser-spike v0.0.0 (<TEMP>)\n└── sqlparser v0.62.0\n    ├── log v0.4.33\n    └── recursive v0.1.1\n        ├── recursive-proc-macro-impl v0.1.1 (proc-macro)\n        │   ├── quote v1.0.47\n        │   │   └── proc-macro2 v1.0.107\n        │   │       └── unicode-ident v1.0.24\n        │   └── syn v2.0.119\n        │       ├── proc-macro2 v1.0.107 (*)\n        │       ├── quote v1.0.47 (*)\n        │       └── unicode-ident v1.0.24\n        └── stacker v0.1.25\n            ├── cfg-if v1.0.4\n            ├── libc v0.2.189\n            └── psm v0.1.32\n                [build-dependencies]\n                ├── ar_archive_writer v0.5.3\n                │   └── object v0.39.1\n                │       └── memchr v2.8.3\n                └── cc v1.4.3\n                    ├── find-msvc-tools v0.1.11\n                    └── shlex v2.0.1\n            [build-dependencies]\n            └── cc v1.4.3 (*)\n",
+				"cargoTreeSha256": "10c31472470addba7d111de7e42f2a84172cf7ade00d03a7b90c07cf666d2e16",
+				"cargoLock": "# This file is automatically @generated by Cargo.\n# It is not intended for manual editing.\nversion = 4\n\n[[package]]\nname = \"ar_archive_writer\"\nversion = \"0.5.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"73cd58deff2140a0a8eae87e417bd01db68a33e148aa93d1e8cd837e55e312b6\"\ndependencies = [\n \"object\",\n]\n\n[[package]]\nname = \"cc\"\nversion = \"1.4.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"509591b7bcd67f4ef775afad7662703b4935daaa6ec0e5605cfb1090b32a2b6d\"\ndependencies = [\n \"find-msvc-tools\",\n \"shlex\",\n]\n\n[[package]]\nname = \"cfg-if\"\nversion = \"1.0.4\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801\"\n\n[[package]]\nname = \"find-msvc-tools\"\nversion = \"0.1.11\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890\"\n\n[[package]]\nname = \"libc\"\nversion = \"0.2.189\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2\"\n\n[[package]]\nname = \"log\"\nversion = \"0.4.33\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad\"\n\n[[package]]\nname = \"memchr\"\nversion = \"2.8.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98\"\n\n[[package]]\nname = \"nyala-sqlparser-spike\"\nversion = \"0.0.0\"\ndependencies = [\n \"sqlparser\",\n]\n\n[[package]]\nname = \"object\"\nversion = \"0.39.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b\"\ndependencies = [\n \"memchr\",\n]\n\n[[package]]\nname = \"proc-macro2\"\nversion = \"1.0.107\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9\"\ndependencies = [\n \"unicode-ident\",\n]\n\n[[package]]\nname = \"psm\"\nversion = \"0.1.32\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"4dcd034599e63b970727f70d79e02d62390a4a84f7c6b827c27c46d5ac3fa622\"\ndependencies = [\n \"ar_archive_writer\",\n \"cc\",\n]\n\n[[package]]\nname = \"quote\"\nversion = \"1.0.47\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001\"\ndependencies = [\n \"proc-macro2\",\n]\n\n[[package]]\nname = \"recursive\"\nversion = \"0.1.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"0786a43debb760f491b1bc0269fe5e84155353c67482b9e60d0cfb596054b43e\"\ndependencies = [\n \"recursive-proc-macro-impl\",\n \"stacker\",\n]\n\n[[package]]\nname = \"recursive-proc-macro-impl\"\nversion = \"0.1.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"76009fbe0614077fc1a2ce255e3a1881a2e3a3527097d5dc6d8212c585e7e38b\"\ndependencies = [\n \"quote\",\n \"syn\",\n]\n\n[[package]]\nname = \"shlex\"\nversion = \"2.0.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba\"\n\n[[package]]\nname = \"sqlparser\"\nversion = \"0.62.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"13c6d1b651dc4edf07eead2a0c6c78016ce971bc2c10da5266861b13f25e7cec\"\ndependencies = [\n \"log\",\n \"recursive\",\n]\n\n[[package]]\nname = \"stacker\"\nversion = \"0.1.25\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"707f49d46706bacf8a2b00d51dace3f9de527c13eec3778f570c411f89e69967\"\ndependencies = [\n \"cc\",\n \"cfg-if\",\n \"libc\",\n \"psm\",\n \"windows-sys\",\n]\n\n[[package]]\nname = \"syn\"\nversion = \"2.0.119\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"unicode-ident\",\n]\n\n[[package]]\nname = \"unicode-ident\"\nversion = \"1.0.24\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75\"\n\n[[package]]\nname = \"windows-link\"\nversion = \"0.2.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5\"\n\n[[package]]\nname = \"windows-sys\"\nversion = \"0.61.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc\"\ndependencies = [\n \"windows-link\",\n]\n",
+				"cargoLockSha256": "5442b475dd621cb1e8fe377ae81f5509035b414ae361ddeff643b40210b09c42",
+				"lockedCandidate": {
+					"name": "sqlparser",
+					"version": "0.62.0",
+					"checksum": "13c6d1b651dc4edf07eead2a0c6c78016ce971bc2c10da5266861b13f25e7cec"
+				}
+			},
+			"binary": {
+				"baselineBytes": 431216,
+				"parserBytes": 6268128,
+				"deltaBytes": 5836912,
+				"baselineSha256": "26df8fded64f209afd94612acb9dbf6655e6d75017fddea749451c2ab3bd5f9a",
+				"parserSha256": "e3770ecd7d523df0d4658a0f668feed823a1bb523645c3a8bb3a2a1cefd7cbdd"
+			},
+			"corpus": {
+				"summary": {
+					"fixtureCount": 11,
+					"parsedCount": 7,
+					"rejectedCount": 4,
+					"dialectGapCount": 4,
+					"dialectGaps": [
+						"sqlite-pragma-assignment",
+						"mysql-into-outfile",
+						"mysql-lock-in-share-mode",
+						"postgres-for-no-key-update"
+					],
+					"parsedButNotLocallyReadOnly": ["mysql-versioned-comment", "sqlite-cte-update", "generic-select-drop"]
+				},
+				"rawOutput": "sqlite-select\tparsed\t1\t\nsqlite-explain-query-plan\tparsed\t1\t\nsqlite-cte-select\tparsed\t1\t\nsqlite-pragma-assignment\trejected\t0\tsql parser error: Expected: a concrete value, found: WAL at Line: 1, Column: 23\nmysql-into-outfile\trejected\t0\tsql parser error: Expected: end of statement, found: OUTFILE at Line: 1, Column: 26\nmysql-lock-in-share-mode\trejected\t0\tsql parser error: Expected: end of statement, found: IN at Line: 1, Column: 26\nmysql-versioned-comment\tparsed\t1\t\npostgres-for-no-key-update\trejected\t0\tsql parser error: Expected: one of UPDATE or SHARE, found: NO at Line: 1, Column: 25\npostgres-dollar-quoted-semicolon\tparsed\t1\t\nsqlite-cte-update\tparsed\t1\t\ngeneric-select-drop\tparsed\t2\t\n",
+				"outputSha256": "2efd980dac84da59f0aa44528e098459a2ace6bc9dce5fa05bca5f75e3ee1209",
+				"fixtures": [
+					{
+						"id": "sqlite-select",
+						"dialect": "sqlite",
+						"sql": "SELECT * FROM users",
+						"expectedStatementCount": 1,
+						"localRisk": "read_only"
+					},
+					{
+						"id": "sqlite-explain-query-plan",
+						"dialect": "sqlite",
+						"sql": "EXPLAIN QUERY PLAN SELECT * FROM users",
+						"expectedStatementCount": 1,
+						"localRisk": "explain_read_only"
+					},
+					{
+						"id": "sqlite-cte-select",
+						"dialect": "sqlite",
+						"sql": "WITH recent AS (SELECT * FROM orders) SELECT * FROM recent",
+						"expectedStatementCount": 1,
+						"localRisk": "read_only"
+					},
+					{
+						"id": "sqlite-pragma-assignment",
+						"dialect": "sqlite",
+						"sql": "PRAGMA journal_mode = WAL",
+						"expectedStatementCount": 1,
+						"localRisk": "unknown"
+					},
+					{
+						"id": "mysql-into-outfile",
+						"dialect": "mysql",
+						"sql": "SELECT * FROM users INTO OUTFILE '/tmp/users.csv'",
+						"expectedStatementCount": 1,
+						"localRisk": "forbidden"
+					},
+					{
+						"id": "mysql-lock-in-share-mode",
+						"dialect": "mysql",
+						"sql": "SELECT * FROM users LOCK IN SHARE MODE",
+						"expectedStatementCount": 1,
+						"localRisk": "transactional_write"
+					},
+					{
+						"id": "mysql-versioned-comment",
+						"dialect": "mysql",
+						"sql": "/*!50000 SELECT * FROM users */",
+						"expectedStatementCount": 1,
+						"localRisk": "unknown"
+					},
+					{
+						"id": "postgres-for-no-key-update",
+						"dialect": "postgresql",
+						"sql": "SELECT * FROM users FOR NO KEY UPDATE",
+						"expectedStatementCount": 1,
+						"localRisk": "transactional_write"
+					},
+					{
+						"id": "postgres-dollar-quoted-semicolon",
+						"dialect": "postgresql",
+						"sql": "SELECT $tag$semi;colon$tag$",
+						"expectedStatementCount": 1,
+						"localRisk": "read_only"
+					},
+					{
+						"id": "sqlite-cte-update",
+						"dialect": "sqlite",
+						"sql": "WITH stale AS (SELECT id FROM users) UPDATE users SET active = 0",
+						"expectedStatementCount": 1,
+						"localRisk": "transactional_write"
+					},
+					{
+						"id": "generic-select-drop",
+						"dialect": "generic",
+						"sql": "SELECT 1; DROP TABLE users",
+						"expectedStatementCount": 2,
+						"localRisk": "unknown"
+					}
+				],
+				"fixturesSha256": "38216aafe72f966fbeded98ff30afab33631b2ce0810e169431392cac4362715",
+				"resultsSha256": "affe830ff0703fcc62f4c8439e2ba56f74cdb418234dc1d3f59eb7423a24db25",
+				"results": [
+					{
+						"id": "sqlite-select",
+						"dialect": "sqlite",
+						"sql": "SELECT * FROM users",
+						"expectedStatementCount": 1,
+						"localRisk": "read_only",
+						"status": "parsed",
+						"statementCount": 1,
+						"detail": null,
+						"matchesDialectExpectation": true
+					},
+					{
+						"id": "sqlite-explain-query-plan",
+						"dialect": "sqlite",
+						"sql": "EXPLAIN QUERY PLAN SELECT * FROM users",
+						"expectedStatementCount": 1,
+						"localRisk": "explain_read_only",
+						"status": "parsed",
+						"statementCount": 1,
+						"detail": null,
+						"matchesDialectExpectation": true
+					},
+					{
+						"id": "sqlite-cte-select",
+						"dialect": "sqlite",
+						"sql": "WITH recent AS (SELECT * FROM orders) SELECT * FROM recent",
+						"expectedStatementCount": 1,
+						"localRisk": "read_only",
+						"status": "parsed",
+						"statementCount": 1,
+						"detail": null,
+						"matchesDialectExpectation": true
+					},
+					{
+						"id": "sqlite-pragma-assignment",
+						"dialect": "sqlite",
+						"sql": "PRAGMA journal_mode = WAL",
+						"expectedStatementCount": 1,
+						"localRisk": "unknown",
+						"status": "rejected",
+						"statementCount": 0,
+						"detail": "sql parser error: Expected: a concrete value, found: WAL at Line: 1, Column: 23",
+						"matchesDialectExpectation": false
+					},
+					{
+						"id": "mysql-into-outfile",
+						"dialect": "mysql",
+						"sql": "SELECT * FROM users INTO OUTFILE '/tmp/users.csv'",
+						"expectedStatementCount": 1,
+						"localRisk": "forbidden",
+						"status": "rejected",
+						"statementCount": 0,
+						"detail": "sql parser error: Expected: end of statement, found: OUTFILE at Line: 1, Column: 26",
+						"matchesDialectExpectation": false
+					},
+					{
+						"id": "mysql-lock-in-share-mode",
+						"dialect": "mysql",
+						"sql": "SELECT * FROM users LOCK IN SHARE MODE",
+						"expectedStatementCount": 1,
+						"localRisk": "transactional_write",
+						"status": "rejected",
+						"statementCount": 0,
+						"detail": "sql parser error: Expected: end of statement, found: IN at Line: 1, Column: 26",
+						"matchesDialectExpectation": false
+					},
+					{
+						"id": "mysql-versioned-comment",
+						"dialect": "mysql",
+						"sql": "/*!50000 SELECT * FROM users */",
+						"expectedStatementCount": 1,
+						"localRisk": "unknown",
+						"status": "parsed",
+						"statementCount": 1,
+						"detail": null,
+						"matchesDialectExpectation": true
+					},
+					{
+						"id": "postgres-for-no-key-update",
+						"dialect": "postgresql",
+						"sql": "SELECT * FROM users FOR NO KEY UPDATE",
+						"expectedStatementCount": 1,
+						"localRisk": "transactional_write",
+						"status": "rejected",
+						"statementCount": 0,
+						"detail": "sql parser error: Expected: one of UPDATE or SHARE, found: NO at Line: 1, Column: 25",
+						"matchesDialectExpectation": false
+					},
+					{
+						"id": "postgres-dollar-quoted-semicolon",
+						"dialect": "postgresql",
+						"sql": "SELECT $tag$semi;colon$tag$",
+						"expectedStatementCount": 1,
+						"localRisk": "read_only",
+						"status": "parsed",
+						"statementCount": 1,
+						"detail": null,
+						"matchesDialectExpectation": true
+					},
+					{
+						"id": "sqlite-cte-update",
+						"dialect": "sqlite",
+						"sql": "WITH stale AS (SELECT id FROM users) UPDATE users SET active = 0",
+						"expectedStatementCount": 1,
+						"localRisk": "transactional_write",
+						"status": "parsed",
+						"statementCount": 1,
+						"detail": null,
+						"matchesDialectExpectation": true
+					},
+					{
+						"id": "generic-select-drop",
+						"dialect": "generic",
+						"sql": "SELECT 1; DROP TABLE users",
+						"expectedStatementCount": 2,
+						"localRisk": "unknown",
+						"status": "parsed",
+						"statementCount": 2,
+						"detail": null,
+						"matchesDialectExpectation": true
+					}
+				]
+			}
+		}
+	},
+	"maintenance": {
+		"source": "crates.io API and cargo info",
+		"exactVersion": "0.62.0",
+		"publishedAt": "2026-05-07T20:28:05.419959Z",
+		"updatedAt": "2026-05-07T20:28:05.419959Z",
+		"yanked": false,
+		"downloadsAtMeasurement": 1909881,
+		"crateBytes": 452672,
+		"checksum": "13c6d1b651dc4edf07eead2a0c6c78016ce971bc2c10da5266861b13f25e7cec",
+		"license": "Apache-2.0",
+		"repository": "https://github.com/apache/datafusion-sqlparser-rs",
+		"latestStableVersionAtMeasurement": "0.62.0",
+		"crateUpdatedAt": "2026-05-07T20:28:05.419959Z",
+		"cargoInfo": {
+			"lines": [
+				"sqlparser #ansi #sql #lexer #parser",
+				"Extensible SQL Lexer and Parser with support for ANSI SQL:2011",
+				"version: 0.62.0",
+				"license: Apache-2.0",
+				"rust-version: unknown",
+				"documentation: https://docs.rs/sqlparser/",
+				"homepage: https://github.com/apache/datafusion-sqlparser-rs",
+				"repository: https://github.com/apache/datafusion-sqlparser-rs",
+				"crates.io: https://crates.io/crates/sqlparser/0.62.0",
+				"features:",
+				" +default              = [std, recursive-protection]",
+				"  recursive            = [dep:recursive]",
+				"  recursive-protection = [std, recursive]",
+				"  std                  = []",
+				"  bigdecimal           = [dep:bigdecimal]",
+				"  derive-dialect       = [sqlparser_derive]",
+				"  json_example         = [serde_json, serde]",
+				"  serde                = [dep:serde]",
+				"  serde_json           = [dep:serde_json]",
+				"  sqlparser_derive     = [dep:sqlparser_derive]",
+				"  visitor              = [sqlparser_derive]"
+			],
+			"sha256": "43bb36fea9da7b9005bdf415e56ddae2ef55fc7bc40eb23d0efba947ff1c50d0"
+		}
+	},
+	"commands": [
+		{
+			"program": "rustc",
+			"args": ["--version", "--verbose"],
+			"timeoutMs": 300000,
+			"timedOut": false,
+			"exitCode": 0,
+			"signal": null,
+			"stdoutSha256": "aea7c77c2b0d24444d07240e4d785e4ba73b6c9e786748af2ddc22bbf4c104bf",
+			"stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+		},
+		{
+			"program": "cargo",
+			"args": ["--version", "--verbose"],
+			"timeoutMs": 300000,
+			"timedOut": false,
+			"exitCode": 0,
+			"signal": null,
+			"stdoutSha256": "f55f308f457987d647f78ba7cbabaf52d24f38134487d4d017728270addd15c6",
+			"stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+		},
+		{
+			"program": "cargo",
+			"args": ["info", "sqlparser@0.62.0"],
+			"timeoutMs": 300000,
+			"timedOut": false,
+			"exitCode": 0,
+			"signal": null,
+			"stdoutSha256": "43bb36fea9da7b9005bdf415e56ddae2ef55fc7bc40eb23d0efba947ff1c50d0",
+			"stderrSha256": "ad7fffb4a0eeb49d414f1aa389de819936566da74f32a91cf7225007e2b0477c"
+		},
+		{
+			"program": "cargo",
+			"args": ["generate-lockfile"],
+			"timeoutMs": 300000,
+			"timedOut": false,
+			"exitCode": 0,
+			"signal": null,
+			"stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			"stderrSha256": "703f5e4e147d468980b54e0555d311192dfef9e126869807dfa040a8bb4f314d"
+		},
+		{
+			"program": "cargo",
+			"args": ["tree", "--features", "parser", "--edges", "normal,build", "--locked"],
+			"timeoutMs": 300000,
+			"timedOut": false,
+			"exitCode": 0,
+			"signal": null,
+			"stdoutSha256": "10c31472470addba7d111de7e42f2a84172cf7ade00d03a7b90c07cf666d2e16",
+			"stderrSha256": "b9c0574cc4f583abfb0d966fa27ac0942f3615e605ae84baca1de37c22c353c4"
+		},
+		{
+			"program": "cargo",
+			"args": ["metadata", "--format-version", "1", "--features", "parser", "--locked"],
+			"timeoutMs": 300000,
+			"timedOut": false,
+			"exitCode": 0,
+			"signal": null,
+			"stdoutSha256": "3c48028551446f95213950e616ef53da95c0d129bc386f41454f5000e01f9beb",
+			"stderrSha256": "d29ac640e9db129ebee9e4be518aa695ea15c44e020655e748f93da3c22fe46f"
+		},
+		{
+			"program": "cargo",
+			"args": ["build", "--release", "--no-default-features", "--locked"],
+			"timeoutMs": 600000,
+			"timedOut": false,
+			"exitCode": 0,
+			"signal": null,
+			"stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			"stderrSha256": "ac175331441e8e8387d5c8ede7686f80abdc7aeb510f5473e3b6341277c5d6d0"
+		},
+		{
+			"program": "cargo",
+			"args": ["build", "--release", "--features", "parser", "--locked"],
+			"timeoutMs": 600000,
+			"timedOut": false,
+			"exitCode": 0,
+			"signal": null,
+			"stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			"stderrSha256": "b54e146c0fc4a78243f87600c6442f95e6d97c77fbb4affdefcfba9a3b1385ac"
+		},
+		{
+			"program": "harness-binary",
+			"args": [],
+			"timeoutMs": 300000,
+			"timedOut": false,
+			"exitCode": 0,
+			"signal": null,
+			"stdoutSha256": "2efd980dac84da59f0aa44528e098459a2ace6bc9dce5fa05bca5f75e3ee1209",
+			"stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+		},
+		{
+			"program": "rustup",
+			"args": ["toolchain", "list"],
+			"timeoutMs": 300000,
+			"timedOut": false,
+			"exitCode": 0,
+			"signal": null,
+			"stdoutSha256": "6a72ae3e7dc0d440062a9b873afe6dd1826487b779e628a7768bff98541e517c",
+			"stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+		}
+	]
+}

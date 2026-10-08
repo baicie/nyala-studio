@@ -55,6 +55,7 @@ export interface ISqlMetadataService {
 	listSchemas(profileId: string, opts?: { force?: boolean }): Promise<SchemataDto[]>;
 	listTablesV2(profileId: string, schema: string, opts?: { force?: boolean }): Promise<SchemaObjectDto[]>;
 	listColumnsV2(profileId: string, schema: string, table: string, opts?: { force?: boolean }): Promise<ColumnDto[]>;
+	refresh(profileId: string): Promise<void>;
 
 	/** Drops cached metadata for a profile (typically after close / re-open). */
 	invalidate(profileId: string): void;

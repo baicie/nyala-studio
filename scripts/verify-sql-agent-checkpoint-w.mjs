@@ -8,6 +8,9 @@ import { calibrateWindowRectForCssViewport } from './tauri-embedded-webdriver.mj
 
 const requiredAutomatedCheckIds = new Set([
 	'workbench-ready',
+	'statusbar-bounds',
+	'notification-overlay-bounds',
+	'no-visible-error-notifications',
 	'agent-root-visible',
 	'agent-root-bounds',
 	'aria-agent-prompt',
@@ -56,6 +59,30 @@ const requiredControlLabels = [
 ];
 const screenshotDimensionTolerance = 2;
 const maxManualEvidenceRefLength = 2048;
+const sqlProductBootstrapOutcomeKeys = ['completedCommands', 'mode', 'status', 'version'];
+const sqlProductBootstrapCommands = new Set([
+	'bootstrapDemo',
+	'focusConnections',
+	'openResults',
+	'focusWelcome',
+	'newQuery'
+]);
+const sqlProductBootstrapSequences = {
+	restore: [['bootstrapDemo']],
+	onboarding: [
+		['bootstrapDemo'],
+		['bootstrapDemo', 'focusConnections', 'openResults'],
+		['bootstrapDemo', 'focusWelcome', 'newQuery'],
+		['bootstrapDemo', 'focusConnections', 'openResults', 'focusWelcome', 'newQuery']
+	]
+};
+const sqlProductBootstrapFailureSteps = new Set(['prepare', ...sqlProductBootstrapCommands, 'persist']);
+const sqlProductBootstrapErrorCodes = new Set([
+	'startup-prepare-failed',
+	'startup-command-failed',
+	'bootstrap-persist-failed',
+	'unexpected-bootstrap-rejection'
+]);
 
 const cli = parseArgs(process.argv.slice(2).filter(argument => argument !== '--'));
 const outputPath = resolve(cli.output ?? 'docs/sql-mvp-phases/phase-a4-checkpoint-w.json');
@@ -176,6 +203,9 @@ function validateCaptureRunMetadata(metadata, loadError) {
 			reasons.push(`${formatValue(artifact?.name)} artifact byte count is invalid`);
 		}
 		if (!isSha256(artifact?.digest)) reasons.push(`${formatValue(artifact?.name)} artifact digest is invalid`);
+		if (!isArtifactArchiveUrl(artifact?.archiveUrl, metadata?.provenance?.repository, artifact?.id)) {
+			reasons.push(`${formatValue(artifact?.name)} artifact archive download URL is invalid`);
+		}
 		if (!isIsoDate(artifact?.createdAt) || !isIsoDate(artifact?.updatedAt)) {
 			reasons.push(`${formatValue(artifact?.name)} artifact timestamps are invalid`);
 		}
@@ -216,13 +246,50 @@ function validateNativeIdentity(platform, evidence, loadError) {
 	if (evidence?.browser !== expectedIdentity.browser) reasons.push(`browser is not ${expectedIdentity.browser}`);
 	if (evidence?.webdriverOwnership?.runNonceVerified !== true) reasons.push('WebDriver ownership nonce is unverified');
 	if (evidence?.webdriverOwnership?.portSource !== 'os-assigned') reasons.push('WebDriver port is not OS-assigned');
-	if (evidence?.frontendSource?.kind !== 'local-dist-server') {
-		reasons.push('frontend source is not the declared local-dist-server characterization boundary');
-	}
+	if (!isSha256(evidence?.webdriverOwnership?.runNonceSha256))
+		reasons.push('WebDriver ownership nonce digest is invalid');
+	validateSqlProductBootstrapOutcome(evidence?.sqlProductBootstrap, reasons);
+	validateTauriAssetFrontendSource(platform, evidence?.frontendSource, reasons);
 	validateNativeProvenanceShape(evidence?.provenance, reasons);
 	return reasons.length === 0
 		? passed(id, `${label}: embedded native WebView identity and provenance are valid`)
 		: failed(id, `${label}: ${reasons.join('; ')}`);
+}
+
+function validateSqlProductBootstrapOutcome(outcome, reasons) {
+	if (!outcome || typeof outcome !== 'object' || Array.isArray(outcome)) {
+		reasons.push('SQL Product bootstrap outcome is missing or malformed');
+		return;
+	}
+	if (!arraysEqual(Object.keys(outcome).sort(), sqlProductBootstrapOutcomeKeys)) {
+		reasons.push('SQL Product bootstrap outcome must contain exactly version, status, mode, and completedCommands');
+	}
+	if (outcome.version !== 1) reasons.push('SQL Product bootstrap outcome must use version 1');
+	if (outcome.status !== 'succeeded') reasons.push('SQL Product bootstrap outcome did not succeed');
+	if (outcome.mode !== 'restore' && outcome.mode !== 'onboarding') {
+		reasons.push('SQL Product bootstrap mode is invalid');
+		return;
+	}
+	if (!Array.isArray(outcome.completedCommands)) {
+		reasons.push('SQL Product bootstrap completedCommands is malformed');
+		return;
+	}
+	const allowedSequences = sqlProductBootstrapSequences[outcome.mode];
+	if (!allowedSequences.some(sequence => arraysEqual(outcome.completedCommands, sequence))) {
+		reasons.push(`SQL Product bootstrap completed command sequence does not match ${outcome.mode} mode`);
+	}
+}
+
+function validateTauriAssetFrontendSource(platform, frontendSource, reasons) {
+	if (frontendSource?.kind !== 'tauri-asset-protocol') {
+		reasons.push('frontend source is not the Tauri asset protocol');
+		return;
+	}
+	const expectedUrl = platform === 'macos' ? 'tauri://localhost' : 'https://tauri.localhost/';
+	const observedUrl = typeof frontendSource.url === 'string' ? frontendSource.url : undefined;
+	if (observedUrl !== expectedUrl) {
+		reasons.push(`asset protocol frontend URL must be ${expectedUrl}`);
+	}
 }
 
 async function validateAutomatedSurface(platform, evidence, loadError, evidenceFilePath) {
@@ -251,14 +318,14 @@ async function validateAutomatedSurface(platform, evidence, loadError, evidenceF
 			reasons.push(`expected exactly one ${expectedViewport.id} artifact, got ${matches.length}`);
 			continue;
 		}
-		await validateViewportArtifact(matches[0], expectedViewport, reasons, evidenceFilePath);
+		await validateViewportArtifact(matches[0], expectedViewport, reasons, evidenceFilePath, platform, evidence);
 	}
 	return reasons.length === 0
 		? passed(id, `${label}: desktop/narrow automated surface evidence is complete`)
 		: failed(id, `${label}: ${reasons.join('; ')}`);
 }
 
-async function validateViewportArtifact(artifact, expectedViewport, reasons, evidenceFilePath) {
+async function validateViewportArtifact(artifact, expectedViewport, reasons, evidenceFilePath, platform, evidence) {
 	const prefix = expectedViewport.id;
 	if (artifact?.status !== 'ready' || artifact?.automatedSurfaceStatus !== 'ready') {
 		reasons.push(`${prefix} automated surface is not ready`);
@@ -278,6 +345,13 @@ async function validateViewportArtifact(artifact, expectedViewport, reasons, evi
 		reasons.push(`${prefix} screenshot byte count is invalid`);
 	}
 	if (!isSha256(artifact?.screenshotSha256)) reasons.push(`${prefix} screenshot SHA-256 is invalid`);
+	validateDocumentBinding(
+		platform,
+		artifact?.documentBinding,
+		evidence?.webdriverOwnership?.runNonceSha256,
+		prefix,
+		reasons
+	);
 	validateViewportCalibration(artifact, expectedViewport, reasons);
 	await validateScreenshotFile(artifact, prefix, evidenceFilePath, reasons);
 	validateSnapshot(artifact?.snapshot, expectedViewport, reasons);
@@ -309,6 +383,24 @@ async function validateViewportArtifact(artifact, expectedViewport, reasons, evi
 			reasons.push(`${prefix} has unexpected manual check ${check.id}`);
 		} else if (check.scope !== 'automated' || check.passed !== true) {
 			reasons.push(`${prefix} automated check ${check.id} failed`);
+		}
+	}
+}
+
+function validateDocumentBinding(platform, documentBinding, expectedNonceSha256, prefix, reasons) {
+	if (!documentBinding || typeof documentBinding !== 'object') {
+		reasons.push(`${prefix} document binding is missing`);
+		return;
+	}
+	for (const phase of ['beforeSnapshot', 'afterScreenshot']) {
+		const observation = documentBinding[phase];
+		const sourceReasons = [];
+		validateTauriAssetFrontendSource(platform, observation?.frontendSource, sourceReasons);
+		for (const reason of sourceReasons) reasons.push(`${prefix} ${phase} ${reason}`);
+		if (!isSha256(observation?.runNonceSha256)) {
+			reasons.push(`${prefix} ${phase} nonce digest is invalid`);
+		} else if (observation.runNonceSha256 !== expectedNonceSha256) {
+			reasons.push(`${prefix} ${phase} nonce digest does not match WebDriver ownership`);
 		}
 	}
 }
@@ -447,11 +539,41 @@ function validateSnapshot(snapshot, expectedViewport, reasons) {
 		return;
 	}
 	if (snapshot.workbenchReady !== true) reasons.push(`${prefix} Workbench snapshot is not ready`);
-	if (snapshot.agentRoot?.visible !== true || !isPositiveRect(snapshot.agentRoot?.rect)) {
+	const agentRootRect = snapshot.agentRoot?.rect;
+	const statusElementRect = snapshot.statusElement?.rect;
+	if (snapshot.agentRoot?.visible !== true || !isPositiveRect(agentRootRect)) {
 		reasons.push(`${prefix} Agent root snapshot is not visible and bounded`);
 	}
 	if (prefix === 'narrow' && snapshot.primarySidebarVisible !== false) {
 		reasons.push('narrow snapshot did not close the primary sidebar');
+	}
+	if (snapshot.statusElement?.visible !== true || !isPositiveRect(statusElementRect)) {
+		reasons.push(`${prefix} Agent status snapshot is not visible and bounded`);
+	}
+	if (snapshot.statusElement?.contentFits !== true) {
+		reasons.push(`${prefix} Agent status text overflows its visible area`);
+	}
+	const statusBarRect = snapshot.statusBar?.rect;
+	if (snapshot.statusBar?.visible !== true || !isPositiveRect(statusBarRect)) {
+		reasons.push(`${prefix} statusbar snapshot is missing, hidden, or unbounded`);
+	} else if (!rectWithinViewport(statusBarRect, expectedViewport)) {
+		reasons.push(`${prefix} statusbar snapshot is outside the viewport`);
+	}
+	const notificationOverlays = validateNotificationOverlays(snapshot.notificationOverlays, expectedViewport, reasons);
+	if (isPositiveRect(agentRootRect) && !rectWithinViewport(agentRootRect, expectedViewport)) {
+		reasons.push(`${prefix} Agent root snapshot is outside the viewport`);
+	} else if (isPositiveRect(statusBarRect) && rectsIntersectWithTolerance(agentRootRect, statusBarRect, 0.1)) {
+		reasons.push(`${prefix} Agent root snapshot overlaps the statusbar`);
+	}
+	if (isPositiveRect(statusElementRect) && !rectWithinViewport(statusElementRect, expectedViewport)) {
+		reasons.push(`${prefix} Agent status snapshot is outside the viewport`);
+	} else if (isPositiveRect(statusBarRect) && rectsIntersectWithTolerance(statusElementRect, statusBarRect, 0.1)) {
+		reasons.push(`${prefix} Agent status snapshot overlaps the statusbar`);
+	}
+	for (const overlay of notificationOverlays) {
+		if (rectsIntersect(agentRootRect, overlay.rect)) {
+			reasons.push(`${prefix} notification ${overlay.kind} overlaps the Agent root`);
+		}
 	}
 	const ariaLabels = Array.isArray(snapshot.ariaLabels) ? snapshot.ariaLabels : [];
 	for (const label of requiredAriaLabels) {
@@ -469,6 +591,13 @@ function validateSnapshot(snapshot, expectedViewport, reasons) {
 			reasons.push(`${prefix} snapshot ${label} is not visible and bounded`);
 		} else if (!rectWithinViewport(control.rect, expectedViewport)) {
 			reasons.push(`${prefix} snapshot ${label} is outside the viewport`);
+		} else if (isPositiveRect(statusBarRect) && rectsIntersect(control.rect, statusBarRect)) {
+			reasons.push(`${prefix} snapshot ${label} overlaps the statusbar`);
+		}
+		for (const overlay of notificationOverlays) {
+			if (rectsIntersect(control.rect, overlay.rect)) {
+				reasons.push(`${prefix} notification ${overlay.kind} overlaps ${label}`);
+			}
 		}
 	}
 	const start = controls.find(control => control?.ariaLabel === 'Start Agent run');
@@ -481,6 +610,35 @@ function validateSnapshot(snapshot, expectedViewport, reasons) {
 	}
 	if (snapshot.status !== 'Ready.') reasons.push(`${prefix} snapshot status is not Ready`);
 	if (snapshot.fatalScreen !== false) reasons.push(`${prefix} snapshot contains a fatal screen`);
+}
+
+function validateNotificationOverlays(overlays, expectedViewport, reasons) {
+	const prefix = expectedViewport.id;
+	if (!Array.isArray(overlays)) {
+		reasons.push(`${prefix} notification overlay snapshot is missing or malformed`);
+		return [];
+	}
+	const valid = [];
+	for (const [index, overlay] of overlays.entries()) {
+		const ordinal = index + 1;
+		const validKind = overlay?.kind === 'toast' || overlay?.kind === 'center';
+		const validSeverity = ['error', 'warning', 'info', 'unknown'].includes(overlay?.severity);
+		if (overlay?.severity === 'error') {
+			reasons.push(
+				`${prefix} visible error notification ${validKind ? overlay.kind : 'overlay'} ${ordinal} is present`
+			);
+		}
+		if (overlay?.visible !== true || !validKind || !validSeverity || !isPositiveRect(overlay?.rect)) {
+			reasons.push(`${prefix} notification overlay ${ordinal} is missing, hidden, or malformed`);
+			continue;
+		}
+		if (!rectWithinViewport(overlay.rect, expectedViewport)) {
+			reasons.push(`${prefix} notification ${overlay.kind} ${ordinal} is outside the viewport`);
+			continue;
+		}
+		valid.push(overlay);
+	}
+	return valid;
 }
 
 function validateProvenance(expectedValues, macosEvidence, windowsEvidence, manualEvidence, captureRunEvidence) {
@@ -642,14 +800,36 @@ function summarizeNativeEvidence(evidence) {
 		automatedSurfaceStatus: evidence.automatedSurfaceStatus ?? null,
 		platformName: evidence.platformName ?? null,
 		engine: evidence.engine ?? null,
+		frontendSource: evidence.frontendSource ?? null,
+		sqlProductBootstrap: summarizeSqlProductBootstrapOutcome(evidence.sqlProductBootstrap),
 		provenance: evidence.provenance ?? null,
 		screenshots: Array.isArray(evidence.artifacts)
 			? evidence.artifacts.map(artifact => ({
 					viewport: artifact?.requestedViewport?.id ?? null,
 					file: artifact?.screenshot ?? null,
-					sha256: artifact?.screenshotSha256 ?? null
+					sha256: artifact?.screenshotSha256 ?? null,
+					documentBinding: artifact?.documentBinding ?? null
 				}))
 			: []
+	};
+}
+
+function summarizeSqlProductBootstrapOutcome(outcome) {
+	if (!outcome || typeof outcome !== 'object' || Array.isArray(outcome)) return null;
+	const status = ['succeeded', 'failed', 'disposed'].includes(outcome.status) ? outcome.status : null;
+	const mode = outcome.mode === 'restore' || outcome.mode === 'onboarding' ? outcome.mode : null;
+	const completedCommands =
+		Array.isArray(outcome.completedCommands) &&
+		outcome.completedCommands.every(command => sqlProductBootstrapCommands.has(command))
+			? [...outcome.completedCommands]
+			: null;
+	return {
+		version: outcome.version === 1 ? 1 : null,
+		status,
+		mode,
+		completedCommands,
+		...(sqlProductBootstrapFailureSteps.has(outcome.failedStep) ? { failedStep: outcome.failedStep } : {}),
+		...(sqlProductBootstrapErrorCodes.has(outcome.errorCode) ? { errorCode: outcome.errorCode } : {})
 	};
 }
 
@@ -753,6 +933,15 @@ function isSha256(value) {
 	return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 }
 
+function isArtifactArchiveUrl(value, repository, artifactId) {
+	return (
+		typeof value === 'string' &&
+		isRepository(repository) &&
+		isWorkflowRunId(artifactId) &&
+		value === `https://api.github.com/repos/${repository}/actions/artifacts/${artifactId}/zip`
+	);
+}
+
 function isSafeScreenshotName(value) {
 	return typeof value === 'string' && /^[A-Za-z0-9_.-]+\.png$/.test(value);
 }
@@ -767,7 +956,9 @@ function isPositiveRect(rect) {
 		Number.isFinite(rect.width) &&
 		Number.isFinite(rect.height) &&
 		rect.width > 0 &&
-		rect.height > 0
+		rect.height > 0 &&
+		rect.right > rect.left &&
+		rect.bottom > rect.top
 	);
 }
 
@@ -797,6 +988,28 @@ function dimensionsWithin(actual, expected, tolerance) {
 
 function rectWithinViewport(rect, viewport) {
 	return rect.left >= 0 && rect.top >= 0 && rect.right <= viewport.width && rect.bottom <= viewport.height;
+}
+
+function rectsIntersect(left, right) {
+	return (
+		isPositiveRect(left) &&
+		isPositiveRect(right) &&
+		left.left < right.right &&
+		left.right > right.left &&
+		left.top < right.bottom &&
+		left.bottom > right.top
+	);
+}
+
+function rectsIntersectWithTolerance(left, right, tolerance) {
+	return (
+		isPositiveRect(left) &&
+		isPositiveRect(right) &&
+		left.left < right.right - tolerance &&
+		left.right > right.left + tolerance &&
+		left.top < right.bottom - tolerance &&
+		left.bottom > right.top + tolerance
+	);
 }
 
 function isIsoDate(value) {

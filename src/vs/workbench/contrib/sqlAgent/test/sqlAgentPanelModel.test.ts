@@ -338,10 +338,11 @@ test('Agent service supports the official Tauri event API when globalTauri is un
 	assert.match(serviceSource, /return await tauriEvent\.listen/);
 });
 
-test('Agent panel controls wrap in narrow viewports', () => {
+test('Agent panel keeps narrow controls in two-column rows and collapses empty projections', () => {
 	assert.match(agentStylesSource, /\.sql-agent-controls[\s\S]*flex-wrap: wrap/);
 	assert.match(agentStylesSource, /@media \(max-width: 420px\)/);
-	assert.match(agentStylesSource, /flex-basis: 100%/);
+	assert.match(agentStylesSource, /flex-basis: calc\(50% - 3px\)/);
+	assert.match(agentStylesSource, /\.sql-agent-answer:empty,[\s\S]*display: none/);
 });
 
 test('Agent panel renders tool activity and warnings without raw tool arguments', () => {

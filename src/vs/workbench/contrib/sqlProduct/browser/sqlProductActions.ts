@@ -6,7 +6,7 @@ import { localize2 } from '../../../../nls.js';
 import { isTauri } from '../../../../sidex-bridge.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
-import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { ISqlConnectionChangeService } from '../../../services/sql/common/sqlConnection.js';
@@ -18,13 +18,19 @@ import {
 import { SQL_NEW_QUERY_COMMAND_ID } from '../../sqlEditor/common/sqlEditor.js';
 import { SQL_RESULT_OPEN_COMMAND_ID } from '../../sqlResult/common/sqlResult.js';
 import {
+	SQL_PRODUCT_AWAIT_BOOTSTRAP_COMMAND_ID,
 	SQL_PRODUCT_BOOTSTRAP_DEMO_COMMAND_ID,
 	SQL_PRODUCT_HOME_COMMAND_ID,
 	SQL_PRODUCT_NEW_QUERY_COMMAND_ID,
 	SQL_PRODUCT_OPEN_RESULTS_COMMAND_ID,
 	type SqlProductDemoBootstrapCommandOptions
 } from '../common/sqlProduct.js';
-import { isSqlProductDemoBootstrapSupported, runSqlProductDemoBootstrap } from '../common/sqlProductBootstrapModel.js';
+import { ISqlProductBootstrapService } from '../common/sqlProductBootstrapService.js';
+import {
+	isSqlProductDemoBootstrapSupported,
+	runSqlProductDemoBootstrap,
+	shouldNotifySqlProductDemoBootstrapError
+} from '../common/sqlProductBootstrapModel.js';
 import { ISqlProductPreferencesService } from '../common/sqlProductPreferencesService.js';
 import { SQL_PRODUCT_PREFERENCES_VIEW_ID } from './sqlProductPreferencesView.js';
 
@@ -32,6 +38,10 @@ export const SQL_PRODUCT_OPEN_PREFERENCES_COMMAND_ID = 'sqlStudio.product.openPr
 export const SQL_PRODUCT_RESET_PREFERENCES_COMMAND_ID = 'sqlStudio.product.resetPreferences';
 export const SQL_PRODUCT_TOGGLE_RESTORE_LAYOUT_COMMAND_ID = 'sqlStudio.product.toggleRestoreLayout';
 export const SQL_PRODUCT_TOGGLE_WELCOME_QUERY_COMMAND_ID = 'sqlStudio.product.toggleWelcomeQuery';
+
+CommandsRegistry.registerCommand(SQL_PRODUCT_AWAIT_BOOTSTRAP_COMMAND_ID, accessor => {
+	return accessor.get(ISqlProductBootstrapService).whenSettled;
+});
 
 class SqlProductHomeAction extends Action2 {
 	constructor() {
@@ -133,8 +143,10 @@ class SqlProductBootstrapDemoAction extends Action2 {
 				options
 			);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			notificationService.warn(`Demo SQLite connection was not opened: ${message}`);
+			if (shouldNotifySqlProductDemoBootstrapError(options)) {
+				const message = error instanceof Error ? error.message : String(error);
+				notificationService.warn(`Demo SQLite connection was not opened: ${message}`);
+			}
 			throw error;
 		}
 	}

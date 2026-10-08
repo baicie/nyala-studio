@@ -390,7 +390,7 @@ fn decode_utf16(bytes: &[u8], little_endian: bool) -> Result<String, EncodingErr
     }
 
     let (pairs, remainder) = data.as_chunks::<2>();
-    debug_assert!(remainder.is_empty());
+    debug_assert_eq!(remainder, []);
     let code_units: Vec<u16> = pairs
         .iter()
         .map(|pair| {

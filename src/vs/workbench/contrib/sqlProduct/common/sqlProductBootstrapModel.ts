@@ -62,6 +62,10 @@ export async function runSqlProductDemoBootstrap(
 	return result;
 }
 
+export function shouldNotifySqlProductDemoBootstrapError(options?: SqlProductDemoBootstrapCommandOptions): boolean {
+	return options?.suppressErrorNotification !== true;
+}
+
 export function shouldRunSqlProductBootstrap(options: SqlProductBootstrapOptions): boolean {
 	if (options.force) {
 		return true;

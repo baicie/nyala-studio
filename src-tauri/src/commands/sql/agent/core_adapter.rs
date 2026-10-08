@@ -9,6 +9,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 #[cfg(test)]
+use std::sync::Mutex;
+#[cfg(test)]
 use std::time::Duration;
 
 use serde::Serialize;
@@ -74,6 +76,9 @@ const INDEX_SNAPSHOT_LIMITS: MetadataIndexLimits = MetadataIndexLimits {
     max_columns: 1_024,
     max_bytes: 256 * 1024,
 };
+
+#[cfg(test)]
+type BeforeReturnValidationHook = Box<dyn FnOnce() + Send>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -228,6 +233,8 @@ pub struct LocalSqlCoreAdapter {
     schema_cache: Arc<SchemaSnapshotCache>,
     relation_cache: Arc<RelationGraphCache>,
     index_cache: Arc<IndexSnapshotCache>,
+    #[cfg(test)]
+    before_return_validation: Mutex<Option<BeforeReturnValidationHook>>,
 }
 
 impl LocalSqlCoreAdapter {
@@ -242,6 +249,8 @@ impl LocalSqlCoreAdapter {
             schema_cache: Arc::new(SchemaSnapshotCache::new(DEFAULT_SCHEMA_CACHE_TTL)),
             relation_cache: Arc::new(RelationGraphCache::new(DEFAULT_RELATION_CACHE_TTL)),
             index_cache: Arc::new(IndexSnapshotCache::new(DEFAULT_INDEX_CACHE_TTL)),
+            #[cfg(test)]
+            before_return_validation: Mutex::new(None),
         }
     }
 
@@ -258,6 +267,7 @@ impl LocalSqlCoreAdapter {
             schema_cache: Arc::new(SchemaSnapshotCache::new(ttl)),
             relation_cache: Arc::new(RelationGraphCache::new(ttl)),
             index_cache: Arc::new(IndexSnapshotCache::new(ttl)),
+            before_return_validation: Mutex::new(None),
         }
     }
 
@@ -420,12 +430,14 @@ impl SqlCoreAdapter for LocalSqlCoreAdapter {
             schema,
             ..request
         };
-        search_snapshot(
-            &request,
-            binding.dialect,
-            binding.metadata_revision,
-            &snapshot,
-        )
+        self.build_revision_bound_result(&binding, || {
+            search_snapshot(
+                &request,
+                binding.dialect,
+                binding.metadata_revision,
+                &snapshot,
+            )
+        })
     }
 
     fn search_relations(
@@ -453,12 +465,14 @@ impl SqlCoreAdapter for LocalSqlCoreAdapter {
             tables,
             ..request
         };
-        search_relation_graph(
-            &request,
-            binding.dialect,
-            binding.metadata_revision,
-            &snapshot,
-        )
+        self.build_revision_bound_result(&binding, || {
+            search_relation_graph(
+                &request,
+                binding.dialect,
+                binding.metadata_revision,
+                &snapshot,
+            )
+        })
     }
 
     fn list_indexes(&self, request: IndexListRequest) -> Result<IndexListResult, SqlCommandError> {
@@ -483,16 +497,14 @@ impl SqlCoreAdapter for LocalSqlCoreAdapter {
             tables,
             ..request
         };
-        let result = list_index_snapshot(
-            &request,
-            binding.dialect,
-            binding.metadata_revision,
-            &snapshot,
-        )?;
-        // Do not return an old revision if metadata refresh raced the cache
-        // read or the bounded result construction above.
-        self.with_metadata_connection(&binding, |_| Ok(()))?;
-        Ok(result)
+        self.build_revision_bound_result(&binding, || {
+            list_index_snapshot(
+                &request,
+                binding.dialect,
+                binding.metadata_revision,
+                &snapshot,
+            )
+        })
     }
 
     fn invalidate_schema_cache(&self, connection_id: &str) -> Result<(), SqlCommandError> {
@@ -519,6 +531,38 @@ impl LocalSqlCoreAdapter {
             binding.metadata_revision,
             f,
         )
+    }
+
+    fn build_revision_bound_result<R>(
+        &self,
+        binding: &ValidatedMetadataBinding,
+        build: impl FnOnce() -> Result<R, SqlCommandError>,
+    ) -> Result<R, SqlCommandError> {
+        let result = build()?;
+        #[cfg(test)]
+        self.run_before_return_validation();
+        self.with_metadata_connection(binding, |_| Ok(()))?;
+        Ok(result)
+    }
+
+    #[cfg(test)]
+    fn set_before_return_validation(&self, hook: impl FnOnce() + Send + 'static) {
+        *self
+            .before_return_validation
+            .lock()
+            .expect("return validation hook poisoned") = Some(Box::new(hook));
+    }
+
+    #[cfg(test)]
+    fn run_before_return_validation(&self) {
+        let hook = self
+            .before_return_validation
+            .lock()
+            .expect("return validation hook poisoned")
+            .take();
+        if let Some(hook) = hook {
+            hook();
+        }
     }
 
     fn load_schema_snapshot(
@@ -1752,6 +1796,55 @@ mod tests {
             }],
             budget: IndexListBudget::default(),
         }
+    }
+
+    fn assert_public_result_rejects_refresh_before_return(
+        label: &str,
+        invoke: impl FnOnce(&LocalSqlCoreAdapter) -> Result<(), SqlCommandError>,
+    ) {
+        let root = TempRoot::new(label);
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(Arc::clone(&manager), empty_legacy_store());
+        adapter.set_before_return_validation(move || {
+            manager
+                .bump_metadata_revision("workspace")
+                .expect("refresh metadata before result return");
+        });
+
+        let error = invoke(&adapter).unwrap_err();
+
+        assert!(matches!(error, SqlCommandError::Validation { .. }));
+    }
+
+    #[test]
+    fn schema_search_rejects_metadata_refresh_before_result_return() {
+        assert_public_result_rejects_refresh_before_return("schema-return-refresh", |adapter| {
+            adapter
+                .search_schema(bounded_schema_search_request())
+                .map(|_| ())
+        });
+    }
+
+    #[test]
+    fn relation_search_rejects_metadata_refresh_before_result_return() {
+        assert_public_result_rejects_refresh_before_return("relation-return-refresh", |adapter| {
+            adapter
+                .search_relations(relation_search_request("orders"))
+                .map(|_| ())
+        });
+    }
+
+    #[test]
+    fn index_list_rejects_metadata_refresh_before_result_return() {
+        assert_public_result_rejects_refresh_before_return("index-return-refresh", |adapter| {
+            adapter
+                .list_indexes(index_list_request("orders"))
+                .map(|_| ())
+        });
     }
 
     #[test]
@@ -3034,6 +3127,31 @@ mod tests {
 
         let error = adapter
             .with_metadata_connection(&binding, |entry| entry.conn.list_schemas())
+            .unwrap_err();
+
+        assert!(matches!(error, SqlCommandError::Validation { .. }));
+    }
+
+    #[test]
+    fn revision_bound_result_rejects_metadata_refresh_during_result_build() {
+        let root = TempRoot::new("metadata-refresh-during-result");
+        let database = root.database("main");
+        ensure_demo_db(&database).expect("seed demo database");
+        let manager = sqlite_manager(&root);
+        let profile = sqlite_profile("workspace", &database, true);
+        open_profile(&manager, &profile, ConnectionSecret::default());
+        let adapter = LocalSqlCoreAdapter::new(Arc::clone(&manager), empty_legacy_store());
+        let binding = adapter
+            .resolve_binding("workspace")
+            .expect("resolve metadata binding");
+
+        let error = adapter
+            .build_revision_bound_result(&binding, || {
+                manager
+                    .bump_metadata_revision("workspace")
+                    .expect("refresh metadata during result construction");
+                Ok(())
+            })
             .unwrap_err();
 
         assert!(matches!(error, SqlCommandError::Validation { .. }));

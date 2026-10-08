@@ -1,3 +1,6 @@
+// Keep explicit empty-state assertions in tests without widening their diffs.
+#![cfg_attr(test, allow(unknown_lints, clippy::assert_is_empty))]
+
 mod commands;
 pub(crate) mod product;
 pub mod runtime_status;
@@ -726,6 +729,7 @@ pub fn run() {
             commands::sql_list_schemas,
             commands::sql_list_tables_v2,
             commands::sql_list_columns_v2,
+            commands::sql_refresh_metadata,
             // MVP vNext Agent A2.4 bridge.
             commands::sql::agent::bridge::sql_agent_start,
             commands::sql::agent::bridge::sql_agent_run,

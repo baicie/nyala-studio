@@ -602,6 +602,63 @@ test('Z1.3 gate verifier records the pre-registered primary metric and platform 
 	assert.match(source, /NO-GO/);
 });
 
+test('Z1.3 gate verifier keeps the canonical 1k-x-20 metric id when the summary is missing', async () => {
+	await withTempRoot('nyala-z1-missing-summary', async tempRoot => {
+		const evidencePath = join(tempRoot, 'platform-evidence.json');
+		const outputPath = join(tempRoot, 'gate.json');
+		const benchmarkPath = await writeSyntheticBenchmark(tempRoot);
+		const benchmark = JSON.parse(await readFile(benchmarkPath, 'utf8'));
+		benchmark.records = benchmark.records.filter(
+			record => !(record.workloadId === '1k-x-20' && record.renderer === 'zeus')
+		);
+		await writeFile(benchmarkPath, `${JSON.stringify(benchmark)}\n`, 'utf8');
+		const evidence = await createEmbeddedPlatformEvidence(tempRoot);
+		await writeFile(evidencePath, `${JSON.stringify(evidence)}\n`, 'utf8');
+		await assert.rejects(
+			execFileAsync(process.execPath, [verifierPath, benchmarkPath, outputPath], {
+				env: gateEnv(tempRoot, evidencePath),
+				cwd: new URL('..', import.meta.url).pathname
+			})
+		);
+		const report = JSON.parse(await readFile(outputPath, 'utf8'));
+		assert.equal(report.decision, 'NO-GO');
+		const interactionCheck = report.metricChecks.find(check => check.id === '1k-x-20 scroll interaction');
+		assert.ok(interactionCheck, 'the canonical 1k-x-20 scroll interaction check must be reported');
+		assert.equal(interactionCheck.passed, false);
+		assert.deepEqual(
+			report.metricChecks.filter(check => check.id === '1k-x-20'),
+			[],
+			'the missing-summary branch must not report a bare 1k-x-20 id that R0 cannot match'
+		);
+		assert.match(report.reasons.join('\n'), /missing 1k-x-20 benchmark summary/);
+	});
+});
+
+test('Z1.3 gate verifier records local driver probes deterministically', async () => {
+	await withTempRoot('nyala-z1-probe-determinism', async tempRoot => {
+		const outputPath = join(tempRoot, 'gate.json');
+		const benchmarkPath = await writeSyntheticBenchmark(tempRoot);
+		const env = { ...gateEnv(tempRoot, join(tempRoot, 'unused-platform-evidence.json')) };
+		delete env.NYALA_PLATFORM_EVIDENCE;
+		const runGate = async () => {
+			await assert.rejects(
+				execFileAsync(process.execPath, [verifierPath, benchmarkPath, outputPath], {
+					env,
+					cwd: new URL('..', import.meta.url).pathname
+				})
+			);
+			const report = JSON.parse(await readFile(outputPath, 'utf8'));
+			delete report.generatedAt;
+			return report;
+		};
+		const first = await runGate();
+		const second = await runGate();
+		assert.equal(first.decision, 'NO-GO');
+		assert.equal(first.platformEvidence.macosWebKit.status, 'blocked');
+		assert.deepEqual(second, first, 'an unrecorded local gate artifact must be byte-reproducible');
+	});
+});
+
 test('screenshot run marker decodes across fractional DPR and rejects token or CRC changes', () => {
 	const runToken = fixtureRunToken('marker', 'narrow-panel', 'native', 1);
 	const otherRunToken = fixtureRunToken('marker', 'narrow-panel', 'native', 2);
@@ -680,6 +737,37 @@ test('Z1.3 verifier accepts embedded WKWebView and WebView2 evidence', async () 
 		assert.ok(report.platformMetricChecks.every(check => check.passed));
 		assert.match(report.platformMetricChecks[0].reason, /embedded WKWebView identity verified/);
 		assert.match(report.platformMetricChecks[9].reason, /embedded WebView2 identity verified/);
+	} finally {
+		await rm(tempRoot, { recursive: true, force: true });
+	}
+});
+
+test('Z1.3 verifier accepts contained document geometry at the calibrated viewport tolerance', async () => {
+	const tempRoot = await mkdtemp(join(tmpdir(), 'nyala-z1-viewport-tolerance-test-'));
+	try {
+		const evidencePath = join(tempRoot, 'platform-evidence.json');
+		const outputPath = join(tempRoot, 'gate.json');
+		const benchmarkPath = await writeSyntheticBenchmark(tempRoot);
+		const evidence = await createEmbeddedPlatformEvidence(tempRoot);
+		const record = evidence.windowsWebView2.records.find(
+			candidate =>
+				candidate.workloadId === 'narrow-panel' && candidate.renderer === 'workbench-table' && candidate.iteration === 2
+		);
+		assert.ok(record);
+		record.browserViewport.width = 391;
+		record.visualProbe.documentViewport.clientWidth = 391;
+		record.visualProbe.documentViewport.scrollWidth = 391;
+		record.viewportCalibration.observedCssViewport.width = 391;
+		record.viewportCalibration.calibrationAttempts.at(-1).observedCssViewport.width = 391;
+		await writeFile(evidencePath, `${JSON.stringify(evidence)}\n`, 'utf8');
+
+		const { stdout } = await execFileAsync(process.execPath, [verifierPath, benchmarkPath, outputPath], {
+			env: gateEnv(tempRoot, evidencePath),
+			cwd: new URL('..', import.meta.url).pathname
+		});
+		assert.match(stdout, /GO:/);
+		const report = JSON.parse(await readFile(outputPath, 'utf8'));
+		assert.equal(report.decision, 'GO');
 	} finally {
 		await rm(tempRoot, { recursive: true, force: true });
 	}

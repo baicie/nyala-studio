@@ -1,0 +1,1317 @@
+{
+	"version": 1,
+	"date": "2026-09-22",
+	"purpose": "Cross-repository root-cause report; diagnostic evidence only",
+	"admission": false,
+	"productCodeModified": false,
+	"officialGateChanged": false,
+	"provenance": {
+		"generatedAt": "2026-09-22T05:49:50.309Z",
+		"platform": "darwin",
+		"arch": "arm64",
+		"node": "v26.9.0",
+		"macOS": "15.7.7",
+		"repos": {
+			"nyala-studio": {
+				"head": "882ba2225630bc2cfb0f007669ed4da73d41bf10",
+				"branch": "codex/feat-sql-agent-schema-adapter",
+				"status": [
+					"M .github/workflows/sql-agent-checkpoint-w-attest.yml",
+					" M AGENTS.md",
+					" M README.md",
+					" M docs/ANALYSIS.md",
+					" M docs/adr/0003-sql-agent-parser-boundary.md",
+					" M docs/adr/README.md",
+					" M docs/reviews/2026-08-18-zeus-data-grid-performance-remediation.md",
+					" M docs/sql-mvp-phases/README.md",
+					" M docs/sql-mvp-phases/mvp-vnext-agent-zeus-roadmap.md",
+					" M docs/sql-mvp-phases/phase-a0-a1-foundation-verification.md",
+					" M docs/sql-mvp-phases/phase-a4-workbench-verification.md",
+					" M docs/sql-mvp-phases/phase-vnext-release-gate.json",
+					" M docs/sql-mvp-phases/phase-z1-feasibility-profile.json",
+					" M docs/sql-mvp-phases/phase-z1-gate.json",
+					" M docs/sql-mvp-phases/phase-z1-spike-verification.md",
+					" M package.json",
+					" M scripts/benchmark-sql-result-grid.mjs",
+					" M scripts/benchmark-sql-result-grid.test.mjs",
+					" M scripts/capture-sql-agent-workbench-webdriver.mjs",
+					" M scripts/capture-sql-agent-workbench-webdriver.test.mjs",
+					" M scripts/capture-sql-agent-workbench.test.mjs",
+					" M scripts/serve-frontend-dist.mjs",
+					" M scripts/sql-agent-checkpoint-w-workflow.test.mjs",
+					" M scripts/sql-agent-workbench-visual-contract.mjs",
+					" M scripts/sql-result-grid-workbench-table-bundle.test.mjs",
+					" M scripts/sql-result-grid-workbench-table-entry.ts",
+					" M scripts/verify-sql-agent-capture-run.mjs",
+					" M scripts/verify-sql-agent-capture-run.test.mjs",
+					" M scripts/verify-sql-agent-checkpoint-w.mjs",
+					" M scripts/verify-sql-agent-checkpoint-w.test.mjs",
+					" M scripts/verify-sql-mvp-vnext-release.mjs",
+					" M scripts/verify-sql-mvp-vnext-release.test.mjs",
+					" M scripts/verify-sql-result-grid-gate.mjs",
+					" M scripts/verify-sql-result-grid-gate.test.mjs",
+					" M src-tauri/src/commands/sql/agent/core_adapter.rs",
+					" M src-tauri/src/commands/sql/metadata_v2.rs",
+					" M src-tauri/src/commands/sql/sql_analysis.rs",
+					" M src-tauri/src/commands/sql/sql_lexer.rs",
+					" M src-tauri/src/lib.rs",
+					" M src/vs/workbench/contrib/sqlAgent/browser/media/sqlAgent.css",
+					" M src/vs/workbench/contrib/sqlAgent/test/sqlAgentPanelModel.test.ts",
+					" M src/vs/workbench/contrib/sqlConnections/browser/sqlConnectionTreeModel.ts",
+					" M src/vs/workbench/contrib/sqlConnections/browser/sqlConnectionsView.ts",
+					" M src/vs/workbench/contrib/sqlConnections/common/sqlConnectionRefresh.ts",
+					" M src/vs/workbench/contrib/sqlConnections/test/sqlConnectionRefresh.test.ts",
+					" M src/vs/workbench/contrib/sqlConnections/test/sqlConnectionTreeModelV2.test.ts",
+					" M src/vs/workbench/contrib/sqlProduct/browser/sqlProduct.contribution.ts",
+					" M src/vs/workbench/contrib/sqlProduct/browser/sqlProductActions.ts",
+					" M src/vs/workbench/contrib/sqlProduct/browser/sqlProductBootstrap.ts",
+					" M src/vs/workbench/contrib/sqlProduct/common/sqlProduct.ts",
+					" M src/vs/workbench/contrib/sqlProduct/common/sqlProductBootstrapModel.ts",
+					" M src/vs/workbench/contrib/sqlProduct/test/sqlProductBootstrapModel.test.ts",
+					" M src/vs/workbench/services/sql/browser/sqlCommandExecutor.ts",
+					" M src/vs/workbench/services/sql/browser/sqlMetadataService.ts",
+					" M src/vs/workbench/services/sql/common/sqlMetadata.ts",
+					" M src/vs/workbench/services/sql/test/sqlServices.test.ts",
+					"?? docs/adr/0004-zeus-data-grid-v7-floor-aware-metrics.md",
+					"?? docs/sql-mvp-phases/phase-a0-parser-spike.json",
+					"?? docs/sql-mvp-phases/phase-a4-checkpoint-w-runbook.md",
+					"?? docs/sql-mvp-phases/phase-z1-ci-rerun-checklist.md",
+					"?? scripts/analyze-sql-result-grid-floor-headroom.mjs",
+					"?? scripts/run-sqlparser-spike.mjs",
+					"?? scripts/sql-agent-checkpoint-w-preflight.mjs",
+					"?? scripts/sql-agent-checkpoint-w-preflight.test.mjs",
+					"?? scripts/sql-result-grid-floor-headroom.mjs",
+					"?? scripts/sql-result-grid-jank-trace.mjs",
+					"?? scripts/sql-result-grid-jank-trace.test.mjs",
+					"?? scripts/sql-result-grid-workbench-table-diagnostics.mjs",
+					"?? scripts/sql-result-grid-zeus-diagnostics.mjs",
+					"?? src/vs/workbench/contrib/sqlProduct/common/sqlProductBootstrapService.ts",
+					"?? src/vs/workbench/contrib/sqlProduct/test/sqlProductBootstrapContribution.test.ts",
+					"?? src/vs/workbench/contrib/sqlProduct/test/sqlProductBootstrapService.test.ts"
+				],
+				"fileSha256": {
+					"scripts/benchmark-sql-result-grid.mjs": "3ef6b5a47241aaeeee22bfc1b7ab07474f9101eee75cb9d300e0d3d1db5e4490",
+					"scripts/sql-result-grid-workbench-table-entry.ts": "9d1e554d4e048c32fbe91adc0381a96c69b1276e12eec9be65e6417136a9a1f6",
+					"scripts/sql-result-grid-jank-trace.mjs": "3bf7fbff95a21066135ab5894108028d565617d7a7a356e6b2f6f1177a6f58bd"
+				}
+			},
+			"zeus-ui": {
+				"head": "678d95bd04f5e30a613e62db5706cb5994f18c54",
+				"branch": "codex/release-0.1.0-beta.5",
+				"status": [
+					"M docs/internal/packages.md",
+					" M e2e/advanced/data-grid/data-grid-diagnostics-runtime.spec.ts",
+					" M packages/advanced/data-grid/src/components/data-grid.tsx",
+					" M packages/advanced/data-grid/src/types.ts"
+				],
+				"fileSha256": {
+					"packages/advanced/data-grid/src/components/data-grid.tsx": "8b0f84d023c6632523f27ea317e488ec77ca075cacf37ab3ef6bc5da408d58da",
+					"packages/advanced/data-grid/src/core/row-model.ts": "abae7eff4a4d2323fbf32aa97cfe48c247b6da4cdbf4bb2b2b224276032b6881",
+					"packages/advanced/data-grid/src/core/grid-virtualizer.ts": "058bc00df5b66adeb0e81133ff9860b005cc236c303bd8f111ad50c31b73a8c9",
+					"packages/advanced/virtual/src/core/scheduler.ts": "297133ea938ad494be75f9dcd78117f91c704cce5d945ed534b5ce2904fde80f",
+					"packages/advanced/virtual/src/core/size-cache.ts": "10733f7ac08ab77f8b4191ae0663b6de84cd74a8bc961b5aa3e167f7ca15e6e0"
+				}
+			},
+			"zeus": {
+				"head": "a099abbf03acaf1ad2a78963e5ead72da2758a18",
+				"branch": "main",
+				"status": [],
+				"fileSha256": {
+					"packages/core/signal/src/primitives.ts": "b5d9915506d6a98dcb68bb1e8e41f4b6c657508a15b67be4582141cfa5ac0073",
+					"packages/core/signal/src/effect.ts": "b9ebaa14578709ba9bec51e3b43b538a66548ec8ea55ffcf163236f5c117a0be",
+					"packages/core/runtime-dom/src/list.ts": "4cd2cd5938974d69ffb65e81fcf858bff2b195a4fe172b080dd0ca8a2b650e78"
+				}
+			}
+		}
+	},
+	"browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+	"bundle": {
+		"bytes": 90370,
+		"gzip9Bytes": 29778,
+		"sha256": "3f66cf7e58e8e4ac523bfc4644f1a735fe0fe5f4db5a8469e365f69523ad2c58"
+	},
+	"artifacts": {
+		"production-r5.json": {
+			"file": "production-r5.json.gz",
+			"rawBytes": 217321,
+			"sha256": "15564817e818201ff34e365830c663b6e19d737f20598a6219d39b1432304b84",
+			"gzipSha256": "99acc7514fd735c579872d2fb7509af114ba0c7ee6feb87e6f4568f176fc6362"
+		},
+		"diagnostic-r5.json": {
+			"file": "diagnostic-r5.json.gz",
+			"rawBytes": 852954,
+			"sha256": "3a78e41452a25bd079a191cffa1909d8555688c7b12f7692e93241b9ea7ac559",
+			"gzipSha256": "cd7b247ebd3836349a163c7882672314c3e84cf96f0ef9c829f35a7ff666e3dd"
+		},
+		"horizontal-getter-experiment-r3.json": {
+			"file": "horizontal-getter-experiment-r3.json.gz",
+			"rawBytes": 743954,
+			"sha256": "ed034b3a3b68cd85f569b5a97a1a1c823e8ef7ae6d25dcbab106039a0e4aa534",
+			"gzipSha256": "49ccf7de8d9d23444cfc44f97aa40a8f8ceafbfe769d55eef25b1a261e0293fd"
+		}
+	},
+	"production": {
+		"recordCount": 20,
+		"oneFrameSamples": 400,
+		"summary": {
+			"1k-x-20/workbench-table": {
+				"count": 5,
+				"renderMs": {
+					"available": true,
+					"median": 11.899999976158142,
+					"p95": 27.799999952316284,
+					"min": 10.400000035762787,
+					"max": 27.799999952316284
+				},
+				"scrollP95Ms": {
+					"available": true,
+					"median": 17.5,
+					"p95": 18.69999998807907,
+					"min": 17.399999976158142,
+					"max": 18.69999998807907
+				},
+				"scrollMaxMs": {
+					"available": true,
+					"median": 18,
+					"p95": 19.399999976158142,
+					"min": 17.69999998807907,
+					"max": 19.399999976158142
+				},
+				"domNodes": {
+					"available": true,
+					"median": 404,
+					"p95": 404,
+					"min": 404,
+					"max": 404
+				},
+				"heapBytes": {
+					"available": true,
+					"median": 1960944,
+					"p95": 1966123,
+					"min": 1462537,
+					"max": 1966123
+				},
+				"formatMs": {
+					"available": true,
+					"median": 0.3999999761581421,
+					"p95": 1.7999999523162842,
+					"min": 0.30000001192092896,
+					"max": 1.7999999523162842
+				},
+				"parseMs": {
+					"available": true,
+					"median": 2.300000011920929,
+					"p95": 4.199999988079071,
+					"min": 1.800000011920929,
+					"max": 4.199999988079071
+				},
+				"fixtureBytes": 249743
+			},
+			"1k-x-20/zeus": {
+				"count": 5,
+				"renderMs": {
+					"available": true,
+					"median": 8.900000035762787,
+					"p95": 10.699999988079071,
+					"min": 7.899999976158142,
+					"max": 10.699999988079071
+				},
+				"scrollP95Ms": {
+					"available": true,
+					"median": 18.69999998807907,
+					"p95": 19.5,
+					"min": 18.19999998807907,
+					"max": 19.5
+				},
+				"scrollMaxMs": {
+					"available": true,
+					"median": 19.69999998807907,
+					"p95": 25.69999998807907,
+					"min": 18.399999976158142,
+					"max": 25.69999998807907
+				},
+				"domNodes": {
+					"available": true,
+					"median": 330,
+					"p95": 330,
+					"min": 330,
+					"max": 330
+				},
+				"heapBytes": {
+					"available": true,
+					"median": 9485059,
+					"p95": 9485059,
+					"min": 3140843,
+					"max": 9485059
+				},
+				"formatMs": {
+					"available": true,
+					"median": 0.3999999761581421,
+					"p95": 0.5,
+					"min": 0.2999999523162842,
+					"max": 0.5
+				},
+				"parseMs": {
+					"available": true,
+					"median": 2.199999988079071,
+					"p95": 3.5,
+					"min": 1.7000000476837158,
+					"max": 3.5
+				},
+				"fixtureBytes": 249743
+			},
+			"10k-x-50/zeus": {
+				"count": 5,
+				"renderMs": {
+					"available": true,
+					"median": 9.699999988079071,
+					"p95": 10.199999988079071,
+					"min": 9,
+					"max": 10.199999988079071
+				},
+				"scrollP95Ms": {
+					"available": true,
+					"median": 18.5,
+					"p95": 18.900000035762787,
+					"min": 17.80000001192093,
+					"max": 18.900000035762787
+				},
+				"scrollMaxMs": {
+					"available": true,
+					"median": 19.100000023841858,
+					"p95": 19.900000035762787,
+					"min": 18.299999952316284,
+					"max": 19.900000035762787
+				},
+				"domNodes": {
+					"available": true,
+					"median": 330,
+					"p95": 330,
+					"min": 330,
+					"max": 330
+				},
+				"heapBytes": {
+					"available": true,
+					"median": 5294832,
+					"p95": 5434923,
+					"min": 1608511,
+					"max": 5434923
+				},
+				"formatMs": {
+					"available": true,
+					"median": 5.5,
+					"p95": 5.5,
+					"min": 5.300000011920929,
+					"max": 5.5
+				},
+				"parseMs": {
+					"available": true,
+					"median": 52.69999998807907,
+					"p95": 57.90000003576279,
+					"min": 48.80000001192093,
+					"max": 57.90000003576279
+				},
+				"fixtureBytes": 7144903
+			},
+			"10k-x-50/workbench-table": {
+				"count": 5,
+				"renderMs": {
+					"available": true,
+					"median": 15.899999976158142,
+					"p95": 16.30000001192093,
+					"min": 15.699999988079071,
+					"max": 16.30000001192093
+				},
+				"scrollP95Ms": {
+					"available": true,
+					"median": 19.80000001192093,
+					"p95": 21.600000023841858,
+					"min": 17.30000001192093,
+					"max": 21.600000023841858
+				},
+				"scrollMaxMs": {
+					"available": true,
+					"median": 21.5,
+					"p95": 30.600000023841858,
+					"min": 17.30000001192093,
+					"max": 30.600000023841858
+				},
+				"domNodes": {
+					"available": true,
+					"median": 914,
+					"p95": 914,
+					"min": 914,
+					"max": 914
+				},
+				"heapBytes": {
+					"available": true,
+					"median": 4374085,
+					"p95": 4374085,
+					"min": 4316905,
+					"max": 4374085
+				},
+				"formatMs": {
+					"available": true,
+					"median": 5.599999964237213,
+					"p95": 9.399999976158142,
+					"min": 5.199999988079071,
+					"max": 9.399999976158142
+				},
+				"parseMs": {
+					"available": true,
+					"median": 48.19999998807907,
+					"p95": 60.10000002384186,
+					"min": 46,
+					"max": 60.10000002384186
+				},
+				"fixtureBytes": 7144903
+			}
+		}
+	},
+	"diagnostic": {
+		"recordCount": 20,
+		"floor": {
+			"version": 1,
+			"measurementContractVersion": 6,
+			"scrollCommitBoundary": "post-presentation-opportunity",
+			"executionOrder": "renderer-balanced-rotation-v1",
+			"diagnosticProfile": {
+				"version": 1,
+				"presentationFloorSampleCount": 20,
+				"zeusMeasureNodeChurn": true,
+				"workbenchTableInstrumentation": "listview-prototype-wrapper-v1"
+			},
+			"baselineRenderer": "workbench-table",
+			"baselineP95Ms": 19.19999998807907,
+			"zeusScrollP95Ms": 19.30000001192093,
+			"requiredZeusP95Ms": 15.359999990463258,
+			"requiredImprovement": 0.2,
+			"sharedPresentationFloorP95Ms": 17.399999976158142,
+			"mostOptimisticFloorP95Ms": 16.700000047683716,
+			"mostPessimisticFloorP95Ms": 25.599999964237213,
+			"requiredTargetHeadroomBelowFloorMs": 2.039999985694884,
+			"floorExceedsRequiredTargetWithinTolerance": true,
+			"observedImprovement": -0.005208334578330526,
+			"maximumFloorBoundedImprovement": 0.09375000067908938,
+			"maximumFloorBoundedImprovementAtMostOptimisticFloor": 0.13020833030976872,
+			"floorBoundedSuperiorityReachable": false,
+			"feasibilityConclusion": "PRESENTATION_FLOOR_LIMITED",
+			"recordFloorP95": [
+				{
+					"renderer": "zeus",
+					"iteration": 1,
+					"p95Ms": 16.80000001192093
+				},
+				{
+					"renderer": "workbench-table",
+					"iteration": 1,
+					"p95Ms": 17.599999964237213
+				},
+				{
+					"renderer": "workbench-table",
+					"iteration": 2,
+					"p95Ms": 17.80000001192093
+				},
+				{
+					"renderer": "zeus",
+					"iteration": 2,
+					"p95Ms": 16.700000047683716
+				},
+				{
+					"renderer": "zeus",
+					"iteration": 3,
+					"p95Ms": 25.599999964237213
+				},
+				{
+					"renderer": "workbench-table",
+					"iteration": 3,
+					"p95Ms": 17.30000001192093
+				},
+				{
+					"renderer": "workbench-table",
+					"iteration": 4,
+					"p95Ms": 17.80000001192093
+				},
+				{
+					"renderer": "zeus",
+					"iteration": 4,
+					"p95Ms": 16.900000035762787
+				},
+				{
+					"renderer": "zeus",
+					"iteration": 5,
+					"p95Ms": 16.80000001192093
+				},
+				{
+					"renderer": "workbench-table",
+					"iteration": 5,
+					"p95Ms": 17.399999976158142
+				}
+			],
+			"scrollSamples": {
+				"zeus": {
+					"recordCount": 5,
+					"sampleCount": 100,
+					"presentationOpportunityHistogram": {
+						"1": 100
+					},
+					"oneFrameSampleCount": 100,
+					"oneFrameSampleRate": 1,
+					"presentationWaitMs": {
+						"count": 100,
+						"median": 16.399999976158142,
+						"p95": 20.799999952316284,
+						"max": 27.899999976158142
+					}
+				},
+				"workbench-table": {
+					"recordCount": 5,
+					"sampleCount": 100,
+					"presentationOpportunityHistogram": {
+						"1": 100
+					},
+					"oneFrameSampleCount": 100,
+					"oneFrameSampleRate": 1,
+					"presentationWaitMs": {
+						"count": 100,
+						"median": 12,
+						"p95": 13.200000047683716,
+						"max": 23.5
+					}
+				}
+			},
+			"zeusRendererIntervals": {
+				"available": true,
+				"unit": "scroll-commit",
+				"recordCount": 5,
+				"commitCount": 100,
+				"unionMs": {
+					"count": 100,
+					"median": 1.399999976158142,
+					"p95": 3,
+					"max": 4.300000011920929
+				},
+				"componentsMs": {
+					"handler": {
+						"count": 100,
+						"median": 0,
+						"p95": 0,
+						"max": 0
+					},
+					"range": {
+						"count": 100,
+						"median": 0,
+						"p95": 0.19999998807907104,
+						"max": 0.20000004768371582
+					},
+					"commitPatch": {
+						"count": 100,
+						"median": 1.399999976158142,
+						"p95": 2.800000011920929,
+						"max": 4.300000011920929
+					},
+					"layoutRead": {
+						"count": 100,
+						"median": 0,
+						"p95": 0.09999996423721313,
+						"max": 0.10000002384185791
+					}
+				},
+				"diagnosticsTailMs": {
+					"sampleCount": 100,
+					"count": 100,
+					"median": 0,
+					"p95": 0.10000002384185791,
+					"max": 0.30000001192092896
+				}
+			},
+			"workbenchTableRendererIntervals": {
+				"available": true,
+				"unit": "scroll-commit",
+				"recordCount": 5,
+				"commitCount": 100,
+				"unionMs": {
+					"count": 100,
+					"median": 4.399999976158142,
+					"p95": 10.800000011920929,
+					"max": 23.899999976158142
+				},
+				"componentsMs": {
+					"handler": {
+						"count": 100,
+						"median": 4.399999976158142,
+						"p95": 10.800000011920929,
+						"max": 23.899999976158142
+					},
+					"range": {
+						"count": 100,
+						"median": 0,
+						"p95": 0,
+						"max": 0.10000002384185791
+					},
+					"commitPatch": {
+						"count": 100,
+						"median": 4.399999976158142,
+						"p95": 10.800000011920929,
+						"max": 23.899999976158142
+					},
+					"layoutRead": {
+						"count": 100,
+						"median": 3.5,
+						"p95": 8.800000011920929,
+						"max": 17.700000047683716
+					}
+				}
+			},
+			"rendererCpuRatio": {
+				"available": true,
+				"definition": "Q95(Zeus per-scroll-commit interval union) / Q95(WorkbenchTable per-scroll-commit interval union)",
+				"zeusUnionP95Ms": 3,
+				"workbenchTableUnionP95Ms": 10.800000011920929,
+				"ratio": 0.2777777774711695
+			},
+			"limitations": [
+				"Browser runs use Chromium-compatible headless mode; they are not macOS WebKit or Windows WebView2 evidence.",
+				"The WorkbenchTable renderer instantiates the repository WorkbenchTable with isolated platform services; it is not a full Workbench boot.",
+				"Scroll latency uses one scroll-controller input and a post-presentation-opportunity visible-row completion contract for all renderers; aggregate timings are recomputable from 20 real-displacement samples.",
+				"IPC and format timings measure the existing JSON-shaped result boundary and local cell formatting; no database or Tauri command is invoked.",
+				"Data Grid model/commit diagnostics and WorkbenchTable ListView interval instrumentation are enabled only in diagnostic profiles and add observer overhead; they do not replace admission timings.",
+				"Floor headroom is diagnostic only and cannot rewrite v6 admission evidence.",
+				"Zeus renderer intervals come from the diagnostic sidecar; enabling it adds observer overhead, so the union is an upper bound for production pool cost.",
+				"WorkbenchTable renderer intervals come from a ListView prototype wrapper whose scroll handler window encloses the render call; only the interval union is definition-comparable with the Zeus commit timing.",
+				"Renderer interval union is measured on scroll commits of the diagnostic profile only; it is not an admission metric.",
+				"The renderer CPU ratio compares interval unions measured under two different instrumentation overheads; it is a diagnostic shape indicator, not an admission metric.",
+				"Chromium headless numbers are not macOS WKWebView or Windows WebView2 evidence."
+			]
+		},
+		"cpu1k": {
+			"version": 1,
+			"workloadId": "1k-x-20",
+			"measurementContractVersion": 6,
+			"scrollCommitBoundary": "post-presentation-opportunity",
+			"executionOrder": "renderer-balanced-rotation-v1",
+			"recordCounts": {
+				"total": 10,
+				"zeus": 5,
+				"workbenchTable": 5
+			},
+			"zeusRendererIntervals": {
+				"available": true,
+				"unit": "scroll-commit",
+				"recordCount": 5,
+				"commitCount": 100,
+				"unionMs": {
+					"count": 100,
+					"median": 1.5,
+					"p95": 2.800000011920929,
+					"max": 4.699999988079071
+				},
+				"componentsMs": {
+					"handler": {
+						"count": 100,
+						"median": 0,
+						"p95": 0,
+						"max": 0
+					},
+					"range": {
+						"count": 100,
+						"median": 0.09999996423721313,
+						"p95": 0.19999998807907104,
+						"max": 0.19999998807907104
+					},
+					"commitPatch": {
+						"count": 100,
+						"median": 1.4000000357627869,
+						"p95": 2.699999988079071,
+						"max": 4.599999964237213
+					},
+					"layoutRead": {
+						"count": 100,
+						"median": 0,
+						"p95": 0.09999996423721313,
+						"max": 0.10000002384185791
+					}
+				},
+				"diagnosticsTailMs": {
+					"sampleCount": 100,
+					"count": 100,
+					"median": 0,
+					"p95": 0.10000002384185791,
+					"max": 0.19999998807907104
+				}
+			},
+			"workbenchTableRendererIntervals": {
+				"available": true,
+				"unit": "scroll-commit",
+				"recordCount": 5,
+				"commitCount": 100,
+				"unionMs": {
+					"count": 100,
+					"median": 2.199999988079071,
+					"p95": 3.5,
+					"max": 5.5
+				},
+				"componentsMs": {
+					"handler": {
+						"count": 100,
+						"median": 2.199999988079071,
+						"p95": 3.5,
+						"max": 5.5
+					},
+					"range": {
+						"count": 100,
+						"median": 0,
+						"p95": 0,
+						"max": 0.10000002384185791
+					},
+					"commitPatch": {
+						"count": 100,
+						"median": 2.199999988079071,
+						"p95": 3.5,
+						"max": 5.5
+					},
+					"layoutRead": {
+						"count": 100,
+						"median": 1.7000000476837158,
+						"p95": 2.899999976158142,
+						"max": 4.399999916553497
+					}
+				}
+			},
+			"rendererCpuRatio": {
+				"available": true,
+				"definition": "Q95(Zeus per-scroll-commit interval union) / Q95(WorkbenchTable per-scroll-commit interval union)",
+				"zeusUnionP95Ms": 2.800000011920929,
+				"workbenchTableUnionP95Ms": 3.5,
+				"ratio": 0.8000000034059797
+			},
+			"limitations": [
+				"Browser runs use Chromium-compatible headless mode; they are not macOS WebKit or Windows WebView2 evidence.",
+				"The WorkbenchTable renderer instantiates the repository WorkbenchTable with isolated platform services; it is not a full Workbench boot.",
+				"Scroll latency uses one scroll-controller input and a post-presentation-opportunity visible-row completion contract for all renderers; aggregate timings are recomputable from 20 real-displacement samples.",
+				"IPC and format timings measure the existing JSON-shaped result boundary and local cell formatting; no database or Tauri command is invoked.",
+				"Data Grid model/commit diagnostics and WorkbenchTable ListView interval instrumentation are enabled only in diagnostic profiles and add observer overhead; they do not replace admission timings.",
+				"Workload CPU ratio is a single-run diagnostic point estimate; the proposed v7 thresholds are registered on paired-bootstrap confidence bounds, which this profile does not compute.",
+				"Workload CPU ratio is diagnostic only and cannot rewrite v6 admission evidence, flip the Z1 gate, or serve as v7 admission evidence.",
+				"The ratio compares interval unions measured under two different instrumentation overheads; it is a diagnostic shape indicator, not an admission metric.",
+				"Chromium headless numbers are not macOS WKWebView or Windows WebView2 evidence."
+			]
+		},
+		"zeusInternals": {
+			"1k-x-20": {
+				"modelsPerRecord": [1, 1, 1, 1, 1],
+				"eagerWrappers": [0, 0, 0, 0, 0],
+				"inputToHandler": {
+					"n": 100,
+					"mean": 11.696999999880791,
+					"p50": 12.300000011920929,
+					"p95": 13.600000023841858,
+					"max": 18.599999964237213
+				},
+				"handlerToRange": {
+					"n": 100,
+					"mean": 0.057000000476837155,
+					"p50": 0.09999996423721313,
+					"p95": 0.10000002384185791,
+					"max": 0.30000001192092896
+				},
+				"range": {
+					"n": 100,
+					"mean": 0.05899999916553497,
+					"p50": 0.09999996423721313,
+					"p95": 0.19999998807907104,
+					"max": 0.19999998807907104
+				},
+				"commit": {
+					"n": 100,
+					"mean": 1.597000002861023,
+					"p50": 1.4000000357627869,
+					"p95": 2.699999988079071,
+					"max": 4.599999964237213
+				},
+				"diagnosticTail": {
+					"n": 100,
+					"mean": 0.01699999928474426,
+					"p50": 0,
+					"p95": 0.10000002384185791,
+					"max": 0.19999998807907104
+				},
+				"wrappers": {
+					"n": 100,
+					"mean": 21.3,
+					"p50": 22,
+					"p95": 23,
+					"max": 23
+				},
+				"createdNodes": {
+					"n": 100,
+					"mean": 16.5,
+					"p50": 0,
+					"p95": 150,
+					"max": 150
+				},
+				"removedNodes": {
+					"n": 100,
+					"mean": 16.5,
+					"p50": 0,
+					"p95": 120,
+					"max": 150
+				},
+				"zeroChurn": 65,
+				"commitWithoutChurn": {
+					"n": 65,
+					"mean": 1.3953846170352056,
+					"p50": 1.399999976158142,
+					"p95": 2.200000047683716,
+					"max": 2.699999988079071
+				},
+				"commitWithChurn": {
+					"n": 35,
+					"mean": 1.971428576537541,
+					"p50": 1.699999988079071,
+					"p95": 4.5,
+					"max": 4.599999964237213
+				}
+			},
+			"10k-x-50": {
+				"modelsPerRecord": [1, 1, 1, 1, 1],
+				"eagerWrappers": [0, 0, 0, 0, 0],
+				"inputToHandler": {
+					"n": 100,
+					"mean": 11.828000003695488,
+					"p50": 12.399999976158142,
+					"p95": 14,
+					"max": 23.600000023841858
+				},
+				"handlerToRange": {
+					"n": 100,
+					"mean": 0.04100000023841858,
+					"p50": 0,
+					"p95": 0.10000002384185791,
+					"max": 0.19999998807907104
+				},
+				"range": {
+					"n": 100,
+					"mean": 0.053999999165534975,
+					"p50": 0,
+					"p95": 0.19999998807907104,
+					"max": 0.20000004768371582
+				},
+				"commit": {
+					"n": 100,
+					"mean": 1.5399999982118606,
+					"p50": 1.399999976158142,
+					"p95": 2.800000011920929,
+					"max": 4.300000011920929
+				},
+				"diagnosticTail": {
+					"n": 100,
+					"mean": 0.019000000953674316,
+					"p50": 0,
+					"p95": 0.10000002384185791,
+					"max": 0.30000001192092896
+				},
+				"wrappers": {
+					"n": 100,
+					"mean": 21.3,
+					"p50": 22,
+					"p95": 23,
+					"max": 23
+				},
+				"createdNodes": {
+					"n": 100,
+					"mean": 16.5,
+					"p50": 0,
+					"p95": 150,
+					"max": 150
+				},
+				"removedNodes": {
+					"n": 100,
+					"mean": 16.5,
+					"p50": 0,
+					"p95": 120,
+					"max": 150
+				},
+				"zeroChurn": 65,
+				"commitWithoutChurn": {
+					"n": 65,
+					"mean": 1.3630769216097318,
+					"p50": 1.300000011920929,
+					"p95": 2.200000047683716,
+					"max": 4
+				},
+				"commitWithChurn": {
+					"n": 35,
+					"mean": 1.8685714261872428,
+					"p50": 1.600000023841858,
+					"p95": 3.300000011920929,
+					"max": 4.300000011920929
+				}
+			}
+		}
+	},
+	"horizontalBug": {
+		"unmodifiedJankCommandExit": 1,
+		"message": "Jank trace horizontal scroll span 0px is below the pre-registered 500px.",
+		"probe": {
+			"diagnosticOnly": true,
+			"observations": [
+				{
+					"iteration": 1,
+					"before": {
+						"adapterHasScrollLeft": false,
+						"sampledScrollLeft": 0,
+						"rowsStyle": "transform: translate3d(0px, 0px, 0px); overflow: hidden; contain: strict; left: 0px; top: 0px; width: 2250px; height: 28000px;",
+						"firstCellX": 0,
+						"viewportWidth": 1440,
+						"viewportScrollWidth": 2250
+					},
+					"after": {
+						"adapterHasScrollLeft": false,
+						"sampledScrollLeft": 0,
+						"rowsStyle": "transform: translate3d(0px, 0px, 0px); overflow: hidden; contain: strict; left: -800px; top: 0px; width: 2250px; height: 28000px;",
+						"firstCellX": -800,
+						"viewportWidth": 1440,
+						"viewportScrollWidth": 2250
+					},
+					"visualShift": -800
+				},
+				{
+					"iteration": 2,
+					"before": {
+						"adapterHasScrollLeft": false,
+						"sampledScrollLeft": 0,
+						"rowsStyle": "transform: translate3d(0px, 0px, 0px); overflow: hidden; contain: strict; left: 0px; top: 0px; width: 2250px; height: 28000px;",
+						"firstCellX": 0,
+						"viewportWidth": 1440,
+						"viewportScrollWidth": 2250
+					},
+					"after": {
+						"adapterHasScrollLeft": false,
+						"sampledScrollLeft": 0,
+						"rowsStyle": "transform: translate3d(0px, 0px, 0px); overflow: hidden; contain: strict; left: -800px; top: 0px; width: 2250px; height: 28000px;",
+						"firstCellX": -800,
+						"viewportWidth": 1440,
+						"viewportScrollWidth": 2250
+					},
+					"visualShift": -800
+				}
+			]
+		},
+		"probeCommand": "node /tmp/nyala-zeus-root-cause-20260922/probe-scroll.mjs",
+		"probeExit": 0
+	},
+	"getterExperiment": {
+		"description": "Vite pre-transform added only get scrollLeft() { return table.scrollLeft; } to the benchmark adapter. Relocated runner imports resolve original repository scripts. No tracked source edit.",
+		"productionPatchApplied": false,
+		"recordCount": 12,
+		"exitCode": 0,
+		"profiles": {
+			"1k-x-20": {
+				"version": 1,
+				"workloadId": "1k-x-20",
+				"correlation": "raf-interval-v1",
+				"inputSource": "cdp-mouse-wheel-v1",
+				"frameMultiplier": 1.5,
+				"vsyncCalibrationFrames": 60,
+				"pairedRunCount": 3,
+				"recordCounts": {
+					"total": 6,
+					"zeus": 3,
+					"workbenchTable": 3
+				},
+				"renderers": {
+					"zeus": {
+						"recordCount": 3,
+						"frameCount": 1757,
+						"jankFrameCount": 11,
+						"jankRate": 0.006260671599317018,
+						"perRunRates": [
+							{
+								"iteration": 1,
+								"frameCount": 525,
+								"jankFrameCount": 0,
+								"jankRate": 0
+							},
+							{
+								"iteration": 2,
+								"frameCount": 552,
+								"jankFrameCount": 2,
+								"jankRate": 0.003629764065335753
+							},
+							{
+								"iteration": 3,
+								"frameCount": 680,
+								"jankFrameCount": 9,
+								"jankRate": 0.013254786450662739
+							}
+						]
+					},
+					"workbenchTable": {
+						"recordCount": 3,
+						"frameCount": 2173,
+						"jankFrameCount": 2,
+						"jankRate": 0.0009203865623561896,
+						"perRunRates": [
+							{
+								"iteration": 1,
+								"frameCount": 631,
+								"jankFrameCount": 0,
+								"jankRate": 0
+							},
+							{
+								"iteration": 2,
+								"frameCount": 679,
+								"jankFrameCount": 0,
+								"jankRate": 0
+							},
+							{
+								"iteration": 3,
+								"frameCount": 863,
+								"jankFrameCount": 2,
+								"jankRate": 0.002320185614849188
+							}
+						]
+					}
+				},
+				"baselinePointEstimate": 0.0009203865623561896,
+				"ratioPointEstimate": 6.802219692657939,
+				"differencePointEstimate": 0.005340285036960828,
+				"ratioConfidenceInterval": {
+					"level": 0.95,
+					"resamples": 10000,
+					"seed": 1570635077,
+					"available": false,
+					"lower": 5.527456647398844,
+					"upper": 8.092208520179373
+				},
+				"differenceConfidenceInterval": {
+					"level": 0.95,
+					"resamples": 10000,
+					"seed": 1570635077,
+					"available": true,
+					"lower": 0,
+					"upper": 0.010917797014518438
+				},
+				"thresholdEvaluation": {
+					"metric": "difference",
+					"threshold": 0.01,
+					"definition": "paired-bootstrap 95% CI upper bound",
+					"evaluable": true,
+					"notEvaluableReason": null,
+					"upperBound": 0.010917797014518438,
+					"withinThreshold": false,
+					"outcome": "UPPER-BOUND-EXCEEDS-THRESHOLD"
+				},
+				"limitations": [
+					"Continuous-scroll jank traces use DevTools-dispatched wheel input and headless rAF cadence; they are not macOS WKWebView or Windows WebView2 evidence.",
+					"Wheel input is dispatched at roughly one event per frame through the DevTools protocol, not by a physical trackpad; absolute jank rates may differ from device input.",
+					"The cadence is a target: when the renderer stalls, DevTools input acknowledgement backpressure stretches the wheel window and the trace window with it.",
+					"Each trace runs in its own observer-free navigation after the paired Primary B record, so trace instrumentation never perturbs the Primary B evidence.",
+					"A trace fails closed unless the per-frame scroll offsets show the pre-registered bidirectional displacement.",
+					"The formal v7 sample plan requires 30 paired runs per platform and workload; this diagnostic profile computes confidence bounds on the available paired runs only.",
+					"Paired bootstrap resamples whole runs; frames inside one run are never treated as independent Bernoulli trials.",
+					"This profile is diagnostic only and cannot rewrite v6 admission evidence, flip the Z1 gate, or serve as v7 admission evidence.",
+					"Chromium headless numbers are not macOS WKWebView or Windows WebView2 evidence."
+				]
+			},
+			"10k-x-50": {
+				"version": 1,
+				"workloadId": "10k-x-50",
+				"correlation": "raf-interval-v1",
+				"inputSource": "cdp-mouse-wheel-v1",
+				"frameMultiplier": 1.5,
+				"vsyncCalibrationFrames": 60,
+				"pairedRunCount": 3,
+				"recordCounts": {
+					"total": 6,
+					"zeus": 3,
+					"workbenchTable": 3
+				},
+				"renderers": {
+					"zeus": {
+						"recordCount": 3,
+						"frameCount": 1724,
+						"jankFrameCount": 6,
+						"jankRate": 0.0034802784222737818,
+						"perRunRates": [
+							{
+								"iteration": 1,
+								"frameCount": 649,
+								"jankFrameCount": 6,
+								"jankRate": 0.009259259259259259
+							},
+							{
+								"iteration": 2,
+								"frameCount": 533,
+								"jankFrameCount": 0,
+								"jankRate": 0
+							},
+							{
+								"iteration": 3,
+								"frameCount": 542,
+								"jankFrameCount": 0,
+								"jankRate": 0
+							}
+						]
+					},
+					"workbenchTable": {
+						"recordCount": 3,
+						"frameCount": 2121,
+						"jankFrameCount": 2,
+						"jankRate": 0.000942951438000943,
+						"perRunRates": [
+							{
+								"iteration": 1,
+								"frameCount": 788,
+								"jankFrameCount": 1,
+								"jankRate": 0.0012706480304955528
+							},
+							{
+								"iteration": 2,
+								"frameCount": 690,
+								"jankFrameCount": 1,
+								"jankRate": 0.001451378809869376
+							},
+							{
+								"iteration": 3,
+								"frameCount": 643,
+								"jankFrameCount": 0,
+								"jankRate": 0
+							}
+						]
+					}
+				},
+				"baselinePointEstimate": 0.000942951438000943,
+				"ratioPointEstimate": 3.6908352668213458,
+				"differencePointEstimate": 0.002537326984272839,
+				"ratioConfidenceInterval": {
+					"level": 0.95,
+					"resamples": 10000,
+					"seed": 1570635077,
+					"available": false,
+					"lower": 0,
+					"upper": 7.285053929121727
+				},
+				"differenceConfidenceInterval": {
+					"level": 0.95,
+					"resamples": 10000,
+					"seed": 1570635077,
+					"available": true,
+					"lower": -0.0014492753623188406,
+					"upper": 0.00797595676284483
+				},
+				"thresholdEvaluation": {
+					"metric": "ratio",
+					"threshold": 0.8,
+					"definition": "paired-bootstrap 95% CI upper bound",
+					"evaluable": false,
+					"notEvaluableReason": "WorkbenchTable baseline jank rate is below 1%.",
+					"upperBound": null,
+					"withinThreshold": null,
+					"outcome": "NOT-EVALUABLE"
+				},
+				"limitations": [
+					"Continuous-scroll jank traces use DevTools-dispatched wheel input and headless rAF cadence; they are not macOS WKWebView or Windows WebView2 evidence.",
+					"Wheel input is dispatched at roughly one event per frame through the DevTools protocol, not by a physical trackpad; absolute jank rates may differ from device input.",
+					"The cadence is a target: when the renderer stalls, DevTools input acknowledgement backpressure stretches the wheel window and the trace window with it.",
+					"Each trace runs in its own observer-free navigation after the paired Primary B record, so trace instrumentation never perturbs the Primary B evidence.",
+					"A trace fails closed unless the per-frame scroll offsets show the pre-registered bidirectional displacement.",
+					"The formal v7 sample plan requires 30 paired runs per platform and workload; this diagnostic profile computes confidence bounds on the available paired runs only.",
+					"Paired bootstrap resamples whole runs; frames inside one run are never treated as independent Bernoulli trials.",
+					"This profile is diagnostic only and cannot rewrite v6 admission evidence, flip the Z1 gate, or serve as v7 admission evidence.",
+					"Chromium headless numbers are not macOS WKWebView or Windows WebView2 evidence."
+				]
+			}
+		},
+		"traceSpans": [
+			{
+				"workload": "1k-x-20",
+				"renderer": "workbench-table",
+				"iteration": 1,
+				"horizontalSpanPx": 810,
+				"verticalSpanPx": 3152.05152326507,
+				"durationMs": 10499.6,
+				"dispatchDurationMs": 10502
+			},
+			{
+				"workload": "1k-x-20",
+				"renderer": "zeus",
+				"iteration": 1,
+				"horizontalSpanPx": 756,
+				"verticalSpanPx": 7560,
+				"durationMs": 8733,
+				"dispatchDurationMs": 8729
+			},
+			{
+				"workload": "1k-x-20",
+				"renderer": "zeus",
+				"iteration": 2,
+				"horizontalSpanPx": 756,
+				"verticalSpanPx": 7560,
+				"durationMs": 9216.3,
+				"dispatchDurationMs": 9219
+			},
+			{
+				"workload": "1k-x-20",
+				"renderer": "workbench-table",
+				"iteration": 2,
+				"horizontalSpanPx": 810,
+				"verticalSpanPx": 3152.05152326507,
+				"durationMs": 11299.6,
+				"dispatchDurationMs": 11292
+			},
+			{
+				"workload": "1k-x-20",
+				"renderer": "workbench-table",
+				"iteration": 3,
+				"horizontalSpanPx": 810,
+				"verticalSpanPx": 3152.05152326507,
+				"durationMs": 14399.399999999998,
+				"dispatchDurationMs": 14366
+			},
+			{
+				"workload": "1k-x-20",
+				"renderer": "zeus",
+				"iteration": 3,
+				"horizontalSpanPx": 756,
+				"verticalSpanPx": 7560,
+				"durationMs": 11549.534,
+				"dispatchDurationMs": 11540
+			},
+			{
+				"workload": "10k-x-50",
+				"renderer": "zeus",
+				"iteration": 1,
+				"horizontalSpanPx": 756,
+				"verticalSpanPx": 7560,
+				"durationMs": 10932.9,
+				"dispatchDurationMs": 10929
+			},
+			{
+				"workload": "10k-x-50",
+				"renderer": "workbench-table",
+				"iteration": 1,
+				"horizontalSpanPx": 3150,
+				"verticalSpanPx": 3150.2027621424845,
+				"durationMs": 13132.8,
+				"dispatchDurationMs": 13104
+			},
+			{
+				"workload": "10k-x-50",
+				"renderer": "workbench-table",
+				"iteration": 2,
+				"horizontalSpanPx": 3150,
+				"verticalSpanPx": 3150.2027621424845,
+				"durationMs": 11499.400000000001,
+				"dispatchDurationMs": 11491
+			},
+			{
+				"workload": "10k-x-50",
+				"renderer": "zeus",
+				"iteration": 2,
+				"horizontalSpanPx": 756,
+				"verticalSpanPx": 7560,
+				"durationMs": 8866.3,
+				"dispatchDurationMs": 8854
+			},
+			{
+				"workload": "10k-x-50",
+				"renderer": "zeus",
+				"iteration": 3,
+				"horizontalSpanPx": 756,
+				"verticalSpanPx": 7560,
+				"durationMs": 9016.2,
+				"dispatchDurationMs": 9029
+			},
+			{
+				"workload": "10k-x-50",
+				"renderer": "workbench-table",
+				"iteration": 3,
+				"horizontalSpanPx": 3150,
+				"verticalSpanPx": 3150.2027621424845,
+				"durationMs": 10699.5,
+				"dispatchDurationMs": 10693
+			}
+		]
+	},
+	"commands": [
+		{
+			"repo": "zeus-ui",
+			"command": "pnpm --filter @zeus-web/data-grid build",
+			"exitCode": 0
+		},
+		{
+			"repo": "zeus-ui",
+			"command": "pnpm exec esbuild packages/advanced/data-grid/dist/wc/auto.js --bundle --format=iife --platform=browser --minify --legal-comments=none --outfile=/tmp/nyala-zeus-root-cause-20260922/data-grid-bundle.js",
+			"exitCode": 0
+		},
+		{
+			"repo": "nyala-studio",
+			"command": "node scripts/benchmark-sql-result-grid.mjs --renderer workbench-table,zeus --repeat 5 --workload 1k-x-20,10k-x-50 --workbench-table-implementation real --require-zeus true --zeus-bundle /tmp/nyala-zeus-root-cause-20260922/data-grid-bundle.js --output /tmp/nyala-zeus-root-cause-20260922/production-r5.json",
+			"exitCode": 0,
+			"records": 20
+		},
+		{
+			"repo": "nyala-studio",
+			"command": "node scripts/benchmark-sql-result-grid.mjs --renderer workbench-table,zeus --repeat 5 --workload 1k-x-20,10k-x-50 --workbench-table-implementation real --require-zeus true --zeus-bundle /tmp/nyala-zeus-root-cause-20260922/data-grid-bundle.js --diagnostic-profile true --output /tmp/nyala-zeus-root-cause-20260922/diagnostic-r5.json",
+			"exitCode": 0,
+			"records": 20
+		},
+		{
+			"repo": "nyala-studio",
+			"command": "node scripts/benchmark-sql-result-grid.mjs --renderer workbench-table,zeus --repeat 5 --workload 1k-x-20,10k-x-50 --workbench-table-implementation real --require-zeus true --zeus-bundle /tmp/nyala-zeus-root-cause-20260922/data-grid-bundle.js --diagnostic-profile true --jank-trace true --output /tmp/nyala-zeus-root-cause-20260922/diagnostic-jank-r5.json",
+			"exitCode": 1
+		},
+		{
+			"repo": "nyala-studio",
+			"command": "node /tmp/nyala-zeus-root-cause-20260922/benchmark-horizontal-probe.mjs --renderer workbench-table,zeus --repeat 3 --workload 1k-x-20,10k-x-50 --workbench-table-implementation real --require-zeus true --zeus-bundle /tmp/nyala-zeus-root-cause-20260922/data-grid-bundle.js --diagnostic-profile true --jank-trace true --output /tmp/nyala-zeus-root-cause-20260922/horizontal-getter-experiment-r3.json",
+			"exitCode": 0,
+			"records": 12,
+			"diagnosticExperiment": true
+		},
+		{
+			"repo": "nyala-studio",
+			"command": "node scripts/analyze-sql-result-grid-floor-headroom.mjs --report /tmp/nyala-zeus-root-cause-20260922/diagnostic-r5.json --output /tmp/nyala-zeus-root-cause-20260922/floor-analysis.json",
+			"exitCode": 0
+		},
+		{
+			"repo": "nyala-studio",
+			"command": "node scripts/analyze-sql-result-grid-floor-headroom.mjs --report /tmp/nyala-zeus-root-cause-20260922/diagnostic-r5.json --workload 1k-x-20 --output /tmp/nyala-zeus-root-cause-20260922/cpu-1k-analysis.json",
+			"exitCode": 0
+		},
+		{
+			"repo": "nyala-studio",
+			"command": "pnpm run test:sql-result-grid-benchmark",
+			"exitCode": 0,
+			"passed": 63
+		},
+		{
+			"repo": "nyala-studio",
+			"command": "node --test scripts/sql-result-grid-jank-trace.test.mjs",
+			"exitCode": 0,
+			"passed": 35
+		},
+		{
+			"repo": "zeus-ui",
+			"command": "pnpm --filter @zeus-web/data-grid test:e2e --run",
+			"exitCode": 0,
+			"passed": 104,
+			"environment": "jsdom"
+		},
+		{
+			"repo": "zeus",
+			"command": "pnpm test-unit packages/core/signal/__tests__/diagnostics.spec.ts packages/core/runtime-dom/__tests__/controlFlow.spec.ts",
+			"exitCode": 0,
+			"passed": 56
+		}
+	],
+	"limitations": [
+		"Local dirty-tree Chromium evidence; no native WebView rerun or admission provenance.",
+		"Production/diagnostic sessions are not randomized A/B arms.",
+		"CPU interval ratio has unequal instrumentation overhead and no paired-bootstrap CI.",
+		"Getter experiment has only three paired runs, not formal v7 sampling.",
+		"No Nyala full build, full tests or Rust checks were run.",
+		"Temporary experiment source is archived for traceability, not a production implementation."
+	]
+}

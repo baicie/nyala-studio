@@ -10,6 +10,7 @@ import {
 	dedupeStartupCommands,
 	isSqlProductDemoBootstrapSupported,
 	runSqlProductDemoBootstrap,
+	shouldNotifySqlProductDemoBootstrapError,
 	shouldRunSqlProductBootstrap,
 	SqlProductStartupCommandKind
 } from '../common/sqlProductBootstrapModel.js';
@@ -46,6 +47,11 @@ test('shouldRunSqlProductBootstrap respects force', () => {
 test('isSqlProductDemoBootstrapSupported skips browser preview', () => {
 	assert.equal(isSqlProductDemoBootstrapSupported(false), false);
 	assert.equal(isSqlProductDemoBootstrapSupported(true), true);
+});
+
+test('startup Demo bootstrap delegates error notification to the contribution', () => {
+	assert.equal(shouldNotifySqlProductDemoBootstrapError(undefined), true);
+	assert.equal(shouldNotifySqlProductDemoBootstrapError({ suppressErrorNotification: true }), false);
 });
 
 test('createSqlProductStartupPlan creates SQL layout plan from preferences', () => {

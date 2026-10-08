@@ -11,7 +11,7 @@
  *   * Planned drivers are filtered out at `rebuild()` time. Future
  *     phases can re-introduce them as disabled chips.
  *   * Refresh is per-node — calling `refresh(node)` re-runs the
- *     corresponding expand with `force: true`.
+ *     corresponding expand after invalidating frontend and Agent metadata.
  *   * Tree node shapes are discriminated unions so consumers can rely
  *     on exhaustive `switch (node.kind)`.
  *--------------------------------------------------------------------------------------------*/
@@ -62,6 +62,8 @@ export class SqlConnectionTreeModel extends Disposable {
 	declare readonly _brand: 'SqlConnectionTreeModel';
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	private nodes: DatasourceNode[] = [];
+	private readonly metadataEpochs = new Map<string, number>();
+	private readonly nodeOperationRevisions = new WeakMap<TreeNode, number>();
 
 	constructor(
 		private readonly connections: ISqlConnectionServiceV2,
@@ -71,6 +73,10 @@ export class SqlConnectionTreeModel extends Disposable {
 		super();
 		this._register(
 			this.connections.onChange(() => {
+				for (const node of this.nodes) {
+					this.advanceMetadataEpoch(node.profileId);
+					this.metadata.invalidate(node.profileId);
+				}
 				void this.rebuild();
 			})
 		);
@@ -109,10 +115,17 @@ export class SqlConnectionTreeModel extends Disposable {
 		if (!node) {
 			return;
 		}
+		const epoch = this.metadataEpoch(profileId);
+		const previousState = node.state;
+		const operationRevision = this.beginNodeOperation(node);
 		node.state = { kind: 'loading' };
 		this._onDidChange.fire();
 		try {
 			const schemas = await this.metadata.listSchemas(profileId);
+			if (!this.isCurrentOperation(node, epoch, operationRevision)) {
+				this.restoreStaleOperation(node, operationRevision, previousState);
+				return;
+			}
 			node.schemas = schemas.map<SchemaNode>(s => ({
 				kind: 'schema',
 				profileId,
@@ -122,6 +135,10 @@ export class SqlConnectionTreeModel extends Disposable {
 			}));
 			node.state = { kind: 'loaded', at: Date.now() };
 		} catch (error) {
+			if (!this.isCurrentOperation(node, epoch, operationRevision)) {
+				this.restoreStaleOperation(node, operationRevision, previousState);
+				return;
+			}
 			node.state = { kind: 'error', message: this.formatError(error) };
 		}
 		this._onDidChange.fire();
@@ -136,10 +153,17 @@ export class SqlConnectionTreeModel extends Disposable {
 		if (!node) {
 			return;
 		}
+		const epoch = this.metadataEpoch(profileId);
+		const previousState = node.state;
+		const operationRevision = this.beginNodeOperation(node);
 		node.state = { kind: 'loading' };
 		this._onDidChange.fire();
 		try {
 			const tables = await this.metadata.listTablesV2(profileId, schema);
+			if (!this.isCurrentOperation(node, epoch, operationRevision)) {
+				this.restoreStaleOperation(node, operationRevision, previousState);
+				return;
+			}
 			node.tables = tables.map<TableNode>(t => ({
 				kind: 'table',
 				profileId,
@@ -152,6 +176,10 @@ export class SqlConnectionTreeModel extends Disposable {
 			}));
 			node.state = { kind: 'loaded', at: Date.now() };
 		} catch (error) {
+			if (!this.isCurrentOperation(node, epoch, operationRevision)) {
+				this.restoreStaleOperation(node, operationRevision, previousState);
+				return;
+			}
 			node.state = { kind: 'error', message: this.formatError(error) };
 		}
 		this._onDidChange.fire();
@@ -164,19 +192,45 @@ export class SqlConnectionTreeModel extends Disposable {
 		if (!tn) {
 			return;
 		}
+		const epoch = this.metadataEpoch(profileId);
+		const previousState = tn.state;
+		const operationRevision = this.beginNodeOperation(tn);
 		tn.state = { kind: 'loading' };
 		this._onDidChange.fire();
 		try {
 			const cols = await this.metadata.listColumnsV2(profileId, schema, table);
+			if (!this.isCurrentOperation(tn, epoch, operationRevision)) {
+				this.restoreStaleOperation(tn, operationRevision, previousState);
+				return;
+			}
 			tn.columns = cols;
 			tn.state = { kind: 'loaded', at: Date.now() };
 		} catch (error) {
+			if (!this.isCurrentOperation(tn, epoch, operationRevision)) {
+				this.restoreStaleOperation(tn, operationRevision, previousState);
+				return;
+			}
 			tn.state = { kind: 'error', message: this.formatError(error) };
 		}
 		this._onDidChange.fire();
 	}
 
 	async refresh(node: TreeNode): Promise<void> {
+		const epoch = this.advanceMetadataEpoch(node.profileId);
+		const operationRevision = this.beginNodeOperation(node);
+		try {
+			await this.metadata.refresh(node.profileId);
+		} catch (error) {
+			if (!this.isCurrentOperation(node, epoch, operationRevision)) {
+				return;
+			}
+			node.state = { kind: 'error', message: this.formatError(error) };
+			this._onDidChange.fire();
+			return;
+		}
+		if (!this.isCurrentOperation(node, epoch, operationRevision)) {
+			return;
+		}
 		switch (node.kind) {
 			case 'datasource':
 				await this.expandDatasource(node.profileId);
@@ -196,6 +250,41 @@ export class SqlConnectionTreeModel extends Disposable {
 
 	private findDatasource(profileId: string): DatasourceNode | undefined {
 		return this.nodes.find((n): n is DatasourceNode => n.kind === 'datasource' && n.profileId === profileId);
+	}
+
+	private metadataEpoch(profileId: string): number {
+		return this.metadataEpochs.get(profileId) ?? 0;
+	}
+
+	private advanceMetadataEpoch(profileId: string): number {
+		const epoch = this.metadataEpoch(profileId) + 1;
+		this.metadataEpochs.set(profileId, epoch);
+		return epoch;
+	}
+
+	private isCurrentMetadataEpoch(profileId: string, epoch: number): boolean {
+		return this.metadataEpoch(profileId) === epoch;
+	}
+
+	private beginNodeOperation(node: TreeNode): number {
+		const revision = (this.nodeOperationRevisions.get(node) ?? 0) + 1;
+		this.nodeOperationRevisions.set(node, revision);
+		return revision;
+	}
+
+	private isCurrentOperation(node: TreeNode, metadataEpoch: number, operationRevision: number): boolean {
+		return (
+			this.isCurrentMetadataEpoch(node.profileId, metadataEpoch) &&
+			this.nodeOperationRevisions.get(node) === operationRevision
+		);
+	}
+
+	private restoreStaleOperation(node: TreeNode, operationRevision: number, previousState: NodeState): void {
+		if (this.nodeOperationRevisions.get(node) !== operationRevision || node.state.kind !== 'loading') {
+			return;
+		}
+		node.state = previousState;
+		this._onDidChange.fire();
 	}
 
 	private formatError(error: unknown): string {

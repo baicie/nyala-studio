@@ -81,6 +81,7 @@ import { formatSqlConnectionOperationError } from '../common/sqlConnectionFormOp
 import {
 	indexSqlRestoreSavedConnectionErrors,
 	refreshAndRequireSqlConnection,
+	refreshSqlTableMetadata,
 	restoreSavedConnectionsForRefresh,
 	SqlConnectionRefreshOptions
 } from '../common/sqlConnectionRefresh.js';
@@ -1218,11 +1219,23 @@ export class SqlConnectionsView extends ViewPane {
 		}
 
 		this.showInfo(`Refreshing ${connection.name}...`);
-		this.removeMetadataForConnection(connectionId);
-		await this.loadConnectionMetadata(connection);
-		this.collapsedNodes.delete(getConnectionNodeId(connectionId));
-		this.renderTree();
-		this.showInfo(`Refreshed ${connection.name}.`);
+		try {
+			await this.sqlMetadataService.refresh(connectionId);
+			this.removeMetadataForConnection(connectionId);
+			await this.loadConnectionMetadata(connection);
+			const metadataError = this.state.errorsByConnectionId[connectionId];
+			if (metadataError) {
+				throw new Error(metadataError);
+			}
+			this.collapsedNodes.delete(getConnectionNodeId(connectionId));
+			this.renderTree();
+			this.showInfo(`Refreshed ${connection.name}.`);
+		} catch (error) {
+			this.state.errorsByConnectionId[connectionId] = error instanceof Error ? error.message : String(error);
+			this.collapsedNodes.delete(getConnectionNodeId(connectionId));
+			this.renderTree();
+			throw error;
+		}
 	}
 
 	private async refreshErrorNode(node: SqlConnectionTreeNode): Promise<void> {
@@ -1246,17 +1259,22 @@ export class SqlConnectionsView extends ViewPane {
 			throw new Error('Cannot refresh columns for this node.');
 		}
 
+		const connectionId = node.connectionId;
 		const table = tableFromNode(node);
-		const tableKey = getColumnsKey(node.connectionId, table);
+		const tableKey = getColumnsKey(connectionId, table);
 
 		this.showInfo(`Refreshing ${table.name}...`);
 
 		try {
-			const columns = await this.sqlMetadataService.listColumns({
-				connectionId: node.connectionId,
-				schema: table.schema,
-				tableName: table.name
-			});
+			const columns = await refreshSqlTableMetadata(
+				() => this.sqlMetadataService.refresh(connectionId),
+				() =>
+					this.sqlMetadataService.listColumns({
+						connectionId,
+						schema: table.schema,
+						tableName: table.name
+					})
+			);
 
 			this.state.columnsByTableId[tableKey] = columns;
 			delete this.state.errorsByTableId[tableKey];

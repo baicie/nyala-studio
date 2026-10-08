@@ -682,10 +682,11 @@ mod tests {
     }
 
     #[test]
-    fn malformed_quotes_comments_and_parentheses_are_not_well_formed() {
+    fn malformed_quotes_comments_brackets_and_parentheses_are_not_well_formed() {
         for (dialect, sql) in [
             (SqlDialect::Sqlite, "SELECT 'unterminated"),
             (SqlDialect::PostgreSql, "SELECT 1 /* unterminated"),
+            (SqlDialect::Sqlite, "SELECT [unterminated"),
             (SqlDialect::Sqlite, "SELECT (1"),
             (SqlDialect::MySql, "SELECT 1)"),
         ] {

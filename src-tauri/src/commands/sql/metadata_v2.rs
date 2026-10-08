@@ -17,7 +17,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use super::connection_manager::SharedConnectionManager;
+use super::connection_manager::{ConnectionManager, SharedConnectionManager};
 use super::types::SqlCommandError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -80,6 +80,12 @@ pub struct BoundedSchemaObjectDto {
 pub struct BoundedSchemaSnapshotDto {
     pub objects: Vec<BoundedSchemaObjectDto>,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataRefreshResult {
+    pub connection_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -209,6 +215,32 @@ pub fn sql_list_columns_v2(
 ) -> MetadataResult<Vec<ColumnDto>> {
     with_conn(&manager, &profile_id, |entry| {
         entry.conn.list_columns(&schema, &table)
+    })
+}
+
+#[tauri::command]
+pub fn sql_refresh_metadata(
+    manager: State<'_, SharedConnectionManager>,
+    profile_id: String,
+) -> MetadataResult<MetadataRefreshResult> {
+    refresh_metadata(manager.inner().as_ref(), &profile_id)
+}
+
+fn refresh_metadata(
+    manager: &ConnectionManager,
+    profile_id: &str,
+) -> MetadataResult<MetadataRefreshResult> {
+    let profile_id = profile_id.trim();
+    if profile_id.is_empty() {
+        return Err(SqlCommandError::new(
+            "invalid_input",
+            "profile id must not be empty",
+        ));
+    }
+
+    manager.bump_metadata_revision(profile_id)?;
+    Ok(MetadataRefreshResult {
+        connection_id: profile_id.to_string(),
     })
 }
 
@@ -387,6 +419,56 @@ mod tests {
             .with_conn(&profile.id, |entry| entry.conn.list_tables("main"))
             .unwrap();
         assert!(tables.is_empty());
+    }
+
+    #[test]
+    fn refresh_metadata_advances_the_open_runtime_revision() {
+        let manager = ConnectionManager::new(default_registry(), unique_path());
+        let profile = sqlite_in_memory_profile();
+        manager.open(&profile, ConnectionSecret::default()).unwrap();
+        let (_, before) = manager
+            .get_open_profile_with_revision(&profile.id)
+            .expect("open runtime before metadata refresh");
+
+        let result = refresh_metadata(&manager, &profile.id).expect("refresh metadata");
+        let (_, after) = manager
+            .get_open_profile_with_revision(&profile.id)
+            .expect("open runtime after metadata refresh");
+
+        assert_eq!(result.connection_id, profile.id);
+        assert!(after > before);
+    }
+
+    #[test]
+    fn refresh_metadata_rejects_a_blank_profile_id() {
+        let manager = ConnectionManager::new(default_registry(), unique_path());
+
+        let error = refresh_metadata(&manager, "   ").unwrap_err();
+
+        assert!(matches!(error, SqlCommandError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn refresh_metadata_is_a_successful_no_op_for_an_unknown_profile() {
+        let manager = ConnectionManager::new(default_registry(), unique_path());
+
+        let result = refresh_metadata(&manager, "legacy-only").expect("refresh legacy profile");
+
+        assert_eq!(result.connection_id, "legacy-only");
+    }
+
+    #[test]
+    fn refresh_metadata_does_not_open_a_saved_but_closed_profile() {
+        let manager = ConnectionManager::new(default_registry(), unique_path());
+        let profile = sqlite_in_memory_profile();
+        manager
+            .upsert_profile(profile.clone())
+            .expect("save closed profile");
+
+        let result = refresh_metadata(&manager, &profile.id).expect("refresh closed profile");
+
+        assert_eq!(result.connection_id, profile.id);
+        assert!(!manager.is_open(&result.connection_id));
     }
 
     #[test]

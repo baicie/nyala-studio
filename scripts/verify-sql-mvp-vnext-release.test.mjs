@@ -15,6 +15,16 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+// The release verifier validates GitHub artifact retention against the wall clock and,
+// unlike the component verifiers, exposes no injectable `now`. These fixtures keep the
+// recorded 2026-08 scenario timestamps, so the retention horizon must stay live or the
+// acceptance cases rot the moment the frozen date passes.
+const LIVE_ARTIFACT_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+
+function liveArtifactExpiry() {
+	return new Date(Date.now() + LIVE_ARTIFACT_RETENTION_MS).toISOString();
+}
+
 function createValidZ1Gate(sourceRevision) {
 	const bundleSha256 = 'b'.repeat(64);
 	const workbenchTableBundleSha256 = 'e'.repeat(64);
@@ -357,7 +367,8 @@ function createAttestationArtifactMetadata(sourceRevision) {
 				digest: `sha256:${'7'.repeat(64)}`,
 				created_at: '2026-08-16T03:20:00.000Z',
 				updated_at: '2026-08-16T03:21:00.000Z',
-				expires_at: '2026-08-30T03:20:00.000Z',
+				// Retention is checked against the wall clock, so this one field tracks "now".
+				expires_at: liveArtifactExpiry(),
 				archive_download_url: 'https://api.github.com/repos/baicie/nyala-studio/actions/artifacts/333/zip',
 				workflow_run: {
 					id: 223456789,
@@ -478,7 +489,8 @@ function createZ1AttestationArtifactMetadata(sourceRevision) {
 				digest: `sha256:${'8'.repeat(64)}`,
 				created_at: '2026-08-16T04:08:00.000Z',
 				updated_at: '2026-08-16T04:09:00.000Z',
-				expires_at: '2026-08-30T04:08:00.000Z',
+				// Retention is checked against the wall clock, so this one field tracks "now".
+				expires_at: liveArtifactExpiry(),
 				archive_download_url: 'https://api.github.com/repos/baicie/nyala-studio/actions/artifacts/777/zip',
 				workflow_run: {
 					id: 423456789,
@@ -687,6 +699,42 @@ test('R0 verifier binds A4 and Z1 gate artifacts to the expected release revisio
 	}
 });
 
+test('R0 verifier reports unreadable gate artifacts as structured NO-GO checks', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-r0-missing-gate-test-'));
+	try {
+		const output = join(root, 'release-gate.json');
+		const missingZ1Gate = join(root, 'missing-z1-gate.json');
+		const missingA4Gate = join(root, 'missing-a4-gate.json');
+		const executionError = await execFileAsync(process.execPath, ['scripts/verify-sql-mvp-vnext-release.mjs', output], {
+			env: {
+				...process.env,
+				NYALA_Z1_GATE: missingZ1Gate,
+				NYALA_A4_CHECKPOINT_W_GATE: missingA4Gate
+			}
+		}).then(
+			() => undefined,
+			error => error
+		);
+		assert.ok(executionError instanceof Error, 'a missing gate artifact must stay fail-closed');
+		const report = JSON.parse(await readFile(output, 'utf8'));
+		assert.equal(report.decision, 'NO-GO');
+		assert.deepEqual(
+			report.checks.slice(0, 2).map(check => check.id),
+			['z1-gate-artifact', 'a4-checkpoint-w-artifact']
+		);
+		assert.equal(report.checks.find(check => check.id === 'z1-gate-artifact')?.passed, false);
+		assert.equal(report.checks.find(check => check.id === 'a4-checkpoint-w-artifact')?.passed, false);
+		assert.match(
+			report.checks.find(check => check.id === 'z1-gate-artifact')?.reason ?? '',
+			/Z1 gate artifact could not be loaded/
+		);
+		assert.ok(report.blockers.some(reason => reason.includes('A4 Checkpoint W gate artifact could not be loaded')));
+		assert.doesNotMatch(report.blockers.join('\n'), /ENOENT[\s\S]*at .*verify-sql-mvp-vnext-release/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test('R0 verifier rejects a minimal forged Checkpoint W GO document', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'nyala-r0-forged-a4-test-'));
 	try {
@@ -783,6 +831,17 @@ for (const invalidAttestation of [
 		assert.equal(report.checks.find(check => check.id === 'a4-checkpoint-w')?.passed, false);
 	});
 }
+
+test('R0 verifier rejects Checkpoint W attestation evidence whose retention window has elapsed', async () => {
+	const report = await runCheckpointWReleaseScenario({
+		mutate: ({ attestationArtifacts }) => {
+			attestationArtifacts.artifacts[0].expires_at = new Date(Date.now() - 60_000).toISOString();
+		}
+	});
+	const check = report.checks.find(entry => entry.id === 'a4-checkpoint-w');
+	assert.equal(check?.passed, false);
+	assert.match(check?.reason ?? '', /retention/i);
+});
 
 test('R0 verifier rejects a manual review completed before the capture run finished', async () => {
 	const report = await runCheckpointWReleaseScenario({
@@ -903,6 +962,8 @@ test('R0 verifier accepts a Z1 GO bound to raw inputs and a protected attestatio
 	const report = await runZ1ReleaseScenario();
 	assert.equal(report.checks.find(check => check.id === 'z1-go')?.passed, true);
 	assert.equal(report.checks.find(check => check.id === 'z1-source-revision')?.passed, true);
+	assert.equal(report.checks.find(check => check.id === 'z1-gate-artifact')?.passed, true);
+	assert.equal(report.checks.find(check => check.id === 'a4-checkpoint-w-artifact')?.passed, true);
 	assert.equal(report.decision, 'NO-GO');
 });
 
@@ -983,6 +1044,17 @@ test('R0 verifier rejects a forged or expired Z1 attestation run artifact', asyn
 		}
 	});
 	assert.equal(report.checks.find(check => check.id === 'z1-go')?.passed, false);
+});
+
+test('R0 verifier rejects Z1 attestation evidence whose retention window has elapsed', async () => {
+	const report = await runZ1ReleaseScenario({
+		mutate: ({ attestationArtifacts }) => {
+			attestationArtifacts.artifacts[0].expires_at = new Date(Date.now() - 60_000).toISOString();
+		}
+	});
+	const check = report.checks.find(entry => entry.id === 'z1-go');
+	assert.equal(check?.passed, false);
+	assert.match(check?.reason ?? '', /retention/i);
 });
 
 test('R0 verifier rejects a Z1 attestation dispatched before platform evidence completed', async () => {

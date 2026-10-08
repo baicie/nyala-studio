@@ -8,8 +8,10 @@ import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+	applyWindowRectAndObserveCssViewport,
 	convergeWindowRectForCssViewport,
 	createEmbeddedWebdriverSession,
+	evaluateViaDirectEval,
 	identifyEmbeddedWebview,
 	launchTauriEmbeddedWebdriver,
 	unwrapWebdriverValue,
@@ -19,6 +21,8 @@ import {
 	createBalancedBenchmarkPlan,
 	EXECUTION_ORDER,
 	isBenchmarkResultForRun,
+	isValidWorkbenchTableRendererImplementation,
+	maximumVirtualRenderedRows,
 	MEASUREMENT_CONTRACT_VERSION,
 	SCROLL_COMMIT_BOUNDARY
 } from './sql-result-grid-benchmark-contract.mjs';
@@ -131,6 +135,8 @@ async function run() {
 			pagePath,
 			'--renderer',
 			selectedRenderers.join(','),
+			'--workbench-table-implementation',
+			'real',
 			'--zeus-bundle',
 			zeusBundle
 		];
@@ -148,7 +154,7 @@ async function run() {
 			});
 		}
 		const session = appBinary
-			? await createEmbeddedWebdriverSession(driverUrl)
+			? await createEmbeddedWebdriverSession(driverUrl, { timeoutMs: startupTimeoutMs })
 			: await createExternalSession(driverUrl, browser);
 		sessionId = session.sessionId;
 		await setSessionTimeouts(driverUrl, sessionId, scriptTimeoutMs);
@@ -187,8 +193,21 @@ async function run() {
 				renderer,
 				executionOrder: EXECUTION_ORDER,
 				executionOrdinal,
-				workload
+				workload,
+				workbenchTableImplementation: 'real',
+				workbenchTableBundleSha256: provenance.workbenchTableBundleSha256
 			});
+			if (renderer === 'workbench-table') {
+				const bundleSha256 = record.rendererImplementation?.bundleSha256;
+				if (
+					!isValidWorkbenchTableRendererImplementation(record.rendererImplementation, bundleSha256) ||
+					(provenance.workbenchTableBundleSha256 !== undefined &&
+						provenance.workbenchTableBundleSha256 !== bundleSha256)
+				) {
+					throw new Error('WorkbenchTable bundle identity changed within the platform run.');
+				}
+				provenance = { ...provenance, workbenchTableBundleSha256: bundleSha256 };
+			}
 			const enriched = {
 				...record,
 				workloadId: workload.id,
@@ -378,23 +397,27 @@ async function createExternalSession(baseUrl, browserName) {
 async function calibrateCssViewport(baseUrl, sessionId, workload, embedded) {
 	return convergeWindowRectForCssViewport(
 		{ width: workload.width, height: workload.height },
-		async requestedWindowRect => {
-			const appliedPayload = await webdriverRequest(baseUrl, `/session/${sessionId}/window/rect`, 'POST', {
-				width: requestedWindowRect.width,
-				height: requestedWindowRect.height
-			});
-			let appliedWindowRect = normalizeWindowRect(unwrapWebdriverValue(appliedPayload));
-			if (!appliedWindowRect) {
-				const observedPayload = await webdriverRequest(baseUrl, `/session/${sessionId}/window/rect`);
-				appliedWindowRect = normalizeWindowRect(unwrapWebdriverValue(observedPayload));
-			}
-			if (!appliedWindowRect) throw new Error('WebDriver did not return an applied window rect.');
-			const observed = await readCssViewport(baseUrl, sessionId, embedded);
-			return {
-				appliedWindowRect,
-				observedCssViewport: { width: observed.width, height: observed.height }
-			};
-		},
+		requestedWindowRect =>
+			applyWindowRectAndObserveCssViewport(requestedWindowRect, {
+				applyWindowRect: async appliedRequest => {
+					const appliedPayload = await webdriverRequest(baseUrl, `/session/${sessionId}/window/rect`, 'POST', {
+						width: appliedRequest.width,
+						height: appliedRequest.height
+					});
+					let appliedWindowRect = normalizeWindowRect(unwrapWebdriverValue(appliedPayload));
+					if (!appliedWindowRect) {
+						const observedPayload = await webdriverRequest(baseUrl, `/session/${sessionId}/window/rect`);
+						appliedWindowRect = normalizeWindowRect(unwrapWebdriverValue(observedPayload));
+					}
+					if (!appliedWindowRect) throw new Error('WebDriver did not return an applied window rect.');
+					return appliedWindowRect;
+				},
+				observeCssViewport: async () => {
+					const observed = await readCssViewport(baseUrl, sessionId, embedded);
+					return { width: observed.width, height: observed.height };
+				},
+				settleMs: 250
+			}),
 		{ maxAttempts: 4, tolerance: 1, initialWindowRect: { width: workload.width, height: workload.height } }
 	);
 }
@@ -404,32 +427,32 @@ async function resetPageForViewportCalibration(baseUrl, sessionId, embedded) {
 	await webdriverRequest(baseUrl, `/session/${sessionId}/url`, 'POST', { url: blankUrl });
 	const deadline = Date.now() + 30_000;
 	while (Date.now() < deadline) {
-		const state = embedded
-			? await evaluateViaDirectEval(
-					baseUrl,
-					'({ href: location.href, readyState: document.readyState, hasBenchmarkResult: Boolean(document.querySelector("#benchmark-result")) })'
-				)
-			: unwrapWebdriverValue(
-					await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
-						script:
-							'return { href: location.href, readyState: document.readyState, hasBenchmarkResult: Boolean(document.querySelector("#benchmark-result")) };',
-						args: []
-					})
-				);
-		if (state?.href === blankUrl && state.readyState === 'complete' && state.hasBenchmarkResult === false) return;
+		if (embedded) {
+			const urlPayload = await webdriverRequest(baseUrl, `/session/${sessionId}/url`);
+			if (unwrapWebdriverValue(urlPayload) === blankUrl) return;
+		} else {
+			const state = unwrapWebdriverValue(
+				await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
+					script:
+						'return { href: location.href, readyState: document.readyState, hasBenchmarkResult: Boolean(document.querySelector("#benchmark-result")) };',
+					args: []
+				})
+			);
+			if (state?.href === blankUrl && state.readyState === 'complete' && state.hasBenchmarkResult === false) return;
+		}
 		await new Promise(resolveDelay => setTimeout(resolveDelay, 50));
 	}
 	throw new Error(`Timed out waiting for viewport calibration reset: ${blankUrl}`);
 }
 
 async function startDeferredBenchmark(baseUrl, sessionId, embedded) {
-	const expression = "window.dispatchEvent(new Event('nyala-benchmark-start')); true";
+	const expression = "window.dispatchEvent(new Event('nyala-benchmark-start')), true";
 	if (embedded) {
-		await evaluateViaDirectEval(baseUrl, expression);
+		await evaluateViaDirectEval(baseUrl, expression, { timeoutMs: scriptTimeoutMs });
 		return;
 	}
 	await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
-		script: `return ${expression};`,
+		script: `return (${expression});`,
 		args: []
 	});
 }
@@ -445,7 +468,8 @@ async function readCssViewport(baseUrl, sessionId, embedded) {
 	const viewport = embedded
 		? await evaluateViaDirectEval(
 				baseUrl,
-				'({ width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio })'
+				'({ width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio })',
+				{ timeoutMs: scriptTimeoutMs }
 			)
 		: unwrapWebdriverValue(
 				await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
@@ -519,26 +543,9 @@ async function waitForResult(baseUrl, sessionId, embedded, expected) {
 }
 
 async function readBenchmarkResultViaDirectEval(baseUrl) {
-	return evaluateViaDirectEval(baseUrl, "document.querySelector('#benchmark-result')?.textContent || ''");
-}
-
-async function evaluateViaDirectEval(baseUrl, expression) {
-	const done = 'arguments[arguments.length - 1]';
-	const payload = await webdriverRequest(
-		baseUrl,
-		'/wdio/eval',
-		'POST',
-		{
-			script: `try { ${done}({ ok: true, value: (${expression}) }); } catch (error) { ${done}({ ok: false, error: String(error) }); }`,
-			window_label: 'main',
-			timeout_ms: scriptTimeoutMs
-		},
-		{ timeoutMs: scriptTimeoutMs + 5_000 }
-	);
-	if (payload.error) {
-		throw new Error(`Embedded WebDriver direct eval failed: ${JSON.stringify(payload).slice(0, 1_000)}`);
-	}
-	return payload.value;
+	return evaluateViaDirectEval(baseUrl, "document.querySelector('#benchmark-result')?.textContent || ''", {
+		timeoutMs: scriptTimeoutMs
+	});
 }
 
 async function saveScreenshot(baseUrl, sessionId, path, browserViewport, runToken) {
@@ -640,6 +647,12 @@ function summarize(records) {
 
 function validateVisualProbe(record, workload) {
 	const probe = record.visualProbe;
+	const renderedRowsValid =
+		record.renderer === 'native'
+			? record.renderedRows === workload.rows
+			: Number.isInteger(record.renderedRows) &&
+				record.renderedRows > 0 &&
+				record.renderedRows <= maximumVirtualRenderedRows(workload);
 	const passed =
 		probe &&
 		probe.rootWidth >= Math.min(workload.width, 300) &&
@@ -650,11 +663,20 @@ function validateVisualProbe(record, workload) {
 		probe.firstVisibleCellText.length > 0 &&
 		probe.firstCellInViewport === true &&
 		probe.virtualRowsBounded === true &&
+		renderedRowsValid &&
+		probe.outerDocumentOverflowFree === true &&
+		probe.runMarkerAnchored === true &&
+		probe.documentViewport?.clientWidth === record.browserViewport?.width &&
+		probe.documentViewport?.clientHeight === record.browserViewport?.height &&
+		probe.documentViewport?.scrollWidth === record.browserViewport?.width &&
+		probe.documentViewport?.scrollHeight === record.browserViewport?.height &&
 		Number.isInteger(probe.visibleTextLength) &&
 		probe.visibleTextLength > 0;
 	return {
 		passed: Boolean(passed),
-		reason: passed ? 'visual probe passed' : 'renderer did not expose a visible header and first cell'
+		reason: passed
+			? 'visual probe passed'
+			: 'renderer did not expose contained document geometry, a visible header, and a first cell'
 	};
 }
 

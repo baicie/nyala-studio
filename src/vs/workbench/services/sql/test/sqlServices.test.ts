@@ -31,6 +31,23 @@ class FakeSqlCommandExecutor implements ISqlCommandExecutor {
 	readonly calls: FakeSqlCall[] = [];
 	responses = new Map<SqlCommandName, unknown>();
 	errors = new Map<SqlCommandName, unknown>();
+	private readonly deferredResponses = new Map<SqlCommandName, Promise<unknown>[]>();
+
+	deferResponse<T>(command: SqlCommandName): {
+		resolve: (value: T) => void;
+		reject: (error: unknown) => void;
+	} {
+		let resolve!: (value: T) => void;
+		let reject!: (error: unknown) => void;
+		const response = new Promise<T>((resolvePromise, rejectPromise) => {
+			resolve = resolvePromise;
+			reject = rejectPromise;
+		});
+		const queue = this.deferredResponses.get(command) ?? [];
+		queue.push(response);
+		this.deferredResponses.set(command, queue);
+		return { resolve, reject };
+	}
 
 	async execute<T>(
 		command: SqlCommandName,
@@ -45,6 +62,10 @@ class FakeSqlCommandExecutor implements ISqlCommandExecutor {
 
 		if (this.errors.has(command)) {
 			throw this.errors.get(command);
+		}
+		const deferred = this.deferredResponses.get(command)?.shift();
+		if (deferred) {
+			return (await deferred) as T;
 		}
 
 		return this.responses.get(command) as T;
@@ -830,6 +851,119 @@ test('SqlMetadataService.listDatabases invokes sql_list_databases', async () => 
 			connectionId: 'mysql-local'
 		}
 	});
+});
+
+test('SqlMetadataService.refresh advances backend metadata and drops cached values', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	executor.responses.set('sql_list_schemas', [{ schema: 'main', isDefault: true }]);
+	executor.responses.set('sql_refresh_metadata', { connectionId: 'local' });
+	const service = new SqlMetadataService(executor);
+
+	await service.listSchemas('local');
+	await service.listSchemas('local');
+	await service.refresh('local');
+	await service.listSchemas('local');
+
+	assert.deepEqual(
+		executor.calls.map(call => call.command),
+		['sql_list_schemas', 'sql_refresh_metadata', 'sql_list_schemas']
+	);
+	assert.deepEqual(executor.calls[1], {
+		command: 'sql_refresh_metadata',
+		args: { profileId: 'local' }
+	});
+});
+
+test('SqlMetadataService.refresh prevents an older request from repopulating the cache', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	const staleResponse = executor.deferResponse<{ schema: string; isDefault: boolean }[]>('sql_list_schemas');
+	executor.responses.set('sql_list_schemas', [{ schema: 'fresh', isDefault: true }]);
+	executor.responses.set('sql_refresh_metadata', { connectionId: 'local' });
+	const service = new SqlMetadataService(executor);
+
+	const staleRequest = service.listSchemas('local');
+	await service.refresh('local');
+	staleResponse.resolve([{ schema: 'stale', isDefault: true }]);
+	await staleRequest;
+	const current = await service.listSchemas('local');
+
+	assert.equal(current[0].schema, 'fresh');
+	assert.deepEqual(
+		executor.calls.map(call => call.command),
+		['sql_list_schemas', 'sql_refresh_metadata', 'sql_list_schemas']
+	);
+});
+
+test('SqlMetadataService waits for an in-flight refresh before serving cached metadata', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	executor.responses.set('sql_list_schemas', [{ schema: 'stale', isDefault: true }]);
+	const service = new SqlMetadataService(executor);
+	await service.listSchemas('local');
+	const refreshResponse = executor.deferResponse<{ connectionId: string }>('sql_refresh_metadata');
+	const refresh = service.refresh('local');
+	executor.responses.set('sql_list_schemas', [{ schema: 'fresh', isDefault: true }]);
+
+	const duringRefresh = service.listSchemas('local');
+	refreshResponse.resolve({ connectionId: 'local' });
+	await refresh;
+	const current = await duringRefresh;
+
+	assert.equal(current[0].schema, 'fresh');
+	assert.deepEqual(
+		executor.calls.map(call => call.command),
+		['sql_list_schemas', 'sql_refresh_metadata', 'sql_list_schemas']
+	);
+});
+
+test('SqlMetadataService serializes concurrent refreshes for the same profile', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	const firstResponse = executor.deferResponse<{ connectionId: string }>('sql_refresh_metadata');
+	const secondResponse = executor.deferResponse<{ connectionId: string }>('sql_refresh_metadata');
+	const service = new SqlMetadataService(executor);
+
+	const firstRefresh = service.refresh('local');
+	const secondRefresh = service.refresh('local');
+	await Promise.resolve();
+	const startedBeforeFirstCompleted = executor.calls.filter(call => call.command === 'sql_refresh_metadata').length;
+	firstResponse.resolve({ connectionId: 'local' });
+	await firstRefresh;
+	secondResponse.resolve({ connectionId: 'local' });
+	await secondRefresh;
+
+	assert.equal(startedBeforeFirstCompleted, 1);
+	assert.equal(executor.calls.filter(call => call.command === 'sql_refresh_metadata').length, 2);
+});
+
+test('SqlMetadataService keeps delimiter-bearing profile and schema cache keys isolated', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	const service = new SqlMetadataService(executor);
+	executor.responses.set('sql_list_tables_v2', [
+		{ kind: 'table', name: 'first', schema: 'beta|main', columns: [], primaryKey: [] }
+	]);
+	await service.listTablesV2('alpha', 'beta|main');
+	executor.responses.set('sql_list_tables_v2', [
+		{ kind: 'table', name: 'second', schema: 'main', columns: [], primaryKey: [] }
+	]);
+
+	const second = await service.listTablesV2('alpha|beta', 'main');
+
+	assert.equal(second[0].name, 'second');
+	assert.equal(executor.calls.filter(call => call.command === 'sql_list_tables_v2').length, 2);
+});
+
+test('SqlMetadataService.invalidate leaves delimiter-prefixed profiles cached', async () => {
+	const executor = new FakeSqlCommandExecutor();
+	const service = new SqlMetadataService(executor);
+	executor.responses.set('sql_list_schemas', [{ schema: 'prefixed', isDefault: true }]);
+	await service.listSchemas('alpha|beta');
+	executor.responses.set('sql_list_schemas', [{ schema: 'alpha', isDefault: true }]);
+	await service.listSchemas('alpha');
+
+	service.invalidate('alpha');
+	const prefixed = await service.listSchemas('alpha|beta');
+
+	assert.equal(prefixed[0].schema, 'prefixed');
+	assert.equal(executor.calls.filter(call => call.command === 'sql_list_schemas').length, 2);
 });
 
 test('SqlProductService.bootstrapDemo invokes the registered product command', async () => {
