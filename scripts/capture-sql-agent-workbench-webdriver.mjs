@@ -192,6 +192,7 @@ async function run() {
 				`Boolean(document.querySelector('.sql-agent-view')) && document.querySelector('.sql-agent-view').getClientRects().length > 0`,
 				`${requestedViewport.id} SQL Agent panel`
 			);
+			await clearTransientNotifications();
 			await delay(350);
 
 			const tabEvidence = await collectTabOrder();
@@ -323,6 +324,22 @@ async function run() {
 			timeoutMs: scriptTimeoutMs,
 			pollIntervalMs
 		});
+	}
+
+	async function clearTransientNotifications() {
+		const hasVisibleError =
+			await syncEval(`(() => [...document.querySelectorAll('.monaco-workbench > .notifications-toasts.visible .notification-toast')].some(element => {
+			const icon = element.querySelector('.notification-list-item-icon');
+			return icon?.classList.contains('codicon-error');
+		}))()`);
+		if (hasVisibleError) {
+			throw new Error('A visible error notification blocks native Agent capture.');
+		}
+		await dispatchCommand('notifications.hideToasts');
+		await waitForExpression(
+			`![...document.querySelectorAll('.monaco-workbench > .notifications-toasts.visible .notification-toast')].some(element => element.getClientRects().length > 0)`,
+			'transient notification toasts to clear'
+		);
 	}
 
 	async function waitForExpression(expression, label) {

@@ -119,9 +119,11 @@ jobs:
         run: pnpm run build
       - name: Build webdriver-enabled Nyala debug binary
         shell: pwsh
-        run: >-
-          pnpm exec tauri build --debug --features webdriver --no-bundle --ci
-          --config '{"build":{"beforeBuildCommand":""}}' -- --locked
+        run: |
+          $buildConfig = Join-Path $env:RUNNER_TEMP 'tauri-capture-config.json'
+          Set-Content -LiteralPath $buildConfig -Value '{"build":{"beforeBuildCommand":""}}' -NoNewline
+          pnpm exec tauri build --debug --features webdriver --no-bundle --ci `
+            --config $buildConfig -- --locked
       - name: Capture embedded Agent Workbench evidence
         shell: pwsh
         run: |
