@@ -73,9 +73,9 @@
 }
 
 .sql-agent-status {
-	min-height: 14px;
+	min-height: 16px;
 	font-size: 12px;
-	line-height: 14px;
+	line-height: 16px;
 	overflow-wrap: anywhere;
 	color: var(--vscode-descriptionForeground);
 }
