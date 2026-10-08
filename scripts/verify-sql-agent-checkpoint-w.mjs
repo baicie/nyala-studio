@@ -540,11 +540,15 @@ function validateSnapshot(snapshot, expectedViewport, reasons) {
 	}
 	if (snapshot.workbenchReady !== true) reasons.push(`${prefix} Workbench snapshot is not ready`);
 	const agentRootRect = snapshot.agentRoot?.rect;
+	const statusElementRect = snapshot.statusElement?.rect;
 	if (snapshot.agentRoot?.visible !== true || !isPositiveRect(agentRootRect)) {
 		reasons.push(`${prefix} Agent root snapshot is not visible and bounded`);
 	}
 	if (prefix === 'narrow' && snapshot.primarySidebarVisible !== false) {
 		reasons.push('narrow snapshot did not close the primary sidebar');
+	}
+	if (snapshot.statusElement?.visible !== true || !isPositiveRect(statusElementRect)) {
+		reasons.push(`${prefix} Agent status snapshot is not visible and bounded`);
 	}
 	const statusBarRect = snapshot.statusBar?.rect;
 	if (snapshot.statusBar?.visible !== true || !isPositiveRect(statusBarRect)) {
@@ -555,8 +559,13 @@ function validateSnapshot(snapshot, expectedViewport, reasons) {
 	const notificationOverlays = validateNotificationOverlays(snapshot.notificationOverlays, expectedViewport, reasons);
 	if (isPositiveRect(agentRootRect) && !rectWithinViewport(agentRootRect, expectedViewport)) {
 		reasons.push(`${prefix} Agent root snapshot is outside the viewport`);
-	} else if (isPositiveRect(statusBarRect) && rectsIntersect(agentRootRect, statusBarRect)) {
+	} else if (isPositiveRect(statusBarRect) && rectsIntersectWithTolerance(agentRootRect, statusBarRect, 0.1)) {
 		reasons.push(`${prefix} Agent root snapshot overlaps the statusbar`);
+	}
+	if (isPositiveRect(statusElementRect) && !rectWithinViewport(statusElementRect, expectedViewport)) {
+		reasons.push(`${prefix} Agent status snapshot is outside the viewport`);
+	} else if (isPositiveRect(statusBarRect) && rectsIntersectWithTolerance(statusElementRect, statusBarRect, 0.1)) {
+		reasons.push(`${prefix} Agent status snapshot overlaps the statusbar`);
 	}
 	for (const overlay of notificationOverlays) {
 		if (rectsIntersect(agentRootRect, overlay.rect)) {
@@ -986,6 +995,17 @@ function rectsIntersect(left, right) {
 		left.right > right.left &&
 		left.top < right.bottom &&
 		left.bottom > right.top
+	);
+}
+
+function rectsIntersectWithTolerance(left, right, tolerance) {
+	return (
+		isPositiveRect(left) &&
+		isPositiveRect(right) &&
+		left.left < right.right - tolerance &&
+		left.right > right.left + tolerance &&
+		left.top < right.bottom - tolerance &&
+		left.bottom > right.top + tolerance
 	);
 }
 

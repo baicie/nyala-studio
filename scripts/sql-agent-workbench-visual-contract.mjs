@@ -19,6 +19,7 @@ export function createAgentWorkbenchSnapshotExpression() {
   };
   const visible = element => Boolean(element && element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
   const root = document.querySelector('.sql-agent-view');
+  const statusElement = document.querySelector('.sql-agent-status');
   const controls = [...document.querySelectorAll('.sql-agent-view textarea, .sql-agent-view select, .sql-agent-view button')].map(element => ({
     tag: element.tagName,
     ariaLabel: element.getAttribute('aria-label') || '',
@@ -53,6 +54,7 @@ export function createAgentWorkbenchSnapshotExpression() {
       return { visible: visible(element), rect: rect(element) };
     })(),
     agentRoot: { visible: visible(root), rect: rect(root) },
+    statusElement: { visible: visible(statusElement), rect: rect(statusElement) },
     notificationOverlays,
     ariaLabels: [...document.querySelectorAll('.sql-agent-view [aria-label]')].map(element => element.getAttribute('aria-label')),
     controls,
@@ -65,6 +67,7 @@ export function createAgentWorkbenchSnapshotExpression() {
 export function validateAgentWorkbenchSnapshot(snapshot, viewport, tabOrder) {
 	const checks = [];
 	const statusBarRect = snapshot.statusBar?.rect;
+	const statusElementRect = snapshot.statusElement?.rect;
 	const statusBarWithinViewport =
 		snapshot.statusBar?.visible && isPositiveRect(statusBarRect) && rectWithinViewport(statusBarRect, viewport);
 	const notificationOverlays = Array.isArray(snapshot.notificationOverlays) ? snapshot.notificationOverlays : undefined;
@@ -111,19 +114,30 @@ export function validateAgentWorkbenchSnapshot(snapshot, viewport, tabOrder) {
 		);
 	}
 	checks.push(check('agent-root-visible', snapshot.agentRoot?.visible, 'SQL Agent root is visible'));
+	checks.push(check('status-element-visible', snapshot.statusElement?.visible, 'Agent status is visible'));
+	checks.push(
+		check(
+			'status-element-bounds',
+			snapshot.statusElement?.visible === true &&
+				rectWithinViewport(statusElementRect, viewport) &&
+				clearsStatusBarRectWithTolerance(statusElementRect, statusBarRect) &&
+				clearsNotificationOverlays(statusElementRect, notificationOverlays),
+			`${formatRect(statusElementRect)} in ${viewport.width}x${viewport.height}; clear of statusbar and notification overlays`
+		)
+	);
 	const agentRootRect = snapshot.agentRoot?.rect;
 	const agentRootWithinSurface =
 		notificationOverlayBoundsValid &&
 		isPositiveRect(agentRootRect) &&
 		rectWithinViewport(agentRootRect, viewport) &&
-		clearsStatusBarRect(agentRootRect, statusBarWithinViewport ? statusBarRect : undefined) &&
+		clearsStatusBarRectWithTolerance(agentRootRect, statusBarWithinViewport ? statusBarRect : undefined) &&
 		clearsNotificationOverlays(agentRootRect, notificationOverlays);
 	checks.push(
 		check(
 			'agent-root-bounds',
 			agentRootWithinSurface,
 			`${formatRect(agentRootRect)} in ${viewport.width}x${viewport.height}; ${
-				clearsStatusBarRect(agentRootRect, statusBarWithinViewport ? statusBarRect : undefined)
+				clearsStatusBarRectWithTolerance(agentRootRect, statusBarWithinViewport ? statusBarRect : undefined)
 					? 'clear of statusbar'
 					: 'overlaps statusbar'
 			}; ${
@@ -207,6 +221,10 @@ function clearsStatusBarRect(controlRect, statusBarRect) {
 	return !isPositiveRect(statusBarRect) || !rectsIntersect(controlRect, statusBarRect);
 }
 
+function clearsStatusBarRectWithTolerance(elementRect, statusBarRect) {
+	return !isPositiveRect(statusBarRect) || !rectsIntersectWithTolerance(elementRect, statusBarRect, 0.1);
+}
+
 function clearsNotificationOverlays(controlRect, notificationOverlays) {
 	return (
 		Array.isArray(notificationOverlays) &&
@@ -222,6 +240,17 @@ function rectsIntersect(left, right) {
 		left.right > right.left &&
 		left.top < right.bottom &&
 		left.bottom > right.top
+	);
+}
+
+function rectsIntersectWithTolerance(left, right, tolerance) {
+	return (
+		isPositiveRect(left) &&
+		isPositiveRect(right) &&
+		left.left < right.right - tolerance &&
+		left.right > right.left + tolerance &&
+		left.top < right.bottom - tolerance &&
+		left.bottom > right.top + tolerance
 	);
 }
 

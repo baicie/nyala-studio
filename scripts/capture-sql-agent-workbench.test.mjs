@@ -43,6 +43,30 @@ test('SQL Agent Workbench contract rejects an Agent root that overlaps the statu
 	assert.equal(checks.find(check => check.id === 'agent-root-bounds')?.passed, false);
 });
 
+test('SQL Agent Workbench contract tolerates subpixel contact at the statusbar boundary', () => {
+	const snapshot = createSnapshot();
+	snapshot.agentRoot.rect.bottom = snapshot.statusBar.rect.top + 0.05;
+	snapshot.agentRoot.rect.height = snapshot.agentRoot.rect.bottom - snapshot.agentRoot.rect.top;
+	const checks = validateAgentWorkbenchSnapshot(snapshot, viewport, expectedAgentTabOrder);
+	assert.equal(checks.find(check => check.id === 'agent-root-bounds')?.passed, true);
+});
+
+test('SQL Agent Workbench contract rejects statusbar overlap beyond subpixel tolerance', () => {
+	const snapshot = createSnapshot();
+	snapshot.agentRoot.rect.bottom = snapshot.statusBar.rect.top + 0.11;
+	snapshot.agentRoot.rect.height = snapshot.agentRoot.rect.bottom - snapshot.agentRoot.rect.top;
+	const checks = validateAgentWorkbenchSnapshot(snapshot, viewport, expectedAgentTabOrder);
+	assert.equal(checks.find(check => check.id === 'agent-root-bounds')?.passed, false);
+});
+
+test('SQL Agent Workbench contract requires the status text to remain visible above the statusbar', () => {
+	const snapshot = createSnapshot();
+	snapshot.statusElement.rect.bottom = snapshot.statusBar.rect.top + 0.11;
+	snapshot.statusElement.rect.height = snapshot.statusElement.rect.bottom - snapshot.statusElement.rect.top;
+	const checks = validateAgentWorkbenchSnapshot(snapshot, viewport, expectedAgentTabOrder);
+	assert.equal(checks.find(check => check.id === 'status-element-bounds')?.passed, false);
+});
+
 test('SQL Agent Workbench contract requires visible statusbar geometry', () => {
 	const snapshot = createSnapshot();
 	delete snapshot.statusBar;
@@ -72,7 +96,10 @@ test('SQL Agent Workbench snapshot records visible notification overlays without
 					['.monaco-workbench', workbench],
 					['.part.sidebar', undefined],
 					['.monaco-workbench .part.statusbar', statusBar],
-					['.sql-agent-status', { textContent: 'Ready.' }]
+					[
+						'.sql-agent-status',
+						Object.assign(createElement(rect(0, 792, 390, 18), ['sql-agent-status']), { textContent: 'Ready.' })
+					]
 				]).get(selector),
 			querySelectorAll: selector => {
 				if (selector.includes('notifications-toasts')) return [toast];
@@ -191,6 +218,7 @@ function createSnapshot() {
 		primarySidebarVisible: false,
 		statusBar: { visible: true, rect: rect(0, 820, 390, 24) },
 		agentRoot: { visible: true, rect: rect(0, 500, 390, 310) },
+		statusElement: { visible: true, rect: rect(8, 792, 180, 18) },
 		notificationOverlays: [],
 		ariaLabels: [...requiredAgentAriaLabels],
 		controls: labels.map((ariaLabel, index) => ({

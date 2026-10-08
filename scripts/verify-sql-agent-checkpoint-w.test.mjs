@@ -495,6 +495,41 @@ test('Checkpoint W rejects an Agent root that overlaps the statusbar', async () 
 	});
 });
 
+test('Checkpoint W tolerates subpixel contact at the statusbar boundary', async () => {
+	await withEvidence(async paths => {
+		const macos = createPlatformEvidence('macos');
+		const snapshot = macos.artifacts[0].snapshot;
+		const statusTop = snapshot.statusBar.rect.top;
+		snapshot.agentRoot.rect = {
+			...snapshot.agentRoot.rect,
+			bottom: statusTop + 0.05,
+			height: statusTop + 0.05 - snapshot.agentRoot.rect.top
+		};
+		await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+		await runVerifier(paths);
+		const report = JSON.parse(await readFile(paths.output, 'utf8'));
+		assert.equal(report.checks.find(check => check.id === 'macos-automated-surface')?.passed, true);
+	});
+});
+
+test('Checkpoint W rejects Agent status text hidden by the statusbar', async () => {
+	await withEvidence(async paths => {
+		const macos = createPlatformEvidence('macos');
+		const snapshot = macos.artifacts[0].snapshot;
+		snapshot.statusElement.rect.bottom = snapshot.statusBar.rect.top + 0.11;
+		snapshot.statusElement.rect.height = snapshot.statusElement.rect.bottom - snapshot.statusElement.rect.top;
+		await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+		await assert.rejects(runVerifier(paths));
+		const report = JSON.parse(await readFile(paths.output, 'utf8'));
+		assert.match(
+			report.checks.find(check => check.id === 'macos-automated-surface')?.reason ?? '',
+			/Agent status snapshot overlaps the statusbar/
+		);
+	});
+});
+
 test('Checkpoint W rejects a snapshot without statusbar geometry', async () => {
 	await withEvidence(async paths => {
 		const macos = createPlatformEvidence('macos');
@@ -905,6 +940,10 @@ function createViewportArtifact(platform, id, width, height) {
 			devicePixelRatio: 1,
 			primarySidebarVisible: id !== 'narrow',
 			agentRoot: { visible: true, rect },
+			statusElement: {
+				visible: true,
+				rect: { left: 10, top: height - 42, right: 110, bottom: height - 24, width: 100, height: 18 }
+			},
 			statusBar: {
 				visible: true,
 				rect: { left: 0, top: height - 24, right: width, bottom: height, width, height: 24 }
