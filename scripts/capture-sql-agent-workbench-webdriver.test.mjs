@@ -57,15 +57,48 @@ test('native Agent panel command runs only when the panel is hidden', () => {
 	assert.equal(shouldOpenAgentPanel(true), false);
 });
 
-test('Windows narrow native capture compensates for the WebView2 one-pixel window inset', () => {
+test('Windows narrow native capture compensates for the WebView2 frame inset', () => {
 	assert.deepEqual(initialWindowRectForNativeViewport('windows', { id: 'narrow', width: 390, height: 844 }), {
-		width: 389,
-		height: 844
+		width: 406,
+		height: 852
 	});
 	assert.deepEqual(initialWindowRectForNativeViewport('macos', { id: 'narrow', width: 390, height: 844 }), {
 		width: 390,
 		height: 844
 	});
+});
+
+test('Windows narrow native capture converges to the exact CSS viewport from the frame inset', async () => {
+	const result = await convergeWindowRectForCssViewport(
+		{ width: 390, height: 844 },
+		async requestedWindowRect => ({
+			appliedWindowRect: requestedWindowRect,
+			observedCssViewport: {
+				width: requestedWindowRect.width - 16,
+				height: requestedWindowRect.height - 8
+			}
+		}),
+		{ initialWindowRect: initialWindowRectForNativeViewport('windows', { id: 'narrow', width: 390, height: 844 }) }
+	);
+
+	assert.equal(result.viewportConverged, true);
+	assert.deepEqual(result.observedCssViewport, { width: 390, height: 844 });
+	assert.deepEqual(result.lastAppliedRequestedWindowRect, { width: 406, height: 852 });
+	assert.equal(result.calibrationAttempts.length, 1);
+});
+
+test('native Agent capture rejects a viewport that only matches calibration tolerance', () => {
+	const calibration = { viewportConverged: true };
+	assert.equal(
+		validateRequestedViewport({ id: 'narrow', width: 390, height: 844 }, { width: 390, height: 844 }, calibration)
+			.passed,
+		true
+	);
+	assert.equal(
+		validateRequestedViewport({ id: 'narrow', width: 390, height: 844 }, { width: 391, height: 844 }, calibration)
+			.passed,
+		false
+	);
 });
 
 test('native Agent frontend source accepts only the configured platform asset roots', () => {
