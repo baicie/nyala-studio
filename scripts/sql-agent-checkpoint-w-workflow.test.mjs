@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [captureWorkflow, attestationWorkflow, tauriConfig] = await Promise.all([
+const [captureWorkflow, attestationWorkflow, tauriConfig, captureScript] = await Promise.all([
 	readFile(new URL('../.github/workflows/sql-agent-native.yml', import.meta.url), 'utf8'),
 	readFile(new URL('../.github/workflows/sql-agent-checkpoint-w-attest.yml', import.meta.url), 'utf8'),
-	readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8').then(JSON.parse)
+	readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8').then(JSON.parse),
+	readFile(new URL('./capture-sql-agent-workbench-webdriver.mjs', import.meta.url), 'utf8')
 ]);
 
 test('native capture workflow produces evidence before any manual attestation', () => {
@@ -31,6 +32,19 @@ test('native capture embeds the built frontend and does not supply an external p
 	assert.doesNotMatch(captureWorkflow, /--frontend-dist|--url/);
 	assert.equal(tauriConfig.build.frontendDist, '../dist');
 	assert.equal(tauriConfig.app.windows[0].useHttpsScheme, true);
+});
+
+test('native capture clears transient notifications without hiding errors', () => {
+	assert.match(captureScript, /clearTransientNotifications/);
+	assert.match(captureScript, /notifications\.hideToasts/);
+	assert.match(captureScript, /visible error notification blocks native Agent capture/);
+});
+
+test('Windows native capture passes Tauri JSON config through a file', () => {
+	const windowsJob = captureWorkflow.slice(captureWorkflow.indexOf('  windows-agent:'));
+	assert.match(windowsJob, /Set-Content -LiteralPath \$buildConfig/);
+	assert.match(windowsJob, /--config \$buildConfig/);
+	assert.doesNotMatch(windowsJob, /--config '\{\"build\"/);
 });
 
 test('Checkpoint W attestation verifies one prior capture run without executing its revision', () => {
