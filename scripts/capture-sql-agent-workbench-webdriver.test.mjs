@@ -1,19 +1,26 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import {
+	createAssetProtocolDocumentBinding,
+	createTauriAssetFrontendSource,
+	describeUntrustedUrl,
 	evaluateAutomatedSurfaceChecks,
 	executeWorkbenchCommandAndWait,
+	normalizeSqlProductBootstrapOutcome,
 	shouldOpenAgentPanel,
+	validateSqlProductBootstrapOutcome,
 	validateRequestedViewport,
 	validateScreenshotPhysicalDimensions,
-	validateWebdriverRunNonce
+	validateWebdriverRunNonce,
+	waitForManualReview
 } from './capture-sql-agent-workbench-webdriver.mjs';
 import {
 	allocateLoopbackDriverUrl,
@@ -22,7 +29,8 @@ import {
 	createTauriWebdriverEnvironment,
 	createWebdriverRunNonce,
 	parseLoopbackDriverUrl,
-	resolveLoopbackDriverEndpoint
+	resolveLoopbackDriverEndpoint,
+	unwrapWebdriverValue
 } from './tauri-embedded-webdriver.mjs';
 
 test('native Agent surface status excludes only declared manual keyboard gates', () => {
@@ -46,6 +54,192 @@ test('native Agent surface status excludes only declared manual keyboard gates',
 test('native Agent panel command runs only when the panel is hidden', () => {
 	assert.equal(shouldOpenAgentPanel(false), true);
 	assert.equal(shouldOpenAgentPanel(true), false);
+});
+
+test('native Agent frontend source accepts only the configured platform asset roots', () => {
+	assert.deepEqual(createTauriAssetFrontendSource('tauri://localhost', 'macos'), {
+		kind: 'tauri-asset-protocol',
+		url: 'tauri://localhost'
+	});
+	assert.deepEqual(createTauriAssetFrontendSource('https://tauri.localhost/', 'windows'), {
+		kind: 'tauri-asset-protocol',
+		url: 'https://tauri.localhost/'
+	});
+});
+
+test('native Agent frontend source rejects transient, loopback, cross-platform, and modified URLs', () => {
+	for (const [url, platform] of [
+		['about:blank', 'macos'],
+		['http://127.0.0.1:1420/', 'macos'],
+		['https://tauri.localhost/', 'macos'],
+		['tauri://localhost', 'windows'],
+		['tauri://localhost/', 'macos'],
+		['https://tauri.localhost', 'windows'],
+		['https://tauri.localhost:443/', 'windows'],
+		['https://tauri.localhost/workbench', 'windows'],
+		['https://tauri.localhost/?capture=forged', 'windows'],
+		['https://tauri.localhost/#capture', 'windows'],
+		['https://user@tauri.localhost/', 'windows']
+	]) {
+		assert.throws(() => createTauriAssetFrontendSource(url, platform), /asset protocol frontend URL/);
+	}
+});
+
+test('native Agent frontend errors classify unknown URLs without persisting secrets', () => {
+	const secretUrl = 'https://user:password@example.test/private/query?token=secret#fragment';
+
+	assert.equal(describeUntrustedUrl(secretUrl), 'scheme=https: host=example.test');
+	assert.throws(
+		() => createTauriAssetFrontendSource(secretUrl, 'windows'),
+		error => {
+			assert.match(error.message, /scheme=https: host=example\.test/);
+			assert.doesNotMatch(error.message, /user|password|private|token|secret|fragment/);
+			return true;
+		}
+	);
+});
+
+test('native Agent document binding requires the exact asset URL and run nonce', () => {
+	const nonce = 'a'.repeat(64);
+	assert.deepEqual(createAssetProtocolDocumentBinding('tauri://localhost', 'macos', nonce, nonce), {
+		frontendSource: { kind: 'tauri-asset-protocol', url: 'tauri://localhost' },
+		runNonceSha256: 'ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb'
+	});
+	assert.throws(
+		() => createAssetProtocolDocumentBinding('tauri://localhost', 'macos', nonce, 'b'.repeat(64)),
+		/ownership nonce did not match/
+	);
+});
+
+test('native Agent bootstrap outcome normalization keeps only the versioned contract', () => {
+	assert.deepEqual(
+		normalizeSqlProductBootstrapOutcome({
+			version: 1,
+			status: 'succeeded',
+			mode: 'onboarding',
+			completedCommands: ['bootstrapDemo', 'focusConnections', 'openResults', 'focusWelcome', 'newQuery'],
+			rawError: 'private /Users/example/demo.db'
+		}),
+		{
+			version: 1,
+			status: 'succeeded',
+			mode: 'onboarding',
+			completedCommands: ['bootstrapDemo', 'focusConnections', 'openResults', 'focusWelcome', 'newQuery']
+		}
+	);
+	assert.deepEqual(
+		normalizeSqlProductBootstrapOutcome({
+			version: 1,
+			status: 'failed',
+			mode: 'onboarding',
+			completedCommands: ['bootstrapDemo'],
+			failedStep: 'focusConnections',
+			errorCode: 'startup-command-failed',
+			error: 'password=secret'
+		}),
+		{
+			version: 1,
+			status: 'failed',
+			mode: 'onboarding',
+			completedCommands: ['bootstrapDemo'],
+			failedStep: 'focusConnections',
+			errorCode: 'startup-command-failed'
+		}
+	);
+	assert.deepEqual(
+		normalizeSqlProductBootstrapOutcome({
+			version: 1,
+			status: 'disposed',
+			mode: 'restore',
+			completedCommands: []
+		}),
+		{ version: 1, status: 'disposed', mode: 'restore', completedCommands: [] }
+	);
+});
+
+test('native Agent capture accepts only a valid successful bootstrap outcome', () => {
+	const outcome = {
+		version: 1,
+		status: 'succeeded',
+		mode: 'onboarding',
+		completedCommands: ['bootstrapDemo', 'focusConnections', 'openResults', 'focusWelcome', 'newQuery']
+	};
+	assert.deepEqual(validateSqlProductBootstrapOutcome(outcome), outcome);
+	for (const outcomeStatus of [
+		{
+			version: 1,
+			status: 'failed',
+			mode: 'onboarding',
+			completedCommands: [],
+			failedStep: 'bootstrapDemo',
+			errorCode: 'startup-command-failed'
+		},
+		{ version: 1, status: 'disposed', mode: 'restore', completedCommands: [] }
+	]) {
+		assert.throws(
+			() => validateSqlProductBootstrapOutcome(outcomeStatus),
+			error => {
+				assert.match(error.message, /did not succeed/);
+				return true;
+			}
+		);
+	}
+});
+
+test('native Agent bootstrap outcome normalization fails closed without echoing malformed values', () => {
+	for (const outcome of [
+		null,
+		{ version: 2, status: 'succeeded', mode: 'restore', completedCommands: ['bootstrapDemo'] },
+		{ version: 1, status: 'complete', mode: 'restore', completedCommands: ['bootstrapDemo'] },
+		{ version: 1, status: 'succeeded', mode: 'private-mode', completedCommands: ['bootstrapDemo'] },
+		{ version: 1, status: 'succeeded', mode: 'restore', completedCommands: ['newQuery'] },
+		{
+			version: 1,
+			status: 'failed',
+			mode: 'onboarding',
+			completedCommands: [],
+			failedStep: 'bootstrapDemo',
+			errorCode: 'private /Users/example/demo.db'
+		},
+		{
+			version: 1,
+			status: 'disposed',
+			mode: 'restore',
+			completedCommands: [],
+			errorCode: 'unexpected-bootstrap-rejection'
+		}
+	]) {
+		assert.throws(
+			() => normalizeSqlProductBootstrapOutcome(outcome),
+			error => {
+				assert.match(error.message, /malformed/);
+				assert.doesNotMatch(error.message, /private|Users|demo\.db/);
+				return true;
+			}
+		);
+	}
+});
+
+test('manual review holds a TTY until Enter without claiming attestation', async () => {
+	const input = new PassThrough();
+	input.isTTY = true;
+	const messages = [];
+	const output = { write: message => messages.push(String(message)) };
+
+	const review = waitForManualReview({ input, output });
+	input.write('\n');
+	await review;
+
+	assert.match(messages.join(''), /manual gates remain pending/i);
+	assert.match(messages.join(''), /Press Enter to close/i);
+	assert.equal(input.listenerCount('data'), 0);
+});
+
+test('manual review rejects a non-interactive input instead of hanging CI', async () => {
+	await assert.rejects(
+		waitForManualReview({ input: new PassThrough(), output: { write: () => undefined } }),
+		/interactive TTY/
+	);
 });
 
 test('CSS viewport calibration derives DPR scaling from the observed viewport', () => {
@@ -199,17 +393,19 @@ test('native Agent launch environment carries isolated app data and a unique run
 
 test('native Agent command execution waits for fulfillment and surfaces rejection', async () => {
 	let fulfillCommand;
+	const commandValue = { version: 1, status: 'succeeded' };
 	const fulfilledContext = {
 		__sidex_commandService: {
 			executeCommand: () => new Promise(resolveCommand => (fulfillCommand = resolveCommand))
 		}
 	};
-	setTimeout(() => fulfillCommand(), 5);
-	await executeWorkbenchCommandAndWait(
+	setTimeout(() => fulfillCommand(commandValue), 5);
+	const fulfilledResult = await executeWorkbenchCommandAndWait(
 		async script => runInNewContext(`(() => { ${script} })()`, fulfilledContext),
 		'sql.agent.openPanel',
 		{ commandToken: 'fulfilled-command', timeoutMs: 100, pollIntervalMs: 1 }
 	);
+	assert.deepEqual(fulfilledResult, commandValue);
 	assert.deepEqual(Object.keys(fulfilledContext.__nyalaNativeCaptureCommandStates), []);
 
 	const rejectedContext = {
@@ -225,8 +421,51 @@ test('native Agent command execution waits for fulfillment and surfaces rejectio
 			'sql.agent.openPanel',
 			{ commandToken: 'rejected-command', timeoutMs: 100, pollIntervalMs: 1 }
 		),
-		/Workbench command sql\.agent\.openPanel rejected: Error: panel failed/
+		error => {
+			assert.match(error.message, /Workbench command sql\.agent\.openPanel rejected/);
+			assert.doesNotMatch(error.message, /panel failed/);
+			return true;
+		}
 	);
+	assert.deepEqual(Object.keys(rejectedContext.__nyalaNativeCaptureCommandStates), []);
+});
+
+test('native Agent command execution preserves fulfilled values through WebDriver envelopes', async () => {
+	const commandValue = { version: 1, status: 'succeeded', value: 'nested-result' };
+	const context = {
+		__sidex_commandService: {
+			executeCommand: () => Promise.resolve(commandValue)
+		}
+	};
+
+	const result = await executeWorkbenchCommandAndWait(
+		async script =>
+			unwrapWebdriverValue({
+				value: runInNewContext(`(() => { ${script} })()`, context)
+			}),
+		'sqlStudio.product.awaitBootstrap',
+		{ commandToken: 'webdriver-envelope-command', timeoutMs: 100, pollIntervalMs: 1 }
+	);
+
+	assert.deepEqual(result, commandValue);
+});
+
+test('native Agent command execution deletes timed-out page state', async () => {
+	const context = {
+		__sidex_commandService: {
+			executeCommand: () => new Promise(() => undefined)
+		}
+	};
+
+	await assert.rejects(
+		executeWorkbenchCommandAndWait(
+			async script => runInNewContext(`(() => { ${script} })()`, context),
+			'sqlStudio.product.awaitBootstrap',
+			{ commandToken: 'timed-out-command', timeoutMs: 5, pollIntervalMs: 1 }
+		),
+		/Timed out waiting for Workbench command sqlStudio\.product\.awaitBootstrap/
+	);
+	assert.deepEqual(Object.keys(context.__nyalaNativeCaptureCommandStates), []);
 });
 
 test('native Agent screenshot dimensions are tied to CSS viewport and DPR', () => {
@@ -248,9 +487,6 @@ test('native Agent evidence runner writes a blocked manifest when the binary can
 	const root = await mkdtemp(join(tmpdir(), 'nyala-agent-native-test-'));
 	try {
 		const output = join(root, 'evidence.json');
-		const frontendDist = join(root, 'dist');
-		await mkdir(frontendDist);
-		await writeFile(join(frontendDist, 'index.html'), '<!doctype html><title>Nyala</title>');
 		await assert.rejects(
 			execFileAsync(process.execPath, [
 				'scripts/capture-sql-agent-workbench-webdriver.mjs',
@@ -258,8 +494,6 @@ test('native Agent evidence runner writes a blocked manifest when the binary can
 				join(root, 'missing-nyala'),
 				'--platform',
 				process.platform === 'win32' ? 'windows' : 'macos',
-				'--frontend-dist',
-				frontendDist,
 				'--output',
 				output,
 				'--screenshot-dir',
@@ -285,7 +519,7 @@ test('native Agent evidence runner writes a blocked manifest when the binary can
 		assert.equal(report.checkpointDecision, 'BLOCKED');
 		assert.equal(report.driverProvider, 'embedded');
 		assert.equal(report.nativeWebView, false);
-		assert.equal(report.frontendSource.kind, 'local-dist-server');
+		assert.equal('frontendSource' in report, false);
 		assert.deepEqual(report.artifacts, []);
 		assert.equal(report.webdriverOwnership.portSource, 'os-assigned');
 		assert.match(report.webdriverOwnership.driverUrl, /^http:\/\/127\.0\.0\.1:\d+$/);

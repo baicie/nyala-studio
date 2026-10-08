@@ -17,7 +17,35 @@ The project is a product hard fork of SideX. The goal is not to build a generic 
 
 ## Current Status
 
-This repository is currently in the SQL MVP productization phase.
+Nyala Studio has completed its Core SQL MVP and is now executing the MVP vNext
+track (SQL Workspace Agent plus a gated Zeus Data Grid Preview).
+
+Core MVP:
+
+- Phases 00–08 are implemented at P0 scope, and the 10-item Definition of Done
+  was met on commit `60ab89c0`
+  (`docs/sql-mvp-phases/phase-do-d-verification.md`).
+- The Phase 08 native Demo walkthrough and the live MySQL Preview Validate were
+  recorded complete on `mvp@1dca498f` (2026-08-11).
+
+MVP vNext
+([roadmap](./docs/sql-mvp-phases/mvp-vnext-agent-zeus-roadmap.md)):
+
+- Agent A0–A4 are implemented, including the Rust Suggest-only runtime, the
+  explicitly read-only SQLite execution loop, and the Workbench SQL Agent
+  Panel; Checkpoint R is complete. A4 Checkpoint W still needs native keyboard,
+  Windows WebView2, and real VoiceOver/Narrator walkthroughs.
+- The post-vNext A5 SQLite query-optimization slice is implemented and stays
+  outside the vNext release dependency chain.
+- Zeus Z1.3 is `NO-GO`: revision-bound macOS WKWebView and Windows WebView2
+  evidence, screenshots, and the fresh structured bundle audit exist, but five
+  pre-registered measurement-contract v6 performance gates still fail. There is
+  no production Zeus dependency or renderer integration, and Z2 must not start.
+  The v7 floor-aware metric contract in
+  [ADR 0004](./docs/adr/0004-zeus-data-grid-v7-floor-aware-metrics.md) is
+  `Proposed` and is not admission evidence.
+- R0 (vNext release gate) stays `NO-GO` until A4 Checkpoint W and the Zeus gate
+  pass and the protected attestation environments exist.
 
 Runtime driver status:
 
@@ -33,7 +61,7 @@ separate from runtime maturity: downloading PostgreSQL does not enable its
 planned connection runtime, and MySQL connections continue to use the native
 Preview driver.
 
-The immediate MVP target is:
+The Core MVP target (met on `60ab89c0`) is:
 
 ```txt
 Launch Nyala Studio
@@ -55,8 +83,13 @@ Safety notes:
 
 ## Roadmap
 
-The historical fork-stabilization phases have moved into the SQL MVP productization track.
-The short-term roadmap is now aligned with the actual runtime status:
+The historical fork-stabilization phases have moved into the SQL MVP
+productization track, and the Core Phase 00–08 sequence is met. The active
+roadmap is the Core MVP + MVP vNext index in
+[`docs/sql-mvp-phases/README.md`](./docs/sql-mvp-phases/README.md); the vNext
+implementation order and acceptance contracts live in
+[`docs/sql-mvp-phases/mvp-vnext-agent-zeus-roadmap.md`](./docs/sql-mvp-phases/mvp-vnext-agent-zeus-roadmap.md).
+The Core MVP sequence below is kept as the historical record:
 
 ### Phase 00 — Runtime Status Alignment
 
@@ -132,11 +165,42 @@ The short-term roadmap is now aligned with the actual runtime status:
 > [`docs/sql-mvp-phases/README.md`](./docs/sql-mvp-phases/README.md).
 > Always cross-check that table before claiming a phase is met.
 
-The proposed post-MVP evolution from the deterministic AI Helper to a
-local-first SQL Workspace Agent is specified in
-[`docs/sql-workspace-agent-design.md`](./docs/sql-workspace-agent-design.md).
-Its `A0-A8` Agent Stages are not SQL MVP Phase numbers and do not change the
-current Phase 08 or driver-runtime status.
+### MVP vNext — SQL Workspace Agent + Zeus Data Grid
+
+```txt
+A0/A1 → A2 → A3 → A4 ─┐
+Z0 → Z1 ───────────────┤
+                        └→ Z2 → R0
+```
+
+- **A0 SQL Intelligence** — A0.1 done; A0.2 recorded a parser No-Go
+  ([ADR 0003](./docs/adr/0003-sql-agent-parser-boundary.md)), so the local
+  fail-closed analyzer stays the trusted boundary.
+- **A1 Schema Context** — A1.1–A1.3 done: bounded schema search, SQLite
+  foreign-key graph, cache and invalidation.
+- **A2 Suggest-only Runtime** — A2.1–A2.4 done: runtime domain, Rust
+  capability policy, deterministic loop, Workbench/Tauri bridge; zero query
+  calls.
+- **A3 Read-only Agent** — A3.1/A3.2 done: SQLite `sql.explain` /
+  `sql.execute_readonly` against an explicitly read-only connection, with
+  bounded result shape, aggregate and sample policy; rows stay out of default
+  evidence.
+- **A4 Workbench Integration** — A4.1/A4.2 done: stale-safe editor artifacts,
+  Schema/Result/Fix actions, and the SQL Agent Panel. Checkpoint W is still
+  open on native keyboard, Windows WebView2, and VoiceOver/Narrator evidence.
+- **A5 SQLite Query Optimization** — implemented as a post-vNext slice; it is
+  not a vNext release dependency. See
+  [`docs/sql-workspace-agent-a5-implementation-plan.md`](./docs/sql-workspace-agent-a5-implementation-plan.md).
+- **Z0/Z1/Z2** — Z0 evaluation complete; Z1.3 `NO-GO`; Z2 must not start.
+- **R0** — vNext release gate `NO-GO`.
+
+The post-MVP evolution from the deterministic AI Helper to a local-first SQL
+Workspace Agent is specified in
+[`docs/sql-workspace-agent-design.md`](./docs/sql-workspace-agent-design.md)
+and implemented through A4.2, with the A5 query-optimization slice landed as
+post-vNext work. Its `A0-A8` Agent Stages (`A6`–`A8` remain outside the first
+milestone) are not SQL MVP Phase numbers and do not change the Phase 08 or
+driver-runtime status.
 
 ## SQLite Demo Flow
 
@@ -188,8 +252,8 @@ pnpm run test
 Prepare and validate a release version with the repository scripts:
 
 ```bash
-pnpm run release:prepare -- 0.0.1-dev.0
-pnpm run release:check -- 0.0.1-dev.0
+pnpm run release:prepare -- <next-semver>
+pnpm run release:check -- <next-semver>
 ```
 
 `release:prepare` updates `package.json`, `src-tauri/tauri.conf.json`,
@@ -197,11 +261,11 @@ pnpm run release:check -- 0.0.1-dev.0
 workflow can then be dispatched from the protected `mvp` branch or triggered
 by a matching `v*` tag. It runs the SQL MVP gate, builds macOS, Windows, and
 Linux installers, generates `SHA256SUMS.txt`, and publishes a GitHub Release.
-Prerelease versions such as `0.0.1-dev.0` are published as GitHub pre-releases
-and never replace the stable R2 `latest` channel.
+Prerelease versions such as the current `0.0.1-dev.1` are published as GitHub
+pre-releases and never replace the stable R2 `latest` channel.
 
 Windows versions that cannot be represented by WiX/MSI, including named
-prereleases such as `0.0.1-dev.0`, are packaged as NSIS installers only.
+prereleases such as `0.0.1-dev.1`, are packaged as NSIS installers only.
 MSI and NSIS are both built when the SemVer value satisfies WiX's numeric
 version limits.
 
@@ -210,14 +274,29 @@ repository secrets are absent, development pre-releases still publish
 unsigned GitHub installation packages and state that limitation in the
 release notes. Production releases should configure signing before promotion.
 
-`pnpm run test` is a chain that runs the branding and application-icon guards,
-the runtime status consistency check, the demo data-directory suite, the Rust
-`cargo test --lib` suite (currently 210 passing tests plus 2 ignored live
-integration test), the Tauri search cancellation suite, and every
-per-subsystem frontend suite (`test:icons`, `test:seed-demo`, `test:search`,
-`test:sql-services`, `test:sql-domain`, `test:sql-connections`,
-`test:sql-editor`, `test:sql-result`, `test:sql-history`,
-`test:sql-product`, `test:sql-advanced`).
+`pnpm run test` is the full local gate. It runs the release-version and GitHub
+workflow checks, the Nyala branding and application-icon guards, the SQL
+runtime-status consistency check, the demo data-directory suite, the Rust
+`cargo test --lib` suite (534 passing tests plus 2 ignored live-integration
+tests as of 2026-09-17), the SQL Agent Rust/TS suite, the Zeus result-grid
+benchmark, WebDriver, audit, platform-evidence, gate, attestation and visual
+harnesses, the Agent Workbench visual and Checkpoint W capture contracts, the
+vNext release gate, the search-cancellation and preferences regression suites,
+and every per-subsystem SQL frontend suite (`test:sql-services`,
+`test:sql-domain`, `test:sql-connections`, `test:sql-editor`,
+`test:sql-result`, `test:sql-history`, `test:sql-product`,
+`test:sql-advanced`).
+
+The MVP vNext gates keep their own fail-closed scripts and checked-in reports:
+`pnpm run verify:sql-result-grid-gate`
+([`phase-z1-gate.json`](./docs/sql-mvp-phases/phase-z1-gate.json)),
+`pnpm run verify:sql-mvp-vnext-release`
+([`phase-vnext-release-gate.json`](./docs/sql-mvp-phases/phase-vnext-release-gate.json)),
+and the Checkpoint W verifier
+([`phase-a4-checkpoint-w.json`](./docs/sql-mvp-phases/phase-a4-checkpoint-w.json)).
+All three reports are currently `NO-GO`; see
+[`docs/sql-mvp-phases/README.md`](./docs/sql-mvp-phases/README.md) for the
+blocking checks.
 
 Optional opt-in MySQL Preview validation. Only useful when you have a
 local MySQL on `127.0.0.1:3306` with the test database/credentials
@@ -305,13 +384,23 @@ sql-studio-next/
 │       ├── platform/
 │       ├── editor/
 │       └── workbench/
+│           ├── contrib/          # sqlConnections / sqlEditor / sqlResult /
+│           │                     # sqlHistory / sqlAdvanced / sqlProduct /
+│           │                     # sqlAgent
+│           └── services/sql/     # SQL services and shared contracts
 ├── src-tauri/
 │   └── src/
-│       ├── commands/
+│       ├── commands/sql/
+│       │   ├── agent/            # SQL Workspace Agent runtime
+│       │   └── ...               # connections, metadata, query, drivers
+│       ├── runtime_status/       # driver maturity truth-of-record
 │       ├── product.rs
 │       ├── lib.rs
 │       └── main.rs
 ├── crates/
+├── docs/
+│   ├── sql-mvp-phases/           # phase docs, verification and gate reports
+│   └── adr/                      # architecture decision records
 ├── scripts/
 ├── index.html
 ├── vite.config.ts
@@ -347,9 +436,19 @@ Contributions
 ```
 
 The SQL Workspace Agent follows the same boundary: Workbench UI is a service
-and contribution, while the proposed Agent loop, policy, tool execution and
-evidence handling stay in the local Tauri Rust runtime. See the
-[`SQL Workspace Agent design`](./docs/sql-workspace-agent-design.md).
+and contribution, while the Agent loop, policy, tool execution and
+evidence handling stay in the local Tauri Rust runtime
+(`src-tauri/src/commands/sql/agent/`). Agent drafts never execute on their own:
+suggest-only runs stay at zero query calls, and only an explicit Read Only mode
+on an explicitly read-only SQLite connection can run a single read-only
+statement. See the
+[`SQL Workspace Agent design`](./docs/sql-workspace-agent-design.md) and the
+[`A5 implementation plan`](./docs/sql-workspace-agent-a5-implementation-plan.md).
+
+Zeus is a leaf dependency: if Z2 is ever approved, `@zeus-web/data-grid` may
+only be loaded from inside the SQL Result contribution, must stay exact-pinned,
+and must retain the native renderer fallback. The current Z1.3 decision is
+`NO-GO`, so no production Zeus dependency exists.
 
 ## Upstream Attribution
 

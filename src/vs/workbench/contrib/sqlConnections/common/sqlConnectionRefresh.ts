@@ -56,3 +56,11 @@ export async function refreshAndRequireSqlConnection(
 		throw new Error(`Connection ${connectionId} was not returned after refresh.`);
 	}
 }
+
+export async function refreshSqlTableMetadata<T>(
+	refreshMetadata: () => Promise<void>,
+	loadColumns: () => Promise<T>
+): Promise<T> {
+	await refreshMetadata();
+	return loadColumns();
+}

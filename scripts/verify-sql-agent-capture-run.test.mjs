@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 import { verifyCaptureRunMetadata } from './verify-sql-agent-capture-run.mjs';
 
+const execFileAsync = promisify(execFile);
 const repository = 'baicie/nyala-studio';
 const runId = '123456789';
 const sourceRevision = 'a'.repeat(40);
@@ -77,6 +83,13 @@ test('verifies an immutable SQL Agent native capture run and its exact artifacts
 		report.artifacts.map(artifact => artifact.id),
 		['111', '222']
 	);
+	assert.deepEqual(
+		report.artifacts.map(artifact => artifact.archiveUrl),
+		[
+			`https://api.github.com/repos/${repository}/actions/artifacts/111/zip`,
+			`https://api.github.com/repos/${repository}/actions/artifacts/222/zip`
+		]
+	);
 	assert.deepEqual(report.artifactIds, ['111', '222']);
 	assert.deepEqual(report.reasons, []);
 });
@@ -127,4 +140,70 @@ test('rejects extra, duplicate, expired, or digest-free native artifacts', () =>
 	assert.match(report.reasons.join('\n'), /duplicate artifact name/i);
 	assert.match(report.reasons.join('\n'), /expired/i);
 	assert.match(report.reasons.join('\n'), /digest/i);
+});
+
+test('rejects artifacts whose archive download URL is forged or retargeted', () => {
+	for (const archive_download_url of [
+		`https://api.github.com/repos/attacker/nyala-studio/actions/artifacts/111/zip`,
+		`https://api.github.com/repos/${repository}/actions/artifacts/222/zip`,
+		`https://api.github.com/repos/${repository}/actions/artifacts/111/zip?forged=1`,
+		'https://example.com/repos/baicie/nyala-studio/actions/artifacts/111/zip'
+	]) {
+		const artifactMetadata = createArtifactMetadata();
+		artifactMetadata.artifacts[0].archive_download_url = archive_download_url;
+		const report = verifyCaptureRunMetadata({
+			runMetadata: createRunMetadata(),
+			artifactMetadata,
+			expectedRepository: repository,
+			expectedRunId: runId
+		});
+		assert.equal(report.status, 'blocked');
+		assert.match(report.reasons.join('\n'), /artifact 0 archive URL is invalid/i);
+		assert.equal(report.artifacts.find(artifact => artifact.id === '111')?.archiveUrl, null);
+	}
+});
+
+test('publishes verified platform archive URLs and digests to the workflow output', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-capture-run-output-'));
+	try {
+		const runMetadataPath = join(root, 'capture-run-api.json');
+		const artifactMetadataPath = join(root, 'capture-artifacts-api.json');
+		const outputPath = join(root, 'capture-run.json');
+		const githubOutputPath = join(root, 'github-output.txt');
+		await Promise.all([
+			writeFile(runMetadataPath, `${JSON.stringify(createRunMetadata(), null, 2)}\n`, 'utf8'),
+			writeFile(artifactMetadataPath, `${JSON.stringify(createArtifactMetadata(), null, 2)}\n`, 'utf8')
+		]);
+		await execFileAsync(process.execPath, [
+			'scripts/verify-sql-agent-capture-run.mjs',
+			'--run-metadata',
+			runMetadataPath,
+			'--artifact-metadata',
+			artifactMetadataPath,
+			'--output',
+			outputPath,
+			'--expected-repository',
+			repository,
+			'--expected-run-id',
+			runId,
+			'--github-output',
+			githubOutputPath
+		]);
+		const githubOutput = await readFile(githubOutputPath, 'utf8');
+		const expectedLines = [
+			'artifact_ids=111,222',
+			`source_revision=${sourceRevision}`,
+			'source_ref=refs/heads/mvp',
+			'capture_run_attempt=2',
+			`macos_archive_url=https://api.github.com/repos/${repository}/actions/artifacts/111/zip`,
+			`macos_archive_digest=${'b'.repeat(64)}`,
+			`windows_archive_url=https://api.github.com/repos/${repository}/actions/artifacts/222/zip`,
+			`windows_archive_digest=${'c'.repeat(64)}`
+		];
+		for (const line of expectedLines) {
+			assert.ok(githubOutput.split('\n').includes(line), `expected workflow output line: ${line}`);
+		}
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
 });

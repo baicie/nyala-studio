@@ -726,6 +726,7 @@ pub fn run() {
             commands::sql_list_schemas,
             commands::sql_list_tables_v2,
             commands::sql_list_columns_v2,
+            commands::sql_refresh_metadata,
             // MVP vNext Agent A2.4 bridge.
             commands::sql::agent::bridge::sql_agent_start,
             commands::sql::agent::bridge::sql_agent_run,

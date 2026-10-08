@@ -32,7 +32,10 @@ class FakeMetadata implements ISqlMetadataService {
 	private tablesByKey = new Map<string, SchemaObjectDto[]>();
 	private colsByKey = new Map<string, ColumnDto[]>();
 	private failOnce = new Map<string, number>();
+	private deferredSchemas = new Map<string, Promise<SchemataDto[]>>();
+	private deferredTables = new Map<string, Promise<SchemaObjectDto[]>>();
 	calls: { method: string; key: string }[] = [];
+	invalidations: string[] = [];
 
 	setSchemas(profileId: string, schemas: SchemataDto[]): void {
 		this.schemasByProfile.set(profileId, schemas);
@@ -48,6 +51,28 @@ class FakeMetadata implements ISqlMetadataService {
 
 	failNext(method: string, key: string): void {
 		this.failOnce.set(`${method}|${key}`, 1);
+	}
+
+	deferNextSchemas(profileId: string): (schemas: SchemataDto[]) => void {
+		let resolve!: (schemas: SchemataDto[]) => void;
+		this.deferredSchemas.set(
+			profileId,
+			new Promise<SchemataDto[]>(resolvePromise => {
+				resolve = resolvePromise;
+			})
+		);
+		return resolve;
+	}
+
+	deferNextTables(profileId: string, schema: string): (tables: SchemaObjectDto[]) => void {
+		let resolve!: (tables: SchemaObjectDto[]) => void;
+		this.deferredTables.set(
+			`${profileId}|${schema}`,
+			new Promise<SchemaObjectDto[]>(resolvePromise => {
+				resolve = resolvePromise;
+			})
+		);
+		return resolve;
 	}
 
 	private shouldFail(method: string, key: string): boolean {
@@ -74,6 +99,11 @@ class FakeMetadata implements ISqlMetadataService {
 		if (this.shouldFail('schemas', profileId)) {
 			throw new Error('boom');
 		}
+		const deferred = this.deferredSchemas.get(profileId);
+		if (deferred) {
+			this.deferredSchemas.delete(profileId);
+			return deferred;
+		}
 		return this.schemasByProfile.get(profileId) ?? [];
 	}
 	async listTablesV2(profileId: string, schema: string): Promise<SchemaObjectDto[]> {
@@ -81,6 +111,11 @@ class FakeMetadata implements ISqlMetadataService {
 		this.calls.push({ method: 'tables', key });
 		if (this.shouldFail('tables', key)) {
 			throw new Error('boom');
+		}
+		const deferred = this.deferredTables.get(key);
+		if (deferred) {
+			this.deferredTables.delete(key);
+			return deferred;
 		}
 		return this.tablesByKey.get(key) ?? [];
 	}
@@ -92,11 +127,14 @@ class FakeMetadata implements ISqlMetadataService {
 		}
 		return this.colsByKey.get(key) ?? [];
 	}
-	invalidate(): void {
-		this.schemasByProfile.clear();
-		this.tablesByKey.clear();
-		this.colsByKey.clear();
-		this.calls.length = 0;
+	async refresh(profileId: string): Promise<void> {
+		this.calls.push({ method: 'refresh', key: profileId });
+		if (this.shouldFail('refresh', profileId)) {
+			throw new Error('refresh boom');
+		}
+	}
+	invalidate(profileId: string): void {
+		this.invalidations.push(profileId);
 	}
 }
 
@@ -211,6 +249,23 @@ test('rebuild excludes planned and disabled drivers', async () => {
 	if (ds[0].kind === 'datasource') {
 		assert.equal(ds[0].profileId, 's');
 	}
+});
+
+test('connection lifecycle changes invalidate metadata for existing profiles before rebuild', async () => {
+	const f = fixture();
+	const profile: ConnectionProfile = {
+		id: 's',
+		label: 'sq',
+		driver: SqlRuntimeDriverId.Sqlite,
+		readOnly: false,
+		createdAtMs: 0
+	};
+	f.conns.setProfile(profile);
+	await f.model.rebuild();
+
+	f.conns.setProfile({ ...profile, label: 'reopened' });
+
+	assert.deepEqual(f.meta.invalidations, ['s']);
 });
 
 test('expandDatasource loads schemas into the datasource node', async () => {
@@ -332,6 +387,114 @@ test('refresh retries after error', async () => {
 	if (after.kind === 'datasource') {
 		assert.equal(after.state.kind, 'loaded');
 	}
+	assert.deepEqual(f.meta.calls.slice(-2), [
+		{ method: 'refresh', key: 's' },
+		{ method: 'schemas', key: 's' }
+	]);
+});
+
+test('refresh surfaces backend invalidation errors on the target node', async () => {
+	const f = fixture();
+	f.conns.setProfile({
+		id: 's',
+		label: 'sq',
+		driver: SqlRuntimeDriverId.Sqlite,
+		readOnly: false,
+		createdAtMs: 0
+	});
+	await f.model.rebuild();
+	const datasource = f.model.list()[0];
+	f.meta.failNext('refresh', 's');
+
+	await f.model.refresh(datasource);
+
+	assert.equal(datasource.state.kind, 'error');
+	if (datasource.state.kind === 'error') {
+		assert.equal(datasource.state.message, 'refresh boom');
+	}
+});
+
+test('refresh prevents an older datasource expansion from overwriting fresh metadata', async () => {
+	const f = fixture();
+	f.conns.setProfile({
+		id: 's',
+		label: 'sq',
+		driver: SqlRuntimeDriverId.Sqlite,
+		readOnly: false,
+		createdAtMs: 0
+	});
+	f.meta.setSchemas('s', [{ schema: 'fresh', isDefault: true }]);
+	await f.model.rebuild();
+	const datasource = f.model.list()[0];
+	const resolveStale = f.meta.deferNextSchemas('s');
+	const staleExpansion = f.model.expandDatasource('s');
+
+	await f.model.refresh(datasource);
+	resolveStale([{ schema: 'stale', isDefault: true }]);
+	await staleExpansion;
+
+	assert.deepEqual(
+		datasource.schemas.map(schema => schema.schema),
+		['fresh']
+	);
+	assert.equal(datasource.state.kind, 'loaded');
+});
+
+test('a newer datasource expansion wins over an older in-flight expansion', async () => {
+	const f = fixture();
+	f.conns.setProfile({
+		id: 's',
+		label: 'sq',
+		driver: SqlRuntimeDriverId.Sqlite,
+		readOnly: false,
+		createdAtMs: 0
+	});
+	f.meta.setSchemas('s', [{ schema: 'fresh', isDefault: true }]);
+	await f.model.rebuild();
+	const datasource = f.model.list()[0];
+	const resolveStale = f.meta.deferNextSchemas('s');
+	const staleExpansion = f.model.expandDatasource('s');
+
+	await f.model.expandDatasource('s');
+	resolveStale([{ schema: 'stale', isDefault: true }]);
+	await staleExpansion;
+
+	assert.deepEqual(
+		datasource.schemas.map(schema => schema.schema),
+		['fresh']
+	);
+	assert.equal(datasource.state.kind, 'loaded');
+});
+
+test('profile refresh releases a stale sibling expansion from loading state', async () => {
+	const f = fixture();
+	f.conns.setProfile({
+		id: 's',
+		label: 'sq',
+		driver: SqlRuntimeDriverId.Sqlite,
+		readOnly: false,
+		createdAtMs: 0
+	});
+	f.meta.setSchemas('s', [{ schema: 'main', isDefault: true }]);
+	f.meta.setTables('s', 'main', [{ kind: 'table', name: 'users', schema: 'main', columns: [], primaryKey: ['id'] }]);
+	await f.model.rebuild();
+	await f.model.expandDatasource('s');
+	await f.model.expandSchema('s', 'main');
+	const datasource = f.model.list()[0];
+	const schema = datasource.schemas[0];
+	const table = schema.tables[0];
+	const resolveStale = f.meta.deferNextTables('s', 'main');
+	const staleExpansion = f.model.expandSchema('s', 'main');
+
+	await f.model.refresh(table);
+	resolveStale([{ kind: 'table', name: 'stale', schema: 'main', columns: [], primaryKey: [] }]);
+	await staleExpansion;
+
+	assert.equal(schema.state.kind, 'loaded');
+	assert.deepEqual(
+		schema.tables.map(candidate => candidate.table),
+		['users']
+	);
 });
 
 test('listTablesV2 call is cached within TTL by SqlMetadataService', async () => {
@@ -370,8 +533,6 @@ test('invalidate removes only the targeted profile entries', () => {
 	f.meta.setSchemas('s', []);
 	f.meta.setSchemas('p', []);
 	f.meta.invalidate('s');
-	// cannot peek at the private cache, but ensure the public API exists
-	// and is callable. Re-running the public flow should still work.
-	void f.meta.listSchemas('s');
-	void f.meta.listSchemas('p');
+
+	assert.deepEqual(f.meta.invalidations, ['s']);
 });

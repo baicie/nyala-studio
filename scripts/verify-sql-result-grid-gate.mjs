@@ -1195,7 +1195,7 @@ function evaluateMetrics(report) {
 		const zeus = oneK.zeus?.scrollP95Ms?.median;
 		checks.push(createRatioCheck('1k-x-20 scroll interaction', baseline, zeus, 0.1, 'no regression over 10%'));
 	} else {
-		checks.push({ id: '1k-x-20', passed: false, reason: 'missing 1k-x-20 benchmark summary' });
+		checks.push({ id: '1k-x-20 scroll interaction', passed: false, reason: 'missing 1k-x-20 benchmark summary' });
 	}
 	if (tenK) {
 		const baseline = bestNonZeus(tenK, 'scrollP95Ms');
@@ -1373,8 +1373,16 @@ function probeSafariDriver() {
 			runs: 0,
 			reason: payload.value?.message ?? 'Safari WebDriver did not create a session.'
 		};
-	} catch (error) {
-		return { label, status: 'blocked', runs: 0, reason: error instanceof Error ? error.message : String(error) };
+	} catch {
+		// The probe failure text depends on the host (curl missing, connection refused, connect timeout,
+		// empty body) and would make an otherwise identical gate artifact differ byte-for-byte between
+		// replays. The recorded outcome is carried by status/runs; the operator-facing remedy is fixed.
+		return {
+			label,
+			status: 'blocked',
+			runs: 0,
+			reason: 'No local Safari WebDriver session is reachable; protected WebKit platform evidence is required.'
+		};
 	}
 }
 

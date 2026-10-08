@@ -9,6 +9,7 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
 import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { Extensions as ViewExtensions, IViewsRegistry } from '../../../common/views.js';
 import { SQL_RESULT_VIEW_CONTAINER } from '../../sqlResult/browser/sqlResult.contribution.js';
+import { ISqlProductBootstrapService, SqlProductBootstrapService } from '../common/sqlProductBootstrapService.js';
 import { ISqlProductPreferencesService, SqlProductPreferencesService } from '../common/sqlProductPreferencesService.js';
 import { SqlProductBootstrapContribution } from './sqlProductBootstrap.js';
 import { SQL_PRODUCT_PREFERENCES_VIEW_ID, SqlProductPreferencesView } from './sqlProductPreferencesView.js';
@@ -20,6 +21,7 @@ import './media/sqlProductPreferences.css';
 import './media/sqlProductWelcome.css';
 
 registerSingleton(ISqlProductPreferencesService, SqlProductPreferencesService, InstantiationType.Delayed);
+registerSingleton(ISqlProductBootstrapService, SqlProductBootstrapService, InstantiationType.Delayed);
 
 Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews(
 	[

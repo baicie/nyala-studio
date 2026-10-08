@@ -19,6 +19,7 @@ import { ISqlCommandExecutor, TauriSqlCommandExecutor, toSqlServiceError } from 
 const DEFAULT_TTL_MS = 30_000;
 
 interface CacheEntry<T> {
+	profileId: string;
 	value: T;
 	ts: number;
 }
@@ -34,6 +35,8 @@ export class SqlMetadataService extends Disposable implements ISqlMetadataServic
 	private readonly schemaCache = new Map<string, CacheEntry<SchemataDto[]>>();
 	private readonly tablesCache = new Map<string, CacheEntry<SchemaObjectDto[]>>();
 	private readonly columnsCache = new Map<string, CacheEntry<ColumnDto[]>>();
+	private readonly cacheEpochs = new Map<string, number>();
+	private readonly profileRefreshes = new Map<string, Promise<void>>();
 
 	constructor();
 	constructor(executor: ISqlCommandExecutor, options?: SqlMetadataServiceOptions);
@@ -89,8 +92,8 @@ export class SqlMetadataService extends Disposable implements ISqlMetadataServic
 
 	async listSchemas(profileId: string, opts?: { force?: boolean }): Promise<SchemataDto[]> {
 		const normalized = this.normalizeProfileId(profileId);
-		const key = normalized;
-		return this.cached(this.schemaCache, key, opts?.force, () =>
+		const key = this.cacheKey(normalized);
+		return this.cached(this.schemaCache, key, normalized, opts?.force, () =>
 			this.executor.execute<SchemataDto[]>('sql_list_schemas', { profileId: normalized })
 		).catch(err => {
 			throw toSqlServiceError('sql_list_schemas', err);
@@ -100,8 +103,8 @@ export class SqlMetadataService extends Disposable implements ISqlMetadataServic
 	async listTablesV2(profileId: string, schema: string, opts?: { force?: boolean }): Promise<SchemaObjectDto[]> {
 		const profile = this.normalizeProfileId(profileId);
 		const schemaName = this.normalizeSchema(schema);
-		const key = `${profile}|${schemaName}`;
-		return this.cached(this.tablesCache, key, opts?.force, () =>
+		const key = this.cacheKey(profile, schemaName);
+		return this.cached(this.tablesCache, key, profile, opts?.force, () =>
 			this.executor.execute<SchemaObjectDto[]>('sql_list_tables_v2', {
 				profileId: profile,
 				schema: schemaName
@@ -120,8 +123,8 @@ export class SqlMetadataService extends Disposable implements ISqlMetadataServic
 		const profile = this.normalizeProfileId(profileId);
 		const schemaName = this.normalizeSchema(schema);
 		const tableName = this.normalizeSchema(table);
-		const key = `${profile}|${schemaName}|${tableName}`;
-		return this.cached(this.columnsCache, key, opts?.force, () =>
+		const key = this.cacheKey(profile, schemaName, tableName);
+		return this.cached(this.columnsCache, key, profile, opts?.force, () =>
 			this.executor.execute<ColumnDto[]>('sql_list_columns_v2', {
 				profileId: profile,
 				schema: schemaName,
@@ -132,12 +135,31 @@ export class SqlMetadataService extends Disposable implements ISqlMetadataServic
 		});
 	}
 
+	async refresh(profileId: string): Promise<void> {
+		const normalized = this.normalizeProfileId(profileId);
+		const previous = this.profileRefreshes.get(normalized);
+		const refresh = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(async () => {
+			await this.executor.execute('sql_refresh_metadata', { profileId: normalized });
+			this.invalidate(normalized);
+		});
+		this.profileRefreshes.set(normalized, refresh);
+		try {
+			await refresh;
+		} catch (error) {
+			throw toSqlServiceError('sql_refresh_metadata', error);
+		} finally {
+			if (this.profileRefreshes.get(normalized) === refresh) {
+				this.profileRefreshes.delete(normalized);
+			}
+		}
+	}
+
 	invalidate(profileId: string): void {
-		const prefix = `${profileId}|`;
+		this.cacheEpochs.set(profileId, (this.cacheEpochs.get(profileId) ?? 0) + 1);
 		for (const map of [this.schemaCache, this.tablesCache, this.columnsCache]) {
-			for (const k of [...map.keys()]) {
-				if (k === profileId || k.startsWith(prefix)) {
-					map.delete(k);
+			for (const [key, entry] of map) {
+				if (entry.profileId === profileId) {
+					map.delete(key);
 				}
 			}
 		}
@@ -146,17 +168,43 @@ export class SqlMetadataService extends Disposable implements ISqlMetadataServic
 	private async cached<T>(
 		map: Map<string, CacheEntry<T>>,
 		key: string,
+		profileId: string,
 		force: boolean | undefined,
 		invoke: () => Promise<T>
 	): Promise<T> {
+		await this.waitForProfileRefresh(profileId);
 		const now = Date.now();
+		const epoch = this.cacheEpochs.get(profileId) ?? 0;
 		const hit = map.get(key);
 		if (!force && hit && now - hit.ts < this.ttlMs) {
 			return hit.value;
 		}
 		const value = await invoke();
-		map.set(key, { value, ts: now });
+		if ((this.cacheEpochs.get(profileId) ?? 0) === epoch) {
+			map.set(key, { profileId, value, ts: Date.now() });
+		}
 		return value;
+	}
+
+	private async waitForProfileRefresh(profileId: string): Promise<void> {
+		while (true) {
+			const refresh = this.profileRefreshes.get(profileId);
+			if (!refresh) {
+				return;
+			}
+			try {
+				await refresh;
+			} catch {
+				// The refresh caller owns its error; readers may continue with the existing cache.
+			}
+			if (this.profileRefreshes.get(profileId) === refresh) {
+				return;
+			}
+		}
+	}
+
+	private cacheKey(...parts: string[]): string {
+		return JSON.stringify(parts);
 	}
 
 	private normalizeProfileId(profileId: string): string {

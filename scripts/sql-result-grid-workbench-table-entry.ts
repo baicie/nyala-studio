@@ -1,4 +1,5 @@
 import { Event as VSCodeEvent } from '../src/vs/base/common/event.js';
+import { ListView } from '../src/vs/base/browser/ui/list/listView.js';
 import type { ITableColumn, ITableRenderer } from '../src/vs/base/browser/ui/table/table.js';
 import { IConfigurationService } from '../src/vs/platform/configuration/common/configuration.js';
 import { ContextKeyService } from '../src/vs/platform/contextkey/browser/contextKeyService.js';
@@ -12,6 +13,7 @@ import {
 	WORKBENCH_TABLE_IMPLEMENTATION_ID,
 	WORKBENCH_TABLE_RUNTIME_PROOF
 } from './sql-result-grid-benchmark-contract.mjs';
+import { createWorkbenchTableDiagnosticCollector } from './sql-result-grid-workbench-table-diagnostics.mjs';
 
 export { WORKBENCH_TABLE_IMPLEMENTATION_ID, WORKBENCH_TABLE_RUNTIME_PROOF };
 
@@ -82,7 +84,8 @@ export function createWorkbenchTableBenchmark(
 	root: HTMLElement,
 	rows: BenchmarkRow[],
 	benchmarkColumns: BenchmarkColumn[],
-	options: WorkbenchTableBenchmarkOptions
+	options: WorkbenchTableBenchmarkOptions,
+	enableDiagnostics = false
 ) {
 	const configurationService = createConfigurationService();
 	const contextKeyService = new ContextKeyService(configurationService);
@@ -112,6 +115,11 @@ export function createWorkbenchTableBenchmark(
 	host.style.height = `${options.height}px`;
 	root.append(host);
 
+	// The ListView captures its scroll handler at construction time, so the
+	// prototype must be wrapped before the table exists.
+	const diagnostics = enableDiagnostics
+		? createWorkbenchTableDiagnosticCollector({ ListViewPrototype: ListView.prototype })
+		: undefined;
 	const table = instantiationService.createInstance(
 		WorkbenchTable<BenchmarkRow>,
 		'nyala-sql-result-grid-benchmark',
@@ -143,6 +151,8 @@ export function createWorkbenchTableBenchmark(
 	tableRoot.setAttribute('aria-label', 'SQL result benchmark');
 
 	const exactPrototype = Object.getPrototypeOf(table) === WorkbenchTable.prototype;
+	const listView = (table as unknown as { list?: { view?: object } }).list?.view;
+	const diagnosticsInstalled = diagnostics === undefined || diagnostics.isInstalledOn(listView);
 	const domVerified = Boolean(
 		tableRoot.classList.contains('monaco-table') &&
 		viewport &&
@@ -150,12 +160,17 @@ export function createWorkbenchTableBenchmark(
 		tableRoot.querySelector('.monaco-list-row[data-row-index]') &&
 		tableRoot.querySelector('.monaco-table-td')
 	);
-	if (!exactPrototype || !domVerified || !viewport) {
+	if (!exactPrototype || !domVerified || !viewport || !diagnosticsInstalled) {
 		table.dispose();
+		diagnostics?.dispose();
 		contextKeyService.dispose();
 		listService.dispose();
 		instantiationService.dispose();
-		throw new Error('Real WorkbenchTable runtime proof failed.');
+		throw new Error(
+			diagnosticsInstalled
+				? 'Real WorkbenchTable runtime proof failed.'
+				: 'WorkbenchTable diagnostics instrumentation did not intercept the table ListView.'
+		);
 	}
 	const canonicalScrollHeight = rows.length * options.rowHeight + options.headerHeight;
 	const canonicalMaximumOffset = Math.max(0, canonicalScrollHeight - table.renderHeight);
@@ -173,9 +188,13 @@ export function createWorkbenchTableBenchmark(
 			id: WORKBENCH_TABLE_IMPLEMENTATION_ID,
 			runtimeProof: WORKBENCH_TABLE_RUNTIME_PROOF,
 			exactPrototype,
-			domVerified
+			domVerified,
+			diagnosticsInstalled
 		},
 		scroll: {
+			get scrollLeft() {
+				return table.scrollLeft;
+			},
 			get scrollTop() {
 				return toCanonicalOffset(table.scrollTop);
 			},
@@ -193,8 +212,10 @@ export function createWorkbenchTableBenchmark(
 			}
 		},
 		viewport,
+		diagnostics,
 		dispose() {
 			table.dispose();
+			diagnostics?.dispose();
 			contextKeyService.dispose();
 			listService.dispose();
 			instantiationService.dispose();

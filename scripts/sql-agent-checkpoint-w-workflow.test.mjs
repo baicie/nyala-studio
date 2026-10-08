@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [captureWorkflow, attestationWorkflow] = await Promise.all([
+const [captureWorkflow, attestationWorkflow, tauriConfig] = await Promise.all([
 	readFile(new URL('../.github/workflows/sql-agent-native.yml', import.meta.url), 'utf8'),
-	readFile(new URL('../.github/workflows/sql-agent-checkpoint-w-attest.yml', import.meta.url), 'utf8')
+	readFile(new URL('../.github/workflows/sql-agent-checkpoint-w-attest.yml', import.meta.url), 'utf8'),
+	readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8').then(JSON.parse)
 ]);
 
 test('native capture workflow produces evidence before any manual attestation', () => {
@@ -13,6 +14,23 @@ test('native capture workflow produces evidence before any manual attestation', 
 	assert.match(captureWorkflow, /name: sql-agent-native-macos/);
 	assert.match(captureWorkflow, /name: sql-agent-native-windows/);
 	assert.doesNotMatch(captureWorkflow, /attest_|manual_evidence|create-sql-agent-checkpoint-w-attestation/);
+});
+
+test('native capture embeds the built frontend and does not supply an external page source', () => {
+	for (const [start, end] of [
+		['  macos-agent:', '  windows-agent:'],
+		['  windows-agent:', undefined]
+	]) {
+		const startIndex = captureWorkflow.indexOf(start);
+		const job = captureWorkflow.slice(startIndex, end ? captureWorkflow.indexOf(end) : undefined);
+		const frontendBuildIndex = job.indexOf('pnpm run build');
+		const binaryBuildIndex = job.indexOf('pnpm exec tauri build');
+		const captureIndex = job.indexOf('capture:sql-agent-workbench-native');
+		assert.ok(frontendBuildIndex >= 0 && frontendBuildIndex < binaryBuildIndex && binaryBuildIndex < captureIndex);
+	}
+	assert.doesNotMatch(captureWorkflow, /--frontend-dist|--url/);
+	assert.equal(tauriConfig.build.frontendDist, '../dist');
+	assert.equal(tauriConfig.app.windows[0].useHttpsScheme, true);
 });
 
 test('Checkpoint W attestation verifies one prior capture run without executing its revision', () => {
@@ -32,9 +50,25 @@ test('Checkpoint W attestation verifies one prior capture run without executing 
 	assert.equal(attestationWorkflow.match(/actions\/checkout@/g)?.length, 1);
 	assert.match(attestationWorkflow, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}/);
 	assert.doesNotMatch(attestationWorkflow, /ref: \$\{\{ steps\.capture-provenance\.outputs\.source_revision \}\}/);
-	assert.match(attestationWorkflow, /run-id: \$\{\{ inputs\.capture_run_id \}\}/);
-	assert.match(attestationWorkflow, /artifact-ids: \$\{\{ steps\.capture-run\.outputs\.artifact_ids \}\}/);
-	assert.match(attestationWorkflow, /github-token: \$\{\{ secrets\.GITHUB_TOKEN \}\}/);
+	assert.doesNotMatch(attestationWorkflow, /actions\/download-artifact@/);
+	assert.doesNotMatch(attestationWorkflow, /run-id: \$\{\{ inputs\.capture_run_id \}\}/);
+	assert.doesNotMatch(attestationWorkflow, /artifact-ids: \$\{\{ steps\.capture-run\.outputs\.artifact_ids \}\}/);
+	const downloadStep = attestationWorkflow.slice(
+		attestationWorkflow.indexOf('Download and verify native evidence archives'),
+		attestationWorkflow.indexOf('Resolve immutable capture provenance')
+	);
+	assert.match(downloadStep, /GH_API_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/);
+	assert.match(downloadStep, /MACOS_ARCHIVE_URL: \$\{\{ steps\.capture-run\.outputs\.macos_archive_url \}\}/);
+	assert.match(downloadStep, /MACOS_ARCHIVE_DIGEST: \$\{\{ steps\.capture-run\.outputs\.macos_archive_digest \}\}/);
+	assert.match(downloadStep, /WINDOWS_ARCHIVE_URL: \$\{\{ steps\.capture-run\.outputs\.windows_archive_url \}\}/);
+	assert.match(downloadStep, /WINDOWS_ARCHIVE_DIGEST: \$\{\{ steps\.capture-run\.outputs\.windows_archive_digest \}\}/);
+	assert.match(downloadStep, /sha256sum --check --strict -/);
+	assert.match(downloadStep, /unzip -Z1 "\$archive"/);
+	assert.match(downloadStep, /Unsafe native evidence archive entry/);
+	assert.match(downloadStep, /https:\/\/api\.github\.com\/repos\/"\$GITHUB_REPOSITORY"\/actions\/artifacts\/\*\/zip/);
+	assert.doesNotMatch(downloadStep, /https:\/\/api\.github\.com\/repos\/\*\/actions\/artifacts/);
+	assert.match(downloadStep, /test ! -e "\$root\/\$name"/);
+	assert.match(downloadStep, /test ! -L "\$root\/\$name\/workbench-evidence\.json"/);
 	assert.doesNotMatch(attestationWorkflow, /pattern: sql-agent-native-\*/);
 	assert.match(attestationWorkflow, /actions\/runs\/\$CAPTURE_RUN_ID/);
 	assert.match(attestationWorkflow, /actions\/runs\/\$CAPTURE_RUN_ID\/artifacts/);
@@ -53,7 +87,7 @@ test('Checkpoint W attestation verifies one prior capture run without executing 
 
 	const checkoutIndex = attestationWorkflow.indexOf('actions/checkout@');
 	const metadataIndex = attestationWorkflow.indexOf('Verify immutable capture run metadata');
-	const downloadIndex = attestationWorkflow.indexOf('Download native evidence from the reviewed capture run');
+	const downloadIndex = attestationWorkflow.indexOf('Download and verify native evidence archives');
 	const provenanceIndex = attestationWorkflow.indexOf('Resolve immutable capture provenance');
 	const attestIndex = attestationWorkflow.indexOf('Record revision-bound manual attestation');
 	const verifyIndex = attestationWorkflow.indexOf('Run fail-closed Checkpoint W gate');
@@ -65,6 +99,9 @@ test('Checkpoint W attestation verifies one prior capture run without executing 
 			provenanceIndex < attestIndex &&
 			attestIndex < verifyIndex
 	);
+	const digestIndex = attestationWorkflow.indexOf('sha256sum --check --strict -');
+	const extractIndex = attestationWorkflow.indexOf('unzip -q "$archive" -d');
+	assert.ok(digestIndex >= 0 && extractIndex >= 0 && digestIndex < extractIndex);
 });
 
 test('Checkpoint W workflow binds a separate evidence reference to each manual gate', () => {

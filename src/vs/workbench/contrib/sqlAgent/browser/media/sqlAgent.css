@@ -44,13 +44,18 @@
 }
 
 @media (max-width: 420px) {
+	.sql-agent-view {
+		gap: 6px;
+		padding: 6px 8px;
+	}
+
 	.sql-agent-controls {
 		align-items: stretch;
 	}
 
 	.sql-agent-mode,
 	.sql-agent-task {
-		flex-basis: 100%;
+		flex-basis: calc(50% - 3px);
 		min-height: 28px;
 	}
 
@@ -72,6 +77,13 @@
 	overflow: auto;
 	padding: 6px;
 	border: 1px solid var(--vscode-panel-border);
+}
+
+.sql-agent-answer:empty,
+.sql-agent-evidence:empty,
+.sql-agent-activity:empty,
+.sql-agent-warnings:empty {
+	display: none;
 }
 
 .sql-agent-sql-draft {

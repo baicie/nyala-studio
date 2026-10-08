@@ -22,8 +22,9 @@ const contentTypes = new Map([
 /**
  * Serve a built frontend from a loopback-only HTTP origin.
  *
- * Tauri `--no-bundle` debug binaries do not embed `frontendDist`; the native
- * WebDriver harness uses this server as an explicit, local-only page source.
+ * This remains available for browser-only characterization. Native Workbench
+ * evidence uses the Tauri asset protocol so the tested frontend is the copy
+ * embedded in the measured binary.
  */
 export async function serveFrontendDist(distPath) {
 	const root = resolve(distPath);

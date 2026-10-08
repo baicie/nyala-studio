@@ -22,11 +22,32 @@ import {
 	createAgentWorkbenchSnapshotExpression,
 	validateAgentWorkbenchSnapshot
 } from './sql-agent-workbench-visual-contract.mjs';
-import { serveFrontendDist } from './serve-frontend-dist.mjs';
 
-const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const isMain = process.argv[1] ? resolve(process.argv[1]) === fileURLToPath(import.meta.url) : false;
 const manualGateCheckIds = new Set(['keyboard-tab-order', 'native-keyboard-evidence']);
+const sqlProductAwaitBootstrapCommandId = 'sqlStudio.product.awaitBootstrap';
+const sqlProductBootstrapSequences = {
+	restore: [['bootstrapDemo']],
+	onboarding: [
+		['bootstrapDemo'],
+		['bootstrapDemo', 'focusConnections', 'openResults'],
+		['bootstrapDemo', 'focusWelcome', 'newQuery'],
+		['bootstrapDemo', 'focusConnections', 'openResults', 'focusWelcome', 'newQuery']
+	]
+};
+const sqlProductBootstrapCommandKinds = new Set([
+	'bootstrapDemo',
+	'focusConnections',
+	'openResults',
+	'focusWelcome',
+	'newQuery'
+]);
+const sqlProductBootstrapFailureCodes = new Set([
+	'startup-prepare-failed',
+	'startup-command-failed',
+	'bootstrap-persist-failed',
+	'unexpected-bootstrap-rejection'
+]);
 
 const cli = isMain ? parseArgs(process.argv.slice(2)) : {};
 if (isMain && cli.help === 'true') {
@@ -34,7 +55,6 @@ if (isMain && cli.help === 'true') {
   --app-binary <path>       Webdriver-enabled Nyala debug binary
   --platform <name>         macos or windows
   --driver-url <url>        Embedded WebDriver endpoint (default: OS-assigned loopback port)
-  --frontend-dist <path>    Built frontend directory (default: ./dist)
   --output <path>           Evidence JSON destination
   --screenshot-dir <path>   Screenshot destination
   --app-log <path>          Captured native application log
@@ -45,6 +65,7 @@ if (isMain && cli.help === 'true') {
   --workflow-run-attempt <n> GitHub Actions attempt provenance
   --startup-timeout-ms <n>  Native application startup budget
   --script-timeout-ms <n>   Workbench/direct-eval budget
+  --manual-review           Keep the ready native session open until Enter (local QA only)
 `);
 	process.exit(0);
 }
@@ -53,7 +74,6 @@ const appBinary = cli['app-binary'] ? resolve(cli['app-binary']) : undefined;
 const platform =
 	cli.platform ?? (process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : '');
 const explicitDriverUrl = cli['driver-url'] === undefined ? undefined : String(cli['driver-url']);
-const frontendDist = resolve(cli['frontend-dist'] ?? join(repositoryRoot, 'dist'));
 const outputPath = resolve(cli.output ?? 'sql-agent-native-evidence.json');
 const screenshotDir = resolve(cli['screenshot-dir'] ?? join(dirname(outputPath), 'screenshots'));
 const startupTimeoutMs = parseBoundedInteger(
@@ -68,6 +88,7 @@ const scriptTimeoutMs = parseBoundedInteger(
 	10_000,
 	300_000
 );
+const manualReview = parseBooleanFlag(cli['manual-review'], '--manual-review');
 const requestedViewports = [
 	{ id: 'desktop', width: 1440, height: 900 },
 	{ id: 'narrow', width: 390, height: 844 }
@@ -94,14 +115,16 @@ async function run() {
 	let sessionId;
 	let appHost;
 	let temporaryRoot;
-	let frontendServer;
+	let frontendSource;
+	let sqlProductBootstrap;
 	let driverUrl;
 	let commandSequence = 0;
 	let provenance = baseProvenance;
 	let webdriverOwnership = {
 		driverUrl: undefined,
 		portSource: explicitDriverUrl === undefined ? 'os-assigned' : 'explicit',
-		runNonceVerified: false
+		runNonceVerified: false,
+		runNonceSha256: undefined
 	};
 	let identity = {
 		driverProvider: 'embedded',
@@ -117,12 +140,12 @@ async function run() {
 		webdriverOwnership = {
 			driverUrl,
 			portSource: endpoint.portSource,
-			runNonceVerified: false
+			runNonceVerified: false,
+			runNonceSha256: undefined
 		};
 		await mkdir(screenshotDir, { recursive: true });
 		await mkdir(dirname(outputPath), { recursive: true });
 		temporaryRoot = await mkdtemp(join(process.env.RUNNER_TEMP ?? tmpdir(), 'nyala-agent-webdriver-'));
-		frontendServer = await serveFrontendDist(frontendDist);
 		provenance = { ...baseProvenance, binarySha256: await sha256File(appBinary) };
 		appHost = await launchTauriEmbeddedWebdriver({
 			appBinary,
@@ -139,20 +162,18 @@ async function run() {
 			pageLoad: scriptTimeoutMs,
 			script: scriptTimeoutMs
 		});
-		await webdriverRequest(driverUrl, `/session/${sessionId}/url`, 'POST', { url: frontendServer.url });
-		await waitForFrontendNavigation(frontendServer.url);
-		validateWebdriverRunNonce(
-			runNonce,
-			await syncEval(
-				'typeof globalThis.__nyalaWebdriverRunNonce === "string" ? globalThis.__nyalaWebdriverRunNonce : null'
-			)
-		);
-		webdriverOwnership.runNonceVerified = true;
+		const initialDocumentBinding = await waitForAssetProtocolFrontend();
+		frontendSource = initialDocumentBinding.frontendSource;
+		webdriverOwnership = {
+			...webdriverOwnership,
+			runNonceVerified: true,
+			runNonceSha256: initialDocumentBinding.runNonceSha256
+		};
 		identity = identifyEmbeddedWebview(session.capabilities, platform);
-		await waitForExpression(
-			`Boolean(globalThis.__sidex_commandService) && Boolean(document.querySelector('.monaco-workbench')) && !document.querySelector('#nyala-splash')`,
-			'Workbench boot'
+		sqlProductBootstrap = normalizeSqlProductBootstrapOutcome(
+			await dispatchCommand(sqlProductAwaitBootstrapCommandId, { pollIntervalMs: 250 })
 		);
+		validateSqlProductBootstrapOutcome(sqlProductBootstrap);
 
 		for (const requestedViewport of requestedViewports) {
 			const viewportSizing = await setWindowSize(requestedViewport);
@@ -175,6 +196,7 @@ async function run() {
 
 			const tabEvidence = await collectTabOrder();
 			const tabOrder = tabEvidence.order;
+			const beforeSnapshot = await observeAssetProtocolDocument(frontendSource);
 			const snapshot = await syncEval(createAgentWorkbenchSnapshotExpression());
 			const viewport = {
 				id: requestedViewport.id,
@@ -183,7 +205,9 @@ async function run() {
 				devicePixelRatio: snapshot.devicePixelRatio
 			};
 			const screenshotName = `sql-agent-${platform}-${requestedViewport.id}.png`;
-			const screenshot = await captureScreenshot(join(screenshotDir, screenshotName));
+			const { content: screenshotContent, ...screenshot } = await captureScreenshot();
+			const afterScreenshot = await observeAssetProtocolDocument(frontendSource);
+			await writeFile(join(screenshotDir, screenshotName), screenshotContent);
 			const checks = [
 				...validateAgentWorkbenchSnapshot(snapshot, viewport, tabOrder).map(check => ({
 					...check,
@@ -221,6 +245,7 @@ async function run() {
 				status: automatedSurface.status,
 				automatedSurfaceStatus: automatedSurface.status,
 				failedAutomatedCheckIds: automatedSurface.failedCheckIds,
+				documentBinding: { beforeSnapshot, afterScreenshot },
 				screenshot: screenshotName,
 				screenshotBytes: screenshot.bytes,
 				screenshotSha256: screenshot.sha256,
@@ -242,10 +267,14 @@ async function run() {
 				: `${identity.engine} did not satisfy every automated SQL Agent Workbench surface check.`,
 			identity,
 			webdriverOwnership,
-			frontendSource: { kind: 'local-dist-server', url: frontendServer.url },
+			frontendSource,
+			sqlProductBootstrap,
 			provenance,
 			artifacts
 		});
+		if (ready && manualReview) {
+			await waitForManualReview();
+		}
 		if (!ready) process.exitCode = 1;
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
@@ -255,7 +284,8 @@ async function run() {
 			reason,
 			identity,
 			webdriverOwnership,
-			frontendSource: frontendServer ? { kind: 'local-dist-server', url: frontendServer.url } : undefined,
+			frontendSource,
+			sqlProductBootstrap,
 			provenance,
 			artifacts
 		});
@@ -265,7 +295,6 @@ async function run() {
 			await webdriverRequest(driverUrl, `/session/${sessionId}`, 'DELETE').catch(() => undefined);
 		}
 		await appHost?.stop();
-		await frontendServer?.close();
 		if (temporaryRoot) await rm(temporaryRoot, { recursive: true, force: true });
 	}
 
@@ -287,11 +316,12 @@ async function run() {
 		);
 	}
 
-	async function dispatchCommand(commandId) {
+	async function dispatchCommand(commandId, { pollIntervalMs = 25 } = {}) {
 		commandSequence += 1;
-		await executeWorkbenchCommandAndWait(syncScript, commandId, {
+		return executeWorkbenchCommandAndWait(syncScript, commandId, {
 			commandToken: `${runNonce}:${commandSequence}`,
-			timeoutMs: scriptTimeoutMs
+			timeoutMs: scriptTimeoutMs,
+			pollIntervalMs
 		});
 	}
 
@@ -309,35 +339,63 @@ async function run() {
 		throw new Error(`Timed out waiting for ${label}${lastError ? ` (${lastError})` : ''}.`);
 	}
 
-	async function waitForFrontendNavigation(expectedUrl) {
+	async function waitForAssetProtocolFrontend() {
 		const deadline = Date.now() + scriptTimeoutMs;
-		let lastState = 'navigation has not reached the local frontend';
+		let lastState = 'the native WebView has not reached its asset protocol frontend';
 		while (Date.now() < deadline) {
 			try {
-				const [urlPayload, titlePayload, readyStatePayload] = await Promise.all([
+				const [urlPayload, titlePayload, readyStatePayload, workbenchReadyPayload] = await Promise.all([
 					webdriverRequest(driverUrl, `/session/${sessionId}/url`),
 					webdriverRequest(driverUrl, `/session/${sessionId}/title`),
 					webdriverRequest(driverUrl, `/session/${sessionId}/execute/sync`, 'POST', {
 						script: 'return document.readyState',
+						args: []
+					}),
+					webdriverRequest(driverUrl, `/session/${sessionId}/execute/sync`, 'POST', {
+						script:
+							'return Boolean(globalThis.__sidex_commandService) && Boolean(document.querySelector(".monaco-workbench")) && !document.querySelector("#nyala-splash")',
 						args: []
 					})
 				]);
 				const currentUrl = unwrapWebdriverValue(urlPayload);
 				const title = unwrapWebdriverValue(titlePayload);
 				const readyState = unwrapWebdriverValue(readyStatePayload);
-				lastState = `${currentUrl || 'unknown'} title=${title || 'empty'} readyState=${readyState || 'unknown'}`;
-				if (currentUrl === expectedUrl && readyState === 'complete' && title === 'Nyala Studio') {
+				const workbenchReady = unwrapWebdriverValue(workbenchReadyPayload) === true;
+				const titleMatches = typeof title === 'string' && title.includes('Nyala Studio');
+				const classifiedReadyState = ['loading', 'interactive', 'complete'].includes(readyState) ? readyState : 'other';
+				lastState = `url=${describeUntrustedUrl(currentUrl)} titleMatches=${titleMatches} readyState=${classifiedReadyState} workbenchReady=${workbenchReady}`;
+				const source = createTauriAssetFrontendSource(currentUrl, platform);
+				if (readyState === 'complete' && titleMatches && workbenchReady) {
 					// Let WebKit finish the final document-to-Workbench handoff before the
 					// first async direct-eval request; otherwise it can be reclaimed.
 					await delay(250);
-					return;
+					return observeAssetProtocolDocument(source);
 				}
 			} catch (error) {
 				lastState = error instanceof Error ? error.message : String(error);
 			}
 			await delay(100);
 		}
-		throw new Error(`Timed out waiting for frontend navigation: ${lastState}`);
+		throw new Error(`Timed out waiting for the Tauri asset protocol frontend: ${lastState}`);
+	}
+
+	async function observeAssetProtocolDocument(expectedSource) {
+		const [urlPayload, observedNonce] = await Promise.all([
+			webdriverRequest(driverUrl, `/session/${sessionId}/url`),
+			syncEval('typeof globalThis.__nyalaWebdriverRunNonce === "string" ? globalThis.__nyalaWebdriverRunNonce : null')
+		]);
+		const binding = createAssetProtocolDocumentBinding(
+			unwrapWebdriverValue(urlPayload),
+			platform,
+			runNonce,
+			observedNonce
+		);
+		if (binding.frontendSource.url !== expectedSource?.url) {
+			throw new Error(
+				`Tauri asset protocol frontend changed during capture: expected ${expectedSource?.url ?? 'unknown'}`
+			);
+		}
+		return binding;
 	}
 
 	async function setWindowSize(viewport) {
@@ -388,20 +446,153 @@ async function run() {
 		return syncEval(`document.activeElement?.getAttribute('aria-label') || ''`);
 	}
 
-	async function captureScreenshot(path) {
+	async function captureScreenshot() {
 		const payload = await webdriverRequest(driverUrl, `/session/${sessionId}/screenshot`, 'GET');
 		const encoded = unwrapWebdriverValue(payload);
 		if (typeof encoded !== 'string' || encoded.length === 0) {
 			throw new Error('Embedded WebDriver returned an empty screenshot.');
 		}
 		const bytes = Buffer.from(encoded, 'base64');
-		await writeFile(path, bytes);
 		return {
+			content: bytes,
 			...inspectPngPixels(bytes),
 			bytes: bytes.byteLength,
 			sha256: createHash('sha256').update(bytes).digest('hex')
 		};
 	}
+}
+
+export function createTauriAssetFrontendSource(value, platformName) {
+	const expectedUrl =
+		platformName === 'macos'
+			? 'tauri://localhost'
+			: platformName === 'windows'
+				? 'https://tauri.localhost/'
+				: undefined;
+	const observedUrl = typeof value === 'string' ? value : undefined;
+	if (expectedUrl === undefined || observedUrl !== expectedUrl) {
+		throw new Error(
+			`Embedded ${platformName || 'unknown'} asset protocol frontend URL must be ${expectedUrl ?? 'a supported native origin'}, got ${describeUntrustedUrl(value)}`
+		);
+	}
+	return { kind: 'tauri-asset-protocol', url: observedUrl };
+}
+
+export function createAssetProtocolDocumentBinding(value, platformName, expectedNonce, observedNonce) {
+	const frontendSource = createTauriAssetFrontendSource(value, platformName);
+	validateWebdriverRunNonce(expectedNonce, observedNonce);
+	return {
+		frontendSource,
+		runNonceSha256: createHash('sha256').update(observedNonce).digest('hex')
+	};
+}
+
+export function describeUntrustedUrl(value) {
+	if (typeof value !== 'string') return `non-string ${typeof value}`;
+	try {
+		const parsed = new URL(value);
+		return `scheme=${parsed.protocol || 'none'} host=${parsed.hostname || 'none'}`;
+	} catch {
+		return 'unparseable URL';
+	}
+}
+
+export function normalizeSqlProductBootstrapOutcome(value) {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		throw malformedSqlProductBootstrapOutcome();
+	}
+
+	const { version, status, mode, completedCommands } = value;
+	if (
+		version !== 1 ||
+		!['succeeded', 'failed', 'disposed'].includes(status) ||
+		!['onboarding', 'restore'].includes(mode) ||
+		!Array.isArray(completedCommands) ||
+		completedCommands.some(command => !sqlProductBootstrapCommandKinds.has(command)) ||
+		!isSqlProductBootstrapSequencePrefix(mode, completedCommands)
+	) {
+		throw malformedSqlProductBootstrapOutcome();
+	}
+
+	const normalized = {
+		version: 1,
+		status,
+		mode,
+		completedCommands: [...completedCommands]
+	};
+	if (status === 'succeeded') {
+		if (
+			Object.hasOwn(value, 'failedStep') ||
+			Object.hasOwn(value, 'errorCode') ||
+			!isCompleteSqlProductBootstrapSequence(mode, completedCommands)
+		) {
+			throw malformedSqlProductBootstrapOutcome();
+		}
+		return normalized;
+	}
+
+	if (status === 'disposed') {
+		if (Object.hasOwn(value, 'failedStep') || Object.hasOwn(value, 'errorCode')) {
+			throw malformedSqlProductBootstrapOutcome();
+		}
+		return normalized;
+	}
+
+	const { failedStep, errorCode } = value;
+	if (
+		!['prepare', 'persist', ...sqlProductBootstrapCommandKinds].includes(failedStep) ||
+		!sqlProductBootstrapFailureCodes.has(errorCode) ||
+		!isValidSqlProductBootstrapFailure(mode, completedCommands, failedStep, errorCode)
+	) {
+		throw malformedSqlProductBootstrapOutcome();
+	}
+	return { ...normalized, failedStep, errorCode };
+}
+
+export function validateSqlProductBootstrapOutcome(value) {
+	const outcome = normalizeSqlProductBootstrapOutcome(value);
+	if (outcome.status !== 'succeeded') {
+		throw new Error(`SQL Product bootstrap did not succeed (${outcome.status}).`);
+	}
+	return outcome;
+}
+
+function isSqlProductBootstrapSequencePrefix(mode, commands) {
+	return sqlProductBootstrapSequences[mode].some(
+		sequence => commands.length <= sequence.length && commands.every((command, index) => sequence[index] === command)
+	);
+}
+
+function isCompleteSqlProductBootstrapSequence(mode, commands) {
+	return sqlProductBootstrapSequences[mode].some(
+		sequence => sequence.length === commands.length && sequence.every((command, index) => commands[index] === command)
+	);
+}
+
+function isValidSqlProductBootstrapFailure(mode, completedCommands, failedStep, errorCode) {
+	if (errorCode === 'startup-prepare-failed' || errorCode === 'unexpected-bootstrap-rejection') {
+		return failedStep === 'prepare' && completedCommands.length === 0;
+	}
+	if (errorCode === 'bootstrap-persist-failed') {
+		return (
+			mode === 'onboarding' &&
+			failedStep === 'persist' &&
+			isCompleteSqlProductBootstrapSequence(mode, completedCommands)
+		);
+	}
+	if (errorCode !== 'startup-command-failed' || !sqlProductBootstrapCommandKinds.has(failedStep)) {
+		return false;
+	}
+	return sqlProductBootstrapSequences[mode].some(
+		sequence =>
+			completedCommands.length < sequence.length &&
+			completedCommands.every((command, index) => sequence[index] === command) &&
+			sequence[completedCommands.length] === failedStep
+	);
+}
+
+function malformedSqlProductBootstrapOutcome() {
+	return new Error('SQL Product bootstrap outcome is malformed.');
 }
 
 export async function executeWorkbenchCommandAndWait(
@@ -422,45 +613,54 @@ export async function executeWorkbenchCommandAndWait(
 
 	const encodedCommandId = JSON.stringify(commandId);
 	const encodedCommandToken = JSON.stringify(String(commandToken));
-	const start = await syncScript(`
-		const commandToken = ${encodedCommandToken};
-		const states = globalThis.__nyalaNativeCaptureCommandStates ??= Object.create(null);
-		states[commandToken] = { status: 'pending' };
-		try {
-			const commandResult = globalThis.__sidex_commandService.executeCommand(${encodedCommandId});
-			Promise.resolve(commandResult).then(
-				() => { states[commandToken] = { status: 'fulfilled' }; },
-				error => { states[commandToken] = { status: 'rejected', error: String(error?.stack || error) }; }
-			);
-			return { started: true };
-		} catch (error) {
-			states[commandToken] = { status: 'rejected', error: String(error?.stack || error) };
-			return { started: false, error: String(error?.stack || error) };
-		}
-	`);
-	if (!start?.started) {
-		throw new Error(`Workbench command ${commandId} failed to start: ${start?.error || 'unknown error'}`);
-	}
-
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		const state = await syncScript(`
-			const states = globalThis.__nyalaNativeCaptureCommandStates;
+	try {
+		const start = await syncScript(`
 			const commandToken = ${encodedCommandToken};
-			const state = states?.[commandToken] ?? { status: 'missing' };
-			if (state.status === 'fulfilled' || state.status === 'rejected') delete states[commandToken];
-			return state;
+			const states = globalThis.__nyalaNativeCaptureCommandStates ??= Object.create(null);
+			states[commandToken] = { status: 'pending' };
+			const settle = state => {
+				if (states[commandToken]?.status === 'pending') states[commandToken] = state;
+			};
+			try {
+				const commandResult = globalThis.__sidex_commandService.executeCommand(${encodedCommandId});
+				Promise.resolve(commandResult).then(
+					result => settle({ status: 'fulfilled', result }),
+					() => settle({ status: 'rejected' })
+				);
+				return { started: true };
+			} catch {
+				settle({ status: 'rejected' });
+				return { started: false };
+			}
 		`);
-		if (state?.status === 'fulfilled') return;
-		if (state?.status === 'rejected') {
-			throw new Error(`Workbench command ${commandId} rejected: ${state.error || 'unknown error'}`);
+		if (!start?.started) {
+			throw new Error(`Workbench command ${commandId} failed to start.`);
 		}
-		if (state?.status === 'missing') {
-			throw new Error(`Workbench command ${commandId} lost its page execution state.`);
+
+		const deadline = Date.now() + timeoutMs;
+		while (Date.now() < deadline) {
+			const state = await syncScript(`
+				const states = globalThis.__nyalaNativeCaptureCommandStates;
+				const commandToken = ${encodedCommandToken};
+				return states?.[commandToken] ?? { status: 'missing' };
+			`);
+			if (state?.status === 'fulfilled') return state.result;
+			if (state?.status === 'rejected') {
+				throw new Error(`Workbench command ${commandId} rejected.`);
+			}
+			if (state?.status === 'missing') {
+				throw new Error(`Workbench command ${commandId} lost its page execution state.`);
+			}
+			await delay(pollIntervalMs);
 		}
-		await delay(pollIntervalMs);
+		throw new Error(`Timed out waiting for Workbench command ${commandId}.`);
+	} finally {
+		await syncScript(`
+			const states = globalThis.__nyalaNativeCaptureCommandStates;
+			if (states) delete states[${encodedCommandToken}];
+			return true;
+		`).catch(() => undefined);
 	}
-	throw new Error(`Timed out waiting for Workbench command ${commandId}.`);
 }
 
 export function validateRequestedViewport(requested, actual, calibration) {
@@ -502,6 +702,46 @@ export function shouldOpenAgentPanel(agentPanelVisible) {
 	return !agentPanelVisible;
 }
 
+export function waitForManualReview({ input = process.stdin, output = process.stdout } = {}) {
+	if (input?.isTTY !== true) {
+		return Promise.reject(new Error('--manual-review requires an interactive TTY.'));
+	}
+	if (typeof input.on !== 'function' || typeof input.off !== 'function' || typeof output?.write !== 'function') {
+		return Promise.reject(new Error('--manual-review requires readable input and writable output streams.'));
+	}
+
+	output.write(
+		'\nManual review mode is local QA only; keyboard and screen-reader manual gates remain pending.\n' +
+			'Use the system keyboard and VoiceOver/Narrator against the open native window. Press Enter to close it.\n'
+	);
+	return new Promise((resolveReview, rejectReview) => {
+		const cleanup = () => {
+			input.off('data', onData);
+			input.off('end', onEnd);
+			input.off('error', onError);
+			input.pause?.();
+		};
+		const finish = () => {
+			cleanup();
+			resolveReview();
+		};
+		const fail = error => {
+			cleanup();
+			rejectReview(error);
+		};
+		const onData = chunk => {
+			if (String(chunk).includes('\n') || String(chunk).includes('\r')) finish();
+		};
+		const onEnd = () => fail(new Error('--manual-review input closed before Enter.'));
+		const onError = error => fail(error instanceof Error ? error : new Error(String(error)));
+		input.setEncoding?.('utf8');
+		input.on('data', onData);
+		input.once('end', onEnd);
+		input.once('error', onError);
+		input.resume?.();
+	});
+}
+
 export function validateWebdriverRunNonce(expectedNonce, observedNonce) {
 	if (typeof expectedNonce !== 'string' || expectedNonce.length === 0) {
 		throw new Error('Embedded WebDriver run nonce must be a non-empty string.');
@@ -522,7 +762,16 @@ export function evaluateAutomatedSurfaceChecks(checks) {
 	};
 }
 
-async function writeEvidence({ status, reason, identity, webdriverOwnership, frontendSource, provenance, artifacts }) {
+async function writeEvidence({
+	status,
+	reason,
+	identity,
+	webdriverOwnership,
+	frontendSource,
+	sqlProductBootstrap,
+	provenance,
+	artifacts
+}) {
 	const report = {
 		version: 2,
 		generatedAt: new Date().toISOString(),
@@ -535,6 +784,7 @@ async function writeEvidence({ status, reason, identity, webdriverOwnership, fro
 		provenance,
 		webdriverOwnership,
 		...(frontendSource ? { frontendSource } : {}),
+		sqlProductBootstrap,
 		artifacts,
 		limitations: [
 			'Native automation validates the embedded Workbench DOM, keyboard order, ARIA labels, layout, and screenshots.',
@@ -599,6 +849,12 @@ function parseBoundedInteger(value, name, min, max) {
 		throw new Error(`${name} must be an integer between ${min} and ${max}`);
 	}
 	return parsed;
+}
+
+function parseBooleanFlag(value, name) {
+	if (value === undefined || value === 'false') return false;
+	if (value === 'true') return true;
+	throw new Error(`${name} must be a boolean flag`);
 }
 
 function delay(ms) {

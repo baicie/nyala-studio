@@ -94,18 +94,18 @@ Result surface。A2 -> A3 -> A4、Z1 -> Z2、A4 -> Z2 和 Z2 -> R0 必须顺序�
 
 ## 5. Stage 索引
 
-| Stage | 交付                  | 依赖                         | 当前状态（2026-08-17）                                                                                   | 完成证据                                                                                                                        |
-| ----- | --------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| B0    | Core MVP 00-08        | 无                           | 已完成                                                                                                   | Phase 08 自动化、Demo、live MySQL 和原生 Validate 记录                                                                          |
-| A0    | SQL Intelligence      | B0                           | 已完成（A0.2 parser No-Go）                                                                              | dialect corpus、Unknown fail-closed、parser ADR                                                                                 |
-| A1    | Schema Context        | A0 typed refs                | A1.1-A1.3 已完成                                                                                         | adapter、bounded schema/FK graph search/cache、invalidation tests                                                               |
-| A2    | Suggest-only Runtime  | A0/A1 + canonical capability | A2.1-A2.4 完成                                                                                           | state/budget/policy/scripted model/bridge，零 query call                                                                        |
-| A3    | Read-only Agent       | A2                           | A3.1/A3.2 与 Checkpoint R 已完成                                                                         | SQLite 真闭环，write/multi/Unknown deny，cancel/budget，result policy                                                           |
-| A4    | Workbench Integration | A3 service contract          | A4.1/A4.2 与结构化 native evidence gate 已实现；Checkpoint W 待完成                                      | Editor/Error/Schema/Result/Panel tests 与双平台/人工 QA                                                                         |
-| Z0    | Zeus 采用评估         | B0                           | 评估完成，生产未接入                                                                                     | 选择性采用评估与边界记录                                                                                                        |
-| Z1    | Data Grid Spike       | Z0                           | Z1.1/Z1.2 已完成；Z1.3 为 No-Go（v6 下 10k 只改善 1.0%，且缺 revision-bound 双 WebView/bundle evidence） | measurement contract v6 balanced raw records；platform evidence schema v2；截图/hash、provenance、bundle audit 与 Go/No-Go 记录 |
-| Z2    | Result Grid Preview   | Z1 Go + A4                   | 禁止开始（Z1 No-Go）                                                                                     | feature flag、native fallback、行为契约和原生 QA                                                                                |
-| R0    | vNext Release Gate    | A4 + Z2                      | prework 已实现；release gate 保持 No-Go                                                                  | §2 DoD 与 §8 verification matrix 全绿                                                                                           |
+| Stage | 交付                  | 依赖                         | 当前状态（2026-08-24）                                                                                   | 完成证据                                                                                               |
+| ----- | --------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| B0    | Core MVP 00-08        | 无                           | 已完成                                                                                                   | Phase 08 自动化、Demo、live MySQL 和原生 Validate 记录                                                 |
+| A0    | SQL Intelligence      | B0                           | 已完成（A0.2 parser No-Go）                                                                              | dialect corpus、Unknown fail-closed、parser ADR                                                        |
+| A1    | Schema Context        | A0 typed refs                | A1.1-A1.3 已完成                                                                                         | adapter、bounded schema/FK graph search/cache、invalidation tests                                      |
+| A2    | Suggest-only Runtime  | A0/A1 + canonical capability | A2.1-A2.4 完成                                                                                           | state/budget/policy/scripted model/bridge，零 query call                                               |
+| A3    | Read-only Agent       | A2                           | A3.1/A3.2 与 Checkpoint R 已完成                                                                         | SQLite 真闭环，write/multi/Unknown deny，cancel/budget，result policy                                  |
+| A4    | Workbench Integration | A3 service contract          | A4.1/A4.2 与结构化 native evidence gate 已实现；Checkpoint W 待完成                                      | Editor/Error/Schema/Result/Panel tests 与双平台/人工 QA                                                |
+| Z0    | Zeus 采用评估         | B0                           | 评估完成，生产未接入                                                                                     | 选择性采用评估与边界记录                                                                               |
+| Z1    | Data Grid Spike       | Z0                           | beta.4 发布/audit/双 WebView evidence 完成；v6 五项性能门失败，诊断结论为 floor-limited，Z1.3 仍为 No-Go | real WorkbenchTable proof/digest；v6 balanced records；双 WebView、截图、bundle audit 与 Go/No-Go 记录 |
+| Z2    | Result Grid Preview   | Z1 Go + A4                   | 禁止开始（Z1 No-Go）                                                                                     | feature flag、native fallback、行为契约和原生 QA                                                       |
+| R0    | vNext Release Gate    | A4 + Z2                      | prework 已实现；release gate 保持 No-Go                                                                  | §2 DoD 与 §8 verification matrix 全绿                                                                  |
 
 ## 6. 实施顺序与 Checkpoint
 
@@ -279,7 +279,32 @@ workflow 仅允许 protected default branch，使用 `sql-agent-checkpoint-w` en
 capture revision 自带的 verifier。capture revision/ref 必须与受保护 attestation revision/ref 一致；
 attestation run 必须在 capture 完成后创建，artifact 必须未过期、带 GitHub SHA-256 digest 且时序有效。
 R0 现在消费结构化 `phase-a4-checkpoint-w.json`，不再扫描验证文档关键词。当前 report 保持 `NO-GO`，
-这项基础设施不等于 Checkpoint W 签收。
+这项基础设施不等于 Checkpoint W 签收。2026-08-18 的 macOS 本地复跑发现并修复 390px 下
+Start/Cancel 与 statusbar 相交：manifest/verifier 现强制 statusbar、Agent root 与 controls 的 viewport
+containment 及不相交关系，修复后本地 `macos-automated-surface` 通过；该 dirty-tree artifact 没有受保护
+workflow provenance，不改变上述 `NO-GO`。
+同日的后续 bundle preflight 还暴露出启动 warning toast 会覆盖 Agent Panel，但旧 snapshot 不记录
+notification overlay，因此可能继续误报 `ready`。producer 现在从 Workbench 原生 toast 与
+Notification Center 采集不含正文的 kind/severity/rect，要求 overlay geometry 完整，并把所有 warning/
+error overlay 纳入 Agent root 与必需 controls 的相交检查；任一可见 error notification 即使未相交也
+fail closed。trusted verifier 从 raw snapshot 独立重算同一规则，缺少新字段的旧 v2 artifact 会被拒绝。
+本地 macOS bundle 复跑已因两条 warning 在 desktop/narrow 遮挡 Agent surface 而按预期 exit 1；runner
+没有等待或自动关闭真实启动错误。该本地负向证据只加固 capture contract，不完成 Checkpoint W。
+后续差分复现确认该失败与未绑定到 binary 的外置 `dist` 状态相关，而不是 loopback origin 必然无法使用
+Tauri IPC：同一 binary 在 `dist` 重建后从 asset protocol 与 loopback clean-data 启动均不再出现 warning，
+但失败时的旧 `dist` bytes 没有被记录，不能再做逐字节归因。为消除这类双产物漂移，native producer
+现在不再启动静态 HTTP server 或主动导航；它等待 binary 内嵌 frontend 到达 macOS
+`tauri://localhost` / Windows `https://tauri.localhost/`，在 nonce 校验及每个 viewport 前精确重验 URL，
+并记录 `frontendSource.kind: tauri-asset-protocol`。trusted verifier 独立拒绝 legacy loopback、跨平台、
+非根路径、query/hash 和 canonicalized URL 变体。重建后的本地 macOS asset-protocol capture 两个 viewport
+均为 `ready`、零 notification overlay，独立 verifier 的 `macos-automated-surface` 通过；该 dirty-tree
+artifact 仍缺受保护 workflow provenance、Windows 与人工 gate，所以 Checkpoint W/R0 继续 `NO-GO`。
+producer 现在还等待版本化 `sqlStudio.product.awaitBootstrap` outcome，确保截图不是发生在 Demo/布局
+启动序列之前。2026-08-18 的 native 复现发现 capture command state 的 `value` 字段会被 WebDriver
+envelope 二次解包，导致已成功的 onboarding outcome 被误报为 timeout；内部字段改为 `result` 后，
+真实 envelope 回归测试与 macOS asset-protocol 重放均通过，五个 onboarding commands 完整 settle。
+trusted verifier 接受该次 macOS automated surface，但受保护 provenance、Windows 与人工 gate 仍缺失，
+因此不推进 Z2 或 R0。
 
 ### Post-vNext 增强：A5 SQLite Query Optimization
 
@@ -305,6 +330,17 @@ benchmark 已覆盖 1k×20、10k×50、宽列和窄面板，运行 3 次并保�
 [`phase-z1-spike-verification.md`](./phase-z1-spike-verification.md#z12-三-renderer-benchmark)。
 该结果仍是 Chromium-compatible headless characterization，不构成双 WebView 通过。
 
+**真实 WorkbenchTable baseline hardening（2026-08-18）：** benchmark-only Vite bundle 现在通过
+`InstantiationService` 创建仓库源码中的真实 `WorkbenchTable`，并以 exact prototype、Monaco table DOM
+signature 和 JS/CSS bundle SHA-256 作为运行时证明。正式 benchmark/profile/platform/visual 入口显式使用
+`--workbench-table-implementation real`；旧手写 fixed-row renderer 只保留为非准入 diagnostic
+`characterization`。1k×20、10k×50、宽列和窄面板的本地单 renderer smoke 均成功，但来自 dirty tree、
+没有 Zeus 对比或 protected provenance，因此不替代正式 Z1.2/Z1.3 evidence，也不进入生产 bundle。
+随后使用 exact-pinned Zeus bundle 完成 `4 workloads × 3 renderers × 3 repeats = 36` 条 real-mode
+balanced records；Chromium identity、record contract 与 summary recompute 全部通过。该本地运行的
+1k×20 Zeus 相对真实 WorkbenchTable 回归 `5.4%`，通过 10% 门；10k×50 Zeus 为 `23.3ms`、
+WorkbenchTable 为 `18.1ms`，改善 `-28.7%`，明确未达到 +20%。
+
 **Z1.3：gate verifier 已实现，当前 No-Go（2026-08-12；platform evidence schema v2 与
 measurement contract v6 于 2026-08-17 加固）。** [`phase-z1-gate.json`](./phase-z1-gate.json)
 固化了 1k×20/10k×50 主指标、gzip budget 和双 WebView 的 fail-closed 准入。Chromium
@@ -318,6 +354,12 @@ record 重新计算 summary，不信任报告内的聚合值；每个平台还�
 的 manifest，每张图都绑定唯一 run token/viewport，且实际文件的 realpath、bytes、SHA-256、CSS
 viewport × DPR 物理尺寸和像素多样性都要通过验证。
 
+Chromium report 顶层还必须声明 `workbenchTableImplementation: "real"`；每条 Workbench record 必须
+携带 `vs.platform.list.browser.WorkbenchTable`、`exact-prototype-and-monaco-dom-v1`、exact prototype/
+DOM proof 和与 report provenance 相同的 bundle digest。macOS/Windows 必须复用同一 digest。gate
+按 viewport 行数加最多 16 行 overscan 重算 virtual `renderedRows` 上限，并要求 document client/scroll
+geometry 完全受控、`outerDocumentOverflowFree` 与 `runMarkerAnchored` 为真。
+
 Measurement contract v3/v4/v5 已被取代：v3 可能把缺失可见行的 `visibleRowIndex: -1` 误判为提交；
 v4 又允许预渲染 native table 在没有 presentation opportunity 的同一 task 内完成，而 virtual renderer
 必须等待一帧，形成不对称 baseline。v5 要求 20 个真实位移样本都在 post-presentation opportunity
@@ -329,7 +371,7 @@ ordinal 纳入 stale-result identity 和 gate 重算。
 所有 Chromium/native/bundle audit 产物必须绑定同一个 repository、source revision/ref、workflow
 run id/attempt；每个平台还要记录 native binary SHA-256，dependency audit、Chromium、WKWebView 与
 WebView2 必须记录一致的 Zeus bundle SHA-256。fresh structured bundle audit 会复核精确版本、license、
-integrity、production dependency closure，以及实际 bundle 的 raw/gzip bytes 和 SHA-256。51 个 Z1
+integrity、production dependency closure，以及实际 bundle 的 raw/gzip bytes 和 SHA-256。61 个 Z1
 verifier contract tests 覆盖 raw/summary 伪造、真实 scroll displacement/target/row/timing、重复
 iteration/run token、平衡 execution plan/ordinal、viewport calibration、截图物理尺寸/run identity、路径逃逸、缺失 trusted expected
 workflow provenance、schema version、跨平台 provenance、bundle
@@ -343,18 +385,97 @@ attestation manifest 绑定 gate、benchmark、platform evidence、Zeus audit、
 六份 SHA-256。9 个 Z1 attestation contract tests 覆盖 exact artifact identity、digest/retention/timestamp
 与 protected workflow contract；这些测试不改变当前性能 `NO-GO`。
 
-当前 No-Go 有独立的性能与证据阻塞：本地 v6 balanced characterization 的 1k×20 scroll interaction
+当前 No-Go 有独立的正式证据与性能阻塞：2026-08-17 的 legacy v6 balanced characterization
+中，1k×20 scroll interaction
 相对最佳非 Zeus baseline 回归 `1.7%`，已满足“不回归超过 10%”；10k×50 scroll p95 只改善
-`1.0%`，仍低于预注册的 `20%` 门槛。该本地记录还
+`1.0%`，仍低于预注册的 `20%` 门槛。新 gate 不再接受该 fixed-row artifact，当前 metric checks 因缺
+真实 WorkbenchTable baseline 而直接失败；上述数值只能作为历史诊断，不能冒充当前准入结果。2026-08-18
+的 real-mode 本地 balanced run 虽通过 Chromium 身份/record/summary 合同，但 10k 指标进一步恶化为
+`-28.7%`，同样无法通过性能门。两份本地记录都
 明确标记 `sourceTreeClean: false`，同时缺少绑定当前 revision 的完整 macOS/Windows 双 WebView
 evidence 和 fresh bundle audit/Zeus bundle digest evidence。因此不能开始 Z2，也不能把 Z1 评估写成 Go。
 
-2026-08-17 的有界 feasibility profile 进一步把性能分支收敛为
-`PRESENTATION_FLOOR_LIMITED`：6 次平衡重复中 WorkbenchTable/Zeus 为 `20.1/20.0ms`，共同
-post-presentation floor 为 `18.5ms`，而 20% 门槛要求 Zeus `<=16.08ms`；即使假设 renderer 工作
-为零，最大可观测改善也只有 `8.0%`。该非门禁 profile 保留 12 条 records、240 个 scroll 与 240 个
-floor raw samples，不改变 v6、阈值或正式 gate evidence。继续调优临时 adapter 已到停止条件；除非
+2026-08-18 的 real-component feasibility profile 在复用格式化 row arrays、删除重复
+`refreshViewport()` 后，将 Zeus 10k render median 从此前对比的 `157.0ms` 降至 `21.6ms`；overscan
+保持 4。6 次平衡重复中 WorkbenchTable/Zeus scroll p95 为 `17.7/18.1ms`，共同 post-presentation
+floor 为 `17.5ms`，而 20% 门槛要求 Zeus `<=14.16ms`；即使假设 renderer 工作为零，最大可观测改善
+也只有 `1.1%`。该非门禁 profile 保留 12 条 real WorkbenchTable/Zeus records、240 个 scroll 与
+240 个 floor raw samples，并带 exact runtime proof 和 bundle digest，但仍是 dirty-tree Chromium
+诊断，不改变 v6、阈值或正式 gate evidence。adapter 重复工作已消除，继续调优已到停止条件；除非
 产品负责人显式重新预注册主指标/门槛，否则 Z1.3 维持 No-Go。
+
+2026-08-20 对 exact-pinned `@zeus-web/data-grid@0.1.0-beta.3` 与 Zeus core `0.1.1-beta.1` 完成候选
+复验。core release 11/11 jobs 通过；zeus-ui PR #35 与合并后 main CI 各 10/10，36/36 packages 已发布
+且 `beta` 指向 beta.3。zeus-ui publish workflow 仍因过时的 zeus-compat `state/effect` consumer smoke
+最终失败，不能称为完整 release verification。fresh local bundle 为 91,000 raw / 29,647 gzip bytes，
+仅比 30 KB 门低 353 bytes。beta.3 已包含单次建模、shallow props、keyed `For`、snapshot cache 和
+fixed-height DOM pooling；static binding 与 diagnostics 只部分完成，scheduler 未改。
+
+beta.2/beta.3 各两轮 6-repeat 10k profile 合并后，Zeus render upper median 从 `17.1ms` 改善到
+`14.9ms`，scroll p95 upper median 则从 `18.7ms` 变为 `19.2ms`，beta.3 还出现 `241ms` scroll max
+long tail。beta.3 全 workload run 的 10k WorkbenchTable/Zeus scroll 为 `18.0/20.2ms`，相对 baseline
+回归 `12.2%`，旧 +20% 门继续失败。该 dirty-tree Chromium 复验既未替换 beta.2 profile，也没有
+macOS WKWebView、Windows WebView2、fresh structured audit 或 protected attestation，因此不改变
+Z1.3 No-Go。后续先修 zeus-ui 发布 smoke 与 Data Grid O(N) rows wrapper/index 热点；Zeus core 只补
+强类型 diagnostics、effect/proxy/allocation counters 和受证据约束的 `@once`，不先重写 scheduler。
+
+2026-08-24 的 beta.4 revision-bound run `32706467306` 已补齐 fresh audit、36/36 Chromium records、
+macOS WKWebView 与 Windows WebView2 各 60/60 records + 12/12 screenshots；aggregate 只有 5 个既有 v6
+性能检查失败。diagnostic-only 6-repeat 10k profile 又把 120/120 Zeus samples 关联到公开内部 commit：
+每 record 只有一次 model build，scroll 无 rebuild，range/layout p95 均为 `0.1ms`；instrumented commit
+interval p95 upper bound 为 `2.1ms`，lazy wrappers p95 为 24，fixed-height pool 在边缘 range 有 node
+churn。beta.4 在记录 `commitEndTime` 前遍历变更 Node tree，因此 duration/churn 相关性包含机械性诊断
+开销。后续应先在 zeus-ui 分离 renderer commit end 与 diagnostics-end，或做 churn-disabled/enabled A/B；
+只有分离后的 timing 仍指向 pool/wrapper，才实验 fixed-capacity pool 与 bounded wrapper reuse。没有证据
+先改 Zeus scheduler 或 `SizeCache`。同时 v6 的 required 目标（`0.8 × baseline`）在所有现存 evidence
+上都低于同组 shared floor（floor p95 `16.7–18.6ms`；隐含要求 `baseline ≥ 1.25 × floor`，实测
+`baseline / floor` 为 `1.011–1.237`，含 real WorkbenchTable r5 的七组为 `0.989–1.237`），必须先预注册
+v7 continuous-scroll jank、对称 renderer CPU 与
+one-frame correctness gate。本诊断不修改 v6/旧 gate，
+不改变 Z1.3 No-Go。
+zeus-ui 未发布工作树已记录独立 `diagnosticsEndTime`；Nyala 诊断 sidecar 现可选保留该字段，但仍兼容
+beta.4。同一工作树现提供 `measureNodeChurn: false` 诊断 A/B，默认仍计量 churn。该工作树已在
+2026-09-17 通过独立审计（重建 bundle SHA 与 A/B bundle 逐字节一致、ADR 0004 五条 prerequisite 逐条
+满足、unit 138/138 + e2e 104/104 + bench 12/12），详见
+[`phase-z1-spike-verification.md`](./phase-z1-spike-verification.md) 的同日审计小节；它仍不是 pin。
+v7 预注册草稿为 [ADR 0004](../adr/0004-zeus-data-grid-v7-floor-aware-metrics.md)，状态
+`Proposed`。不要发 beta.5，不要改 `phase-z1-gate.json`，也不要开始 Z2/R0。
+
+2026-09-18 Nyala 侧 prerequisite 6 已落地：benchmark harness 现在为真实 WorkbenchTable 发出与 Zeus
+同定义的 CPU 区间（`listview-prototype-wrapper-v1`，仅 `--diagnostic-profile true`），
+`rendererCpuRatio` 首次可计算——`10k x 50` ratio 为 `0.500`，`1k x 20` 的单轮点估计为 `0.806`
+（`--repeat 3`）与 `0.968`（`--repeat 5`）。同轮 `required` 仍低于 shared presentation floor，
+floor-bounded 改善上限 `0.57%`，20% 门不可辨识：`Z1.3` 仍 `NO-GO`，ADR 0004 仍 `Proposed`，这些数字
+只是本地 Chromium/CDP 诊断，不写 `phase-z1-gate.json`。
+
+注意 `phase-z1-gate.json` 与 `phase-vnext-release-gate.json` 是 revision-pinned 快照（当前 JSON 的
+`generatedAt` 为 2026-08-16，`sourceRevision` 为 `63698263fa13cd9f114341bc04d360ed967d8c9b`），其中
+`platform evidence path is not configured` /
+`provenance is missing` 原因描述的是录制当时的状态，不代表 beta.4 run `32706467306` 缺证据；判断
+Z1.3 当前阻塞原因时以本节 prose 与 `phase-z1-spike-verification.md` 为准。
+
+2026-08-18 的本地 native readiness 复跑没有改变该停止结论。exact-pinned Zeus bundle 的实际大小为
+73,494 bytes、gzip -9 为 24,311 bytes，SHA-256 为
+`0dddde8f65195667d1bdd0f574f2ac3a4ffa1c5b019c8f1a13db5bd2fc0a6794`；package/license/integrity/
+unpacked-size checks 全部通过，结构化 audit 仅因没有伪造 repository/revision/ref/run provenance 而
+fail closed。macOS embedded WKWebView 首轮 smoke 暴露 benchmark 页的隐藏证据节点仍参与布局，形成
+15 CSS px 外层 scrollbar gutter，使真实有效的 screenshot marker 与 verifier 预期偏移。producer 现将
+document 固定为无外层滚动、隐藏 result 节点，并把 client/scroll geometry 与 marker DOM anchor 纳入
+visual probe；1k×20 的 native/固定行高 virtual-list characterization/Zeus 三条 record 与三张 PNG
+随后全部通过。四 workload 单次扩展为 11/12；`10k-x-50/native` 即使隔离复跑仍在 5 秒
+post-presentation budget 上失败。该 dirty-worktree 本地 characterization 没有完整 5-run macOS evidence、
+Windows evidence 或 protected provenance，且没有实例化完整 Workbench；它只加固 harness 并新增保守的
+native readiness 阻塞，不能写成 Z1 Go。
+
+同日新增的真实 WorkbenchTable Chromium smoke 在四个 workload 中均为 `ok`：`renderedRows=14`，
+10k×50 为 913 个 DOM nodes，其余为 403；每组 20/20 scroll samples 均提交，最大 row delta 为 1，
+document client/scroll geometry 一致。bundle SHA-256 为
+`f58986b454aeecbe8500c0357f76839140f26f22149294f14a5e8435a4128a35`。该单 renderer、单 repeat、
+dirty-tree smoke 先证明 real baseline 路径和 bounded DOM。随后完整 36-record real-mode 对比中，
+1k×20 WorkbenchTable/Zeus scroll p95 中位为 `18.5/19.5ms`，10k×50 为 `18.1/23.3ms`；Zeus 10k
+render median 也为 `157.0ms`，WorkbenchTable 为 `29.6ms`，并出现 `1,976.3ms` Zeus render long tail。
+该 dirty-tree 对比没有 protected provenance、双 WebView 或 fresh structured audit，不能成为准入证据，
+但已独立确认预注册 20% 性能门失败。
 
 **Checkpoint Z-Go：** §7 的 Z1.1-Z1.3 全部通过并记录 Go。任何一项失败均为 No-Go，
 禁止开始 Z2。
@@ -381,15 +502,25 @@ contract、Z1 Go、双平台原生走查和 Demo SQLite + Zeus Preview walkthrou
 `sql-mvp-vnext-release` environment；它精确认证 A4/Z1 attestation run/artifact API metadata，经 GitHub
 artifact API URL 下载、校验 ZIP SHA-256 和安全路径后，只把认证后的 raw evidence 交给 schema v3 R0。
 R0 重算 Checkpoint W 四份与 Z1 六份 raw input digest，并拒绝 forged/expired/时序错误 artifact、完整
-手写 Z1 `GO`、revision/ref 不一致以及不完整 gate contract。R0 verifier 的 30 个 contract tests 已进入
-默认测试链；当前
+手写 Z1 `GO`、revision/ref 不一致以及不完整 gate contract；无法读取的 Z1/A4 gate artifact 会先记成
+结构化 `z1-gate-artifact` / `a4-checkpoint-w-artifact` NO-GO check 而不是崩溃。R0 verifier 的 34 个
+contract tests 已进入
+默认测试链（含 2 条 artifact retention 回归）；当前
 [`phase-vnext-release-gate.json`](./phase-vnext-release-gate.json) 保持 `NO-GO`。
 
-2026-08-17 GitHub API 审计确认默认分支 `mvp` 已启用 strict branch protection，但仓库 environment
-列表为空，本地新增的 Checkpoint W/Z1/R0 attestation workflow 也尚未发布到远端。管理员仍需创建
-`sql-agent-checkpoint-w`、`sql-result-grid-z1-gate`、`sql-mvp-vnext-release` 三个 environment 并启用
-required reviewers，在 workflow 发布后把 `actionlint` check 纳入保护规则。workflow 文件不能创建这些
-策略；完成发布、配置和真实原生证据前，Checkpoint W、Z1.3、R0 均保持 `NO-GO`，Z2 禁止开始。
+2026-09-17 GitHub API 复核：默认分支 `mvp` 仍启用 strict branch protection，required checks 为
+`Lint, build, and test`、`Prettier`、`rustfmt` 与 `taplo`；仓库没有 `actionlint` workflow，它也不在
+required checks 内。三个 attestation workflow（`sql-agent-checkpoint-w-attest.yml`、
+`sql-result-grid-gate-attest.yml`、`sql-mvp-vnext-release-evidence.yml`）已发布到远端 `mvp`、状态为
+active，blob SHA 与本地 HEAD 一致；但 `repos/baicie/nyala-studio/environments` 仍返回
+`total_count = 0`，三个 workflow 的 runs 数均为 0（从未 dispatch）。2026-09-18 更正：environment
+为空**不是**阻塞——GitHub 文档写明引用不存在的 environment 时会在运行时自动创建（且不带 protection
+rules/secrets，见 [Managing environments for
+deployment](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)，
+2026-09-18 取得），而三个 attestation workflow 只用 `secrets.GITHUB_TOKEN`；人工预建 environment 只是
+可选的 required-reviewers 纵深保护。当前阻塞是：Checkpoint W 的原生人工证据、Z1 的五个 v6 性能门，以及
+尚未合入受保护分支 `mvp` 的本地 A4 verifier / native driver 修复。在这些完成前，Checkpoint W、Z1.3、
+R0 均保持 `NO-GO`，Z2 禁止开始。
 
 ## 7. 原子任务
 
@@ -402,8 +533,8 @@ Zeus 轨新增以下可独立验收任务：
 | Task | 说明                                    | Acceptance                                                                                                                                                                                      | Verification                                                                                                                                                                        | Dependencies | Files likely touched                                          | Scope |
 | ---- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------- | ----- |
 | Z1.1 | 固定包与依赖审计协议                    | 精确版本、license、integrity、production closure 和 gzip 增量可复核；无生产改动                                                                                                                 | 临时安装、`pnpm why`、esbuild/gzip 记录                                                                                                                                             | Z0           | Zeus evaluation、spike record                                 | S     |
-| Z1.2 | 建立三 renderer benchmark               | 覆盖 1k×20、10k×50、宽列、窄面板；分离 render/scroll/heap/IPC/format 指标                                                                                                                       | `benchmark:sql-result-grid` 重复运行并保存原始结果                                                                                                                                  | Z1.1         | benchmark script、fixture、package script                     | M     |
-| Z1.3 | 双 WebView Go/No-Go                     | 1k×20 关键交互无超过 10% 回归；10k×50 的预注册主指标相对最佳非 Zeus baseline 至少改善 20%；gzip ≤30 KB；repository/ref/revision/run provenance 一致，native binary 与 Zeus bundle digest 可复核 | measurement contract v6 balanced raw records/summary recompute；platform evidence schema v2 的 macOS WKWebView + Windows WebView2 各 5 次；截图文件/hash/pixels；fresh bundle audit | Z1.2         | benchmark、platform evidence/截图、bundle audit、gate record  | M     |
+| Z1.2 | 建立三 renderer benchmark               | 真实 WorkbenchTable proof/digest；覆盖 1k×20、10k×50、宽列、窄面板；分离 render/scroll/heap/IPC/format 指标                                                                                     | `benchmark:sql-result-grid` 重复运行并保存原始结果                                                                                                                                  | Z1.1         | benchmark script、fixture、package script                     | M     |
+| Z1.3 | 双 WebView Go/No-Go                     | 1k×20 关键交互无超过 10% 回归；10k×50 的预注册主指标相对最佳非 Zeus baseline 至少改善 20%；gzip ≤30 KB；repository/ref/revision/run provenance 一致，native/Zeus/Workbench bundle digest 可复核 | measurement contract v6 balanced raw records/summary recompute；platform evidence schema v2 的 macOS WKWebView + Windows WebView2 各 5 次；截图文件/hash/pixels；fresh bundle audit | Z1.2         | benchmark、platform evidence/截图、bundle audit、gate record  | M     |
 | Z2.1 | 提取 renderer seam                      | native 行为 characterization 全绿；接口只拥有 success grid rendering                                                                                                                            | `pnpm run test:sql-result`                                                                                                                                                          | Z1 Go + A4   | result view、renderer contract、native renderer、tests        | M     |
 | Z2.2 | 接入 Zeus adapter 与 Preview preference | 动态加载、精确锁版、所有 listener/observer 可释放、加载失败自动回退                                                                                                                             | adapter tests、`pnpm run build`、bundle inspection                                                                                                                                  | Z2.1         | adapter、preference、tests、package.json、pnpm-lock.yaml      | M     |
 | Z2.3 | 对齐 SQL 语义和 copy                    | NULL/BLOB/布尔/日期、row/column identity、truncated scope 与所有 copy format 等价                                                                                                               | golden fixtures + `pnpm run test:sql-result`                                                                                                                                        | Z2.2         | adapter mapper、copy bridge、fixtures、tests                  | M     |
@@ -412,19 +543,22 @@ Zeus 轨新增以下可独立验收任务：
 
 ## 8. Verification Matrix
 
-| Requirement                  | Automated proof                                                                                                                                                                                                   | Native/manual proof                                                                                                                                                             |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A0/A1 intelligence + context | focused `sql_analysis`/`core_adapter`/`relation_context`/driver FK tests；`test:sql-agent`；`test:rust`                                                                                                           | 无 secret/store identity/query rows 的序列化检查                                                                                                                                |
-| A2 runtime + policy          | `cargo test --lib agent`；新增 `pnpm run test:sql-agent`                                                                                                                                                          | scripted run timeline inspection                                                                                                                                                |
-| A3 read-only loop            | SQLite integration；deny table；cancel/budget tests                                                                                                                                                               | Demo SQLite Generate/Fix/Explore walkthrough（2026-08-15 已完成）                                                                                                               |
-| A4 Workbench UX              | `test:sql-services`、`test:sql-editor`、`test:sql-result`、`test:sql-advanced`、44 项 Checkpoint W contract                                                                                                       | desktop/narrow、keyboard、accessibility、stale editor QA                                                                                                                        |
-| Z1 admission                 | structured dependency/bundle audit；measurement contract v6 的 36 条 balanced Chromium raw records；summary/plan recompute；51 个 gate tests + 9 个 attestation tests；revision/run/bundle provenance consistency | platform evidence schema v2 + measurement contract v6：macOS WKWebView + Windows WebView2 各 60 条 balanced raw records、12 张截图及文件/hash/pixel 验证；binary/bundle SHA-256 |
-| Z2 behavior                  | `test:sql-result` golden/contract tests；build chunk inspection                                                                                                                                                   | two-platform theme/focus/copy/fallback walkthrough                                                                                                                              |
-| Driver/security invariants   | runtime status、connection、Rust policy/no-secret tests                                                                                                                                                           | MySQL 仍显示 Preview，PostgreSQL 仍显示 Planned                                                                                                                                 |
+| Requirement                  | Automated proof                                                                                                                                                                                                 | Native/manual proof                                                                                                                                                                            |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A0/A1 intelligence + context | focused `sql_analysis`/`core_adapter`/`relation_context`/driver FK tests；`test:sql-agent`；`test:rust`                                                                                                         | 无 secret/store identity/query rows 的序列化检查                                                                                                                                               |
+| A2 runtime + policy          | `cargo test --lib agent`；新增 `pnpm run test:sql-agent`                                                                                                                                                        | scripted run timeline inspection                                                                                                                                                               |
+| A3 read-only loop            | SQLite integration；deny table；cancel/budget tests                                                                                                                                                             | Demo SQLite Generate/Fix/Explore walkthrough（2026-08-15 已完成）                                                                                                                              |
+| A4 Workbench UX              | `test:sql-services`、`test:sql-editor`、`test:sql-result`、`test:sql-advanced`、44 项 Checkpoint W contract                                                                                                     | desktop/narrow、keyboard、accessibility、stale editor QA                                                                                                                                       |
+| Z1 admission                 | real WorkbenchTable runtime proof/digest；structured dependency/bundle audit；measurement contract v6 的 36 条 balanced Chromium raw records；summary/plan recompute；58 个 gate tests + 9 个 attestation tests | platform evidence schema v2 + measurement contract v6：macOS WKWebView + Windows WebView2 各 60 条 balanced raw records、12 张截图及文件/hash/pixel 验证；binary/Zeus/Workbench bundle SHA-256 |
+| Z2 behavior                  | `test:sql-result` golden/contract tests；build chunk inspection                                                                                                                                                 | two-platform theme/focus/copy/fallback walkthrough                                                                                                                                             |
+| Driver/security invariants   | runtime status、connection、Rust policy/no-secret tests                                                                                                                                                         | MySQL 仍显示 Preview，PostgreSQL 仍显示 Planned                                                                                                                                                |
 
-R0 prework 的自动化还包括 30 个 release verifier contract tests；只有经受保护 workflow 认证的完整
-Z1 gate report schema v2（含 platform evidence schema v2 与 measurement contract v6/order）、Checkpoint W、
-Z2 production dependency/renderer seam 和 roadmap completion 同时满足，release gate 才能变为 Go。
+R0 prework 的自动化还包括 35 个 release verifier contract tests（verifier 34 + workflow contract 1）；
+其中 2 条覆盖 attestation artifact 保留期：release verifier 只按墙上时钟复核 GitHub artifact retention
+且刻意没有可注入的 `now`，因此接受性 fixture 的 `expires_at` 必须跟随当前时间，写死日期会在该日期
+之后自行失效。只有经受保护 workflow 认证的完整 Z1 gate report schema v2（含 platform evidence schema v2
+与 measurement contract v6/order）、Checkpoint W、Z2 production dependency/renderer seam 和 roadmap
+completion 同时满足，release gate 才能变为 Go。
 
 R0 必须报告以下命令的精确 exit status：
 

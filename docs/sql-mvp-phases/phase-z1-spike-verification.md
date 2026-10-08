@@ -84,18 +84,26 @@ thermal order bias。每个 workload 按 iteration 轮转 renderer；report 与 
 | `pnpm why @zeus-web/data-grid`（临时目录）                                                           | exit 0，只有临时 root project 引用           |
 | `esbuild <temp>/dist/wc/auto.js --bundle --minify`                                                   | exit 0，73,494 bytes                         |
 | `node scripts/create-sql-result-grid-zeus-audit.mjs ...`                                             | exit 1，仅五项本地 provenance 缺失           |
-| `pnpm run test:sql-result-grid-benchmark`                                                            | exit 0，37/37 tests 通过                     |
-| `pnpm run test:sql-result-grid-webdriver`                                                            | exit 0，8/8 tests 通过                       |
+| `pnpm run test:sql-result-grid-benchmark`                                                            | exit 0，51/51 tests 通过                     |
+| `pnpm run test:sql-result-grid-webdriver`                                                            | exit 0，13/13 tests 通过                     |
 | `pnpm run test:sql-result-grid-visual`                                                               | exit 0，7/7 tests 通过                       |
-| `pnpm run test:sql-result-grid-zeus-audit`                                                           | exit 0，2/2 tests 通过                       |
+| `pnpm run test:sql-result-grid-zeus-audit`                                                           | exit 0，3/3 tests 通过                       |
 | `pnpm run test:sql-result-grid-platform-evidence`                                                    | exit 0，1/1 test 通过                        |
-| `pnpm run test:sql-result-grid-gate`                                                                 | exit 0，59/59 tests 通过                     |
+| `pnpm run test:sql-result-grid-gate`                                                                 | exit 0，61/61 tests 通过                     |
 | `pnpm run test:sql-result-grid-attestation`                                                          | exit 0，9/9 tests 通过                       |
-| `pnpm run test:sql-mvp-vnext-release`                                                                | exit 0，32/32 tests 通过                     |
+| `pnpm run test:sql-mvp-vnext-release`                                                                | exit 0，35/35 tests 通过                     |
 | real-mode 三 renderer × 四 workload × 三次本地 benchmark                                             | exit 0，36/36 records 为 `ok`                |
 | 对上述 `/tmp` real report 运行 Z1 gate                                                               | exit 1，1k 通过；10k 改善 `-28.7%`，`NO-GO`  |
 | `pnpm run verify:sql-result-grid-gate`                                                               | 当前 evidence 按预期 exit 1，`NO-GO`         |
 | `pnpm run verify:sql-mvp-vnext-release`                                                              | 当前 release evidence 按预期 exit 1，`NO-GO` |
+
+2026-09-17 计数复核：在 `882ba222` + 当前未提交 vNext 工作树上重跑相关脚本 suites，得到
+`test:sql-result-grid-benchmark` 51/51、`test:sql-result-grid-webdriver` 13/13、
+`test:sql-result-grid-visual` 7/7、`test:sql-result-grid-zeus-audit` 3/3、
+`test:sql-result-grid-platform-evidence` 1/1、`test:sql-result-grid-gate` 61/61、
+`test:sql-result-grid-attestation` 9/9、`test:sql-mvp-vnext-release` 35/35，且整套 `pnpm run test`
+exit 0；上表旧的 8/8、2/2、59/59、32/32 已按本次运行更新。计数刷新只更新 suite 规模记忆，
+不改变 `Z1.3 = NO-GO`、`Z2 = 禁止开始` 与 `R0 = NO-GO` 结论，也不构成新的 gate evidence。
 
 ## Z1.2 三 renderer benchmark
 
@@ -229,6 +237,9 @@ evidence schema v2 / measurement contract v6 证据链要求的 workflow provena
 因此即使之后只补齐双原生 WebView，也仍需在 clean protected revision 上重新生成真实三 renderer
 baseline，并满足未改变的 20% 门槛。Chromium-only 结果、旧 summary 或最小化伪造的 `GO` JSON 都
 不能绕过校验。
+
+本地诊断不得覆盖 revision-pinned gate 快照。后续复跑请始终显式传入临时输出路径，例如
+`node scripts/verify-sql-result-grid-gate.mjs docs/sql-mvp-phases/phase-z1-benchmark.json /tmp/z1-gate.json`。
 
 ### 2026-08-18 macOS native readiness characterization
 
@@ -428,6 +439,364 @@ Chromium 10k baseline 本轮有 `107.2ms` 长尾，Zeus `20.6ms`，改善 80.8% 
 因此既定整改、beta 发布、native CI 修复和证据生成闭环已经完成，但 Z1 admission 保持 `NO-GO`；
 不触发 protected Go attestation，Z2 与 R0 继续禁止开始。
 
+### 2026-08-24 beta.4 内部 commit 诊断关联
+
+benchmark 的 diagnostic-only 路径现直接接入 beta.4 `grid.diagnostics`，在 Data Grid 连接 DOM 前注册
+`onModelBuild/onCommit`，以 callback cursor 将每个外层 scroll sample 关联到内部 transaction。sidecar
+validator 要求 20 个正式 sample 全部关联、严格 transaction 顺序、所有 raw scroll commit 恰好认领一次、
+外部 sample 连续编号、primary range 覆盖 visible/expected row，且 timing/layout/count 字段可重算；
+v6 raw sample、summary、阈值、gate verifier 和 admission command 均保持不变。`onCommit` 会启用
+`MutationObserver`，所以该路径只作非对称内部诊断，不进入 v6 admission。
+
+exact beta.4 bundle 的 6-repeat、10k x 50、real WorkbenchTable/Zeus balanced profile 产生 12/12 `ok`
+records 与 120/120 Zeus sample correlations。source revision 为
+`882ba2225630bc2cfb0f007669ed4da73d41bf10` 且 `sourceTreeClean=false`；bundle SHA-256 与正式 audit
+一致，为 `2f7630473db32c03e934d0167736e9ec107fbc55bd401797c208a51d3f22f636`。关键结果：
+
+| 指标                                           | 结果                                                                              |
+| ---------------------------------------------- | --------------------------------------------------------------------------------- |
+| WorkbenchTable / Zeus render median            | `15.2 / 9.7ms`                                                                    |
+| WorkbenchTable / Zeus scroll p95 median        | `18.5 / 19.1ms`                                                                   |
+| shared floor / v6 required Zeus p95            | `18.6 / 14.8ms`，`PRESENTATION_FLOOR_LIMITED`（源 report 已删除，见下节复算口径） |
+| model builds                                   | 每 record 1 次；10k indexes；0 eager wrappers；scroll 无 rebuild                  |
+| range / layout p95                             | `0.1 / 0.1ms`                                                                     |
+| instrumented commit interval median / p95      | `1.3 / 2.1ms`，只作 upper bound                                                   |
+| handler start -> instrumented end median / p95 | `1.4 / 2.2ms`，只作 upper bound                                                   |
+| lazy row wrappers median / p95                 | `23 / 24` per scroll                                                              |
+| fixed-height pool churn                        | 84/120 为 0；其余为 30 或 120 个 created/removed Node tree entries                |
+
+结构数据未见 scroll-time model rebuild，已观测的 range/layout 区间也很小，因此当前没有证据优先修改
+`SizeCache` 或 Zeus core scheduler；但诊断尚未把生产 commit 成本与自身开销分离。beta.4 在写入
+`commitEndTime` 前执行 `MutationObserver.takeRecords()` 和 Node tree 递归计数，所以
+`1.3/2.1/2.2ms` 是 instrumented upper bound，node churn 与 duration 的相关性也部分由测量过程机械
+产生。下一上游实验应先在 zeus-ui 把 renderer commit end 与 diagnostics-end 分开，或做
+churn-disabled/enabled A/B；只有分离后的 timing 仍指向 pool/wrapper，才实验 fixed-capacity pool 与
+bounded/ring wrapper reuse。
+zeus-ui 工作树已落地该分离，但未发版；Nyala 继续把 `1.3/2.1/2.2ms` 当作 instrumented upper bound。
+同一工作树现可把 `measureNodeChurn` 设为 false 做诊断 A/B，默认仍计量 churn。
+v7 指标预注册见 [ADR 0004](../adr/0004-zeus-data-grid-v7-floor-aware-metrics.md)（`Proposed`）。
+
+2026-09-17 本地 10k x 50、5-repeat、同一未发布 bundle 的 churn A/B（Chrome/CDP、diagnostic profile）
+结果：traversal 差在 enabled 侧只有 `0.02ms` mean / `0.1ms` p95，disabled 侧为 0；两侧 scroll p95 分布
+重叠（`18.1-18.3ms` 对 `18.2-18.8ms`）；commit boundary 差约 `0.2ms` mean / `0.8ms` p99
+（定义：按 execution ordinal 与 sample 顺序配对的逐样本 commit-boundary 差，n = 100），落在双臂
+噪声内；DOM churn 仅 enabled 臂为 1,650 created nodes / 100 scroll commits（disabled 臂按构造为 0），
+wrapper 分配（两侧均 21.3 个/commit）不变。该 A/B 不指向诊断 observer 成本，只把 pool/wrapper 保留为
+待验证候选；它是本地诊断，不是
+revision-bound 证据，也不改变 `Z1.3 = NO-GO`。两臂原始 report
+（`/tmp/nyala-zeus-ab/ab-enabled-r5.json` / `ab-disabled-r5.json`）在事后用当前 validator 重校验，
+enabled/disabled 各 5/5 records、20/20 correlations 全部通过。
+
+该诊断不能量化可获得的生产收益；独立于此，v6 的 20% ratio 在所有现存 evidence 上都落在地板之下，
+仍不可辨识（分解见下节）。因此还必须由产品负责人预注册 v7 continuous-scroll jank、对称 renderer
+CPU 与 one-frame correctness gate。完整 raw 指标、runtime diagnostics 异步边界和 A/B 约束见整改报告；
+本轮不改变 `Z1.3 = NO-GO`，也不准入 Z2/R0。
+
+### 2026-09-17 未发布工作树（beta.5 候选）独立审计
+
+split timing 与 churn A/B 的实现位于 zeus-ui `codex/release-0.1.0-beta.5` 分支 HEAD
+`678d95bd04f5e30a613e62db5706cb5994f18c54`（`release: prepare 0.1.0-beta.5`，领先 `origin/main`
+`2bfb8cd` 一个 commit），工作树含 4 个未提交文件（`200` 插入 / `7` 删除）：
+
+| 文件                                                           | 变更                                                                                                                                                |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/advanced/data-grid/src/types.ts`                     | `DataGridCommitTiming` 新增 `diagnosticsEndTime`；`DataGridDiagnostics` 新增可选 `measureNodeChurn`                                                 |
+| `packages/advanced/data-grid/src/components/data-grid.tsx`     | commit 创建时固化 `measureChurn`；`finalizeDiagnosticsCommit` 先写 `commitEndTime` 再遍历并写 `diagnosticsEndTime`；关闭 churn 时两者相等且计数为 0 |
+| `e2e/advanced/data-grid/data-grid-diagnostics-runtime.spec.ts` | 4 个新用例：commit/diagnostics 分离、跳过 churn 遍历、关闭时 disconnect observer、切换后丢弃 in-flight sample                                       |
+| `docs/internal/packages.md`                                    | 语义说明与「诊断开关不是生产模式」约束                                                                                                              |
+
+**字节级归因。** 用当前工作树源码重新 `pnpm --filter @zeus-web/data-grid build`（exit 0），再按 A/B
+使用的同一参数经 esbuild `0.28.1 --bundle --format=iife --platform=browser --minify
+--legal-comments=none` 打包，得到 SHA-256
+`3f66cf7e58e8e4ac523bfc4644f1a735fe0fe5f4db5a8469e365f69523ad2c58`（`90,370` bytes），与 churn A/B
+使用的 `/tmp/nyala-zeus-ab/data-grid-bundle.js` 逐字节一致。因此上文 A/B 结果可归因到当前工作树字节，
+而不是来源不明的构建产物。
+
+**ADR 0004 diagnostic prerequisite 逐条对照。**
+
+| ADR 前置条件                                     | 未发布工作树状态                                                                                            |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| 1 commit 边界先于 `takeRecords()` / Node 遍历    | `finalizeDiagnosticsCommit` 先写 `commitEndTime`，之后才 consume churn 并写 `diagnosticsEndTime`            |
+| 2 遍历终点独立为 `diagnosticsEndTime`            | 新增字段；churn 关闭时恒等于 `commitEndTime`                                                                |
+| 3 生产主指标不含 diagnostics 遍历                | Nyala 主指标与 v6 gate verifier 未改动；sidecar 仅把它作为 optional 字段透传                                |
+| 4 旧 sidecar 上 optional，beta.4 sample 有效     | `scripts/sql-result-grid-zeus-diagnostics.mjs` 仅在 `Number.isFinite(...)` 时写入，beta.4 report 重校验通过 |
+| 5 `measureNodeChurn: false` 可 A/B               | 不建 MutationObserver、不遍历 Node tree，`created/removed` 计数为 0                                         |
+| 6 Nyala harness 为 WorkbenchTable 发出同定义区间 | 2026-09-18 落地：`ListView.prototype` wrapper 输出 handler/range/commit/layoutRead 区间，详见下文专节       |
+
+**独立复验（2026-09-17，当前工作树）。**
+
+| 命令                                                       | 退出码 | 结果                     |
+| ---------------------------------------------------------- | -----: | ------------------------ |
+| `pnpm --filter @zeus-web/data-grid test:unit`              |      0 | 16 files / 138 tests     |
+| `pnpm --filter @zeus-web/data-grid test:e2e`               |      0 | 5 files / 104 tests      |
+| `pnpm data-grid:bench`                                     |      0 | 3 files / 12 tests       |
+| `pnpm --filter @zeus-web/data-grid check`（两个 tsconfig） |      0 | -                        |
+| `tsx scripts/checks/release/check-release-readiness.ts`    |      0 | 36 publishable packages  |
+| build → esbuild 重建 bundle SHA                            |      0 | 与 A/B bundle 逐字节一致 |
+
+e2e 基线从既有记录的历史 `100/100` 增至 `104/104`（本工作树新增 4 个用例），历史数字不是回归。
+
+**真实时钟抽检（临时脚本，已删除）。** 以 10k x 12、真实 `performance.now`（非 mock）的临时 jsdom
+e2e 复核语义：churn 关闭臂每条 sample 均满足 `diagnosticsEndTime === commitEndTime` 且计数为 0；
+churn 开启臂的遍历窗口 p50 约 `0.009-0.027ms`、p95 约 `2.05ms`，始终落在 commit 窗口之后。
+该抽检只证明时序语义；jsdom 的 commit 窗口（`6.4-9.1ms`）与遍历尾部都比生产 Chromium 运行大得多，
+因此这些数字既不能与上文 A/B 开启臂的 `diagnosticsTail`（p95 `0.1ms`、max `0.2ms`）比较量级，
+也不是生产数据。
+
+**发布流程事实。** `release.yml` 要求 `GITHUB_REF = refs/heads/main`，该分支无法直接 dispatch；
+`0.1.0-beta.5` 只写在 37 个 `package.json`（root + 36 publishable）与文档中，没有 `v0.1.0-beta.5` tag、
+没有 PR（误建的 PR #41 已关闭），npm 上 `beta=0.1.0-beta.4`、`latest=0.1.0-beta.0` 未变。
+
+非阻塞观察（供发布评审）：`diagnosticsEndTime` 在未发布源码里是 `DataGridCommitTiming` 的必填字段，
+发布后会收紧该公开类型的构造面（Nyala sidecar 只按 optional 消费，beta.4 样本不受影响）；
+`measureNodeChurn` 目前只有文档注释，没有编译期约束阻止生产 bench 依赖它；`mergeDiagnosticsCommits`
+合并 in-flight commit 时沿用先创建者的 `measureChurn`，而切换 `diagnostics` 对象会整体丢弃 pending，
+因此未见可复现错误，但语义靠「丢弃」而不是「合并规则」保证。
+
+本审计不 commit、不发布、不改 `phase-z1-gate.json`；`Z1.3` 仍为 `NO-GO`，ADR 0004 仍为 `Proposed`，
+上述内容不是 admission evidence。
+
+### v6 20% 门的地板受限分解（2026-09-17）
+
+[`scripts/sql-result-grid-floor-headroom.mjs`](../../scripts/sql-result-grid-floor-headroom.mjs) 把已通过
+validator 的 report 拆成 record floor、shared floor 与 renderer interval union（区间先取并集再求和，
+不 naive 相加），CLI
+[`scripts/analyze-sql-result-grid-floor-headroom.mjs`](../../scripts/analyze-sql-result-grid-floor-headroom.mjs)
+可对任意 report 复算：
+
+```bash
+node scripts/analyze-sql-result-grid-floor-headroom.mjs \
+  --report <report.json> [--report <report.json>] [--output <headroom.json>]
+```
+
+v6 的 required 目标恒为 `0.8 × baseline`，而任何 renderer 的 p95 都不低于同一 post-presentation
+floor，因此 `zeus <= 0.8 × baseline` 隐含要求 `baseline >= 1.25 × floor`。现存七组 evidence 的
+`baseline / floor` 落在 `0.989–1.237`，没有一组达到 `1.25`：
+
+| evidence set                                         | baseline p95 | shared floor p95 | required Zeus p95 | floor − required | baseline / floor | 最优 floor 下最大可行改善        |
+| ---------------------------------------------------- | -----------: | ---------------: | ----------------: | ---------------: | ---------------: | -------------------------------- |
+| `phase-z1-feasibility-profile.json`（HEAD 63698263） |      20.10ms |          18.50ms |           16.08ms |          +2.42ms |            1.086 | 13.43%（单 record 最优 17.40ms） |
+| `phase-z1-feasibility-profile.json`（当前工作树）    |      17.70ms |          17.50ms |           14.16ms |          +3.34ms |            1.011 | 3.39%（单 record 最优 17.10ms）  |
+| churn A/B r3 enabled（`882ba222`，本地诊断）         |      20.90ms |          16.90ms |           16.72ms |          +0.18ms |            1.237 | 19.62%（单 record 最优 16.80ms） |
+| churn A/B r3 disabled（本地诊断）                    |      20.80ms |          17.40ms |           16.64ms |          +0.76ms |            1.195 | 17.31%（单 record 最优 17.20ms） |
+| churn A/B r5 enabled（本地诊断）                     |      20.50ms |          16.80ms |           16.40ms |          +0.40ms |            1.220 | 18.54%（单 record 最优 16.70ms） |
+| churn A/B r5 disabled（本地诊断）                    |      20.50ms |          16.90ms |           16.40ms |          +0.50ms |            1.213 | 18.05%（单 record 最优 16.80ms） |
+| real WorkbenchTable r5（本地诊断，2026-09-18）       |      17.60ms |          17.80ms |           14.08ms |          +3.72ms |            0.989 | 2.84%（单 record 最优 17.10ms）  |
+
+- 即使把 renderer 成本假设为 0，最优的一组（r3 enabled）也只能到 `19.62%`，仍低于 `20%` 门
+  `0.38` 个百分点；r5 两臂为 `18.54% / 18.05%`。
+- 新增一组是首次出现 `baseline / floor < 1`：`--workbench-table-implementation real` 的基线
+  `17.60/17.70ms` 本身就在地板上（`17.80/17.50ms`），`required = 14.08–14.16ms` 比地板低
+  `2.8–3.7ms`。v6 的入库 Chromium 证据用的是 `19.80–20.10ms` 的 fixed-row characterization
+  baseline，比 Z2 真正要发布的 renderer 慢。
+- 聚合方式决定符号：冻结的 `phase-z1-benchmark.json`（3 run × 20 sample）按 v6 口径
+  （median of per-run p95）为 WorkbenchTable `19.80ms` / Zeus `19.60ms`（`0.990`，Zeus 名义领先）；
+  同一 60 条 sample 池化后为 `20.10ms` / `37.90ms`（`1.886`）。差异由单次 `142.4ms` Zeus run 的
+  尾部驱动，record 本身两种读法完全相同。
+- 所有已记录 Chromium sample 都在第一个 post-input presentation opportunity 内呈现正确内容：
+  legacy v6 `720/720`、worktree profile `240/240`、real WorkbenchTable r5 `200/200`、A/B 两臂
+  `400/400`。`10%/20%` 阈值在 `~18ms` 基线上只有 `1.8–4.0ms`（约 `0.1–0.25` 个 60Hz frame），
+  该 harness 里唯一大的 renderer-owned 差异在同步 input 路径：input p95 `4.40–7.30ms`
+  （real WorkbenchTable）对 `0.10–0.20ms`（Zeus），settle p95 `13.90–14.10ms` 对
+  `19.10–20.40ms`；两者 total 都被 floor 主导。
+- 原生证据方向一致但无法分解：macOS 10k×50 为 `19.0 / 22.0ms`（`-15.8%`）、Windows 为
+  `26.0 / 22.0ms`（`+15.4%`），都低于 `20%` 门；native records 不带 floor 诊断，因为该探针只在
+  Chromium `--diagnostic-profile` 下运行。
+- floor 是运行相关量：Zeus 侧 28 条 10k record 的 floor p95 跨度为 `16.7–18.6ms`（约一个 60Hz
+  frame）；全部 66 条 record（含 4 条 >18.6ms 的 workbench-table 离群值，其中 3 条 >20ms）为
+  `16.7–31.7ms`。shared floor
+  取 per-report 中位数，不被离群值驱动。跨运行漂移的是数值，不漂移的是符号——每组 evidence 的
+  `required` 都低于同组 floor。
+- Zeus renderer 区间 union 的 p50/p95 为 `1.60/2.50ms`（enabled）与 `1.30/2.20ms`（disabled），
+  `commitPatch` p95 为 `2.50 / 2.10ms`，与上文 instrumented upper bound 一致；滚动延迟约 92%
+  来自 frame wait（`presentationWait` p95 `18.20 / 18.50ms`）。
+- 上表 `18.6 / 14.8ms` 中，`18.6` 是当轮 attribution report 的 Zeus 侧 floor，`14.8ms` 是那轮
+  baseline（18.5ms）的 80%；该 report（bundle 摘要 `2f763047`）已删除，无法在现存 artifact 上复算。
+  本节给出的是可复算的替代口径：`required = 0.8 × baseline` 恒等式加七组 `baseline / floor`。
+- 这七组全部是本地诊断（Chromium/CDP，部分为非 revision-bound），不是 admission evidence，
+  也不写入 `phase-z1-gate.json`；v6 gate verifier 本身不计算 floor，floor 只存在于
+  `--diagnostic-profile` 运行，因此 v7 若要引用 floor，必须在同一 evidence set 内配对采样。
+
+原始报告摘要（2026-09-18 复算，CLI exit 0，前六行数值逐字复现）：入库 profile 以 git blob
+`f1d4dade10eb537ec0e3c31c703a49160af6eaf0`（`HEAD:docs/sql-mvp-phases/phase-z1-feasibility-profile.json`）
+标识；工作树重生成版 sha256
+`c4ab123db9b1aaea59353b49f90436a7e0a911522f7b0b0be3f247e437587949`；churn A/B r3
+`ab-enabled.json` / `ab-disabled.json` sha256
+`a76482cfa734db0a7f51b05ac5f82a5bf46db0cd0f91efc14e556b1d3592a922` /
+`f11b8735a11d4bf5d66f2b59fd26e1672c5638f8f1ef1ff335d96804461ac09d`；r5 两臂 sha256
+`07590708c95fd2c94896022cac44fa0e3acec2f6a94f1b5e2307a98539e4fb75` /
+`ced53e663f2fe8d1769ad231bcb0270cc27f6e3d22a8558fbe661a3e98d071aa`。四份 A/B 报告位于
+`/tmp/nyala-zeus-ab/`（非持久：复核前先自行备份）；即使这四份丢失，仅凭入库 profile 一行也可得出
+`13.43% < 20%` 的结论。复算命令见
+[ADR 0004](../adr/0004-zeus-data-grid-v7-floor-aware-metrics.md)。
+第七行来自 2026-09-18 新跑的 `real WorkbenchTable r5` 报告（revision `882ba222`、
+`sourceTreeClean=false`、real-WorkbenchTable bundle
+`f58986b454aeecbe8500c0357f76839140f26f22149294f14a5e8435a4128a35`），位于
+`/tmp/nyala-real-wbt-r5.json`（同样非持久，sha256
+`f4e08b7d8968e71c67632c6e3e8503547c28df68cb99a7f8038b9db74e5894be`），可由 ADR 0004
+“Identifiability check”一节记录的命令重生成。
+
+本地诊断实现复验：
+
+| 检查                                                                     | 结果                                                                                                                       |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm run test:sql-result-grid-benchmark`                                | exit 0，63/63 tests 通过（2026-09-18 增补 WBT 区间契约与 workload CPU ratio 用例后复测）                                   |
+| floor headroom 分解（4 条新测试）                                        | floor 与 renderer work 分离、嵌套区间取并集、缺失诊断拒绝、无 Zeus 诊断仍保留 floor 数学                                   |
+| workload CPU ratio 分解（6 条新测试）                                    | 1k/10k workload 选择、缺失 workload/sidecar fail-closed、非 ok record 拒绝、CLI `--workload` 输出、preposition commit 排除 |
+| `node scripts/analyze-sql-result-grid-floor-headroom.mjs`（3 份 report） | exit 0，输出与逐字段手算一致                                                                                               |
+| churn-disabled 臂 sidecar 回归                                           | 零计数 + `diagnosticsEndTime = commitEndTime` 通过 validator；负计数被拒                                                   |
+| churn A/B 两臂真实 report 重校验                                         | enabled/disabled 各 5/5 records、20/20 correlations                                                                        |
+| exact beta.4 6-repeat diagnostic profile                                 | exit 0，12/12 records；120/120 correlations                                                                                |
+| 对 exact report 调用 `validateZeusDataGridDiagnosticSnapshot(...)`       | exit 0，`validated 6 records and 120 correlations`                                                                         |
+| `pnpm run test:sql-result-grid-gate`                                     | exit 0，61/61 tests 通过                                                                                                   |
+| targeted `pnpm exec prettier --check`                                    | exit 0                                                                                                                     |
+| `git diff --check`                                                       | exit 0                                                                                                                     |
+
+### WorkbenchTable CPU 区间 sidecar（2026-09-18，本地诊断）
+
+ADR 0004 prerequisite 6 的 Nyala 侧实现已落地，使 `Q95(cpu_Z) / Q95(cpu_W)` 第一次可以在对称定义上
+计算。新增
+[`scripts/sql-result-grid-workbench-table-diagnostics.mjs`](../../scripts/sql-result-grid-workbench-table-diagnostics.mjs)
+在构造真实 WorkbenchTable 之前包装 `ListView.prototype` 的 `onScroll` / `getRenderRange` / `render` /
+`measureItemWidth`（`ListView` 在构造时捕获 scroll handler，晚装会漏掉 listener），并只在一个显式打开的
+diagnostic operation window 内记录每个 scroll commit：
+
+| 区间                       | 来源                          | 语义                                     |
+| -------------------------- | ----------------------------- | ---------------------------------------- |
+| `handlerStartTime/EndTime` | `ListView.onScroll` 入口/出口 | 该次 scroll 的同步 handler window        |
+| `rangeIntervals`           | 每次 `getRenderRange`         | window/range 计算                        |
+| `commitIntervals`          | 每次 `render`                 | DOM patch 与内部重算                     |
+| `layoutReadIntervals`      | 每次 `measureItemWidth`       | 同步 layout read（固定行高路径可能为空） |
+
+区间按 record 取并集（nested 不求和），与 Zeus sidecar 的 handler/range/commit/layoutRead 定义一一对应；
+`scripts/sql-result-grid-floor-headroom.mjs` 现额外输出 `workbenchTableRendererIntervals` 与
+`rendererCpuRatio`，任一侧缺失时 fail-closed 返回 `available: false` 而不是猜测。
+
+instrumentation 会改变 benchmark bundle，因此 bundle 身份按状态分别记录：committed 的
+pre-instrumentation entry 构建为
+`f58986b454aeecbe8500c0357f76839140f26f22149294f14a5e8435a4128a35`，uncommitted 的 instrumented
+entry 构建为
+`a5f54dff362f5533f85cf0b5c4f37e736b25a921b2056456bc2df30d53abb382`（886,181 JavaScript bytes +
+20,650 CSS bytes，hash 覆盖 `JavaScript + NUL + CSS`；本机复算两次结果一致）。下文的诊断运行记录的是
+后者。
+
+真实 A/B（`10k x 50`、`--repeat 3`、real WorkbenchTable 对同一 Zeus bundle、Chrome/CDP
+diagnostic profile，2026-09-18）：
+
+```bash
+node scripts/benchmark-sql-result-grid.mjs \
+  --renderer workbench-table,zeus --workload 10k-x-50 --repeat 3 \
+  --workbench-table-implementation real --require-zeus true \
+  --zeus-bundle /tmp/nyala-zeus-ab/data-grid-bundle.js \
+  --diagnostic-profile true --output /tmp/nyala-wbt-diagnostic-r3.json
+node scripts/analyze-sql-result-grid-floor-headroom.mjs \
+  --report /tmp/nyala-wbt-diagnostic-r3.json
+```
+
+| 量                                    | 值                                                                                   |
+| ------------------------------------- | ------------------------------------------------------------------------------------ |
+| baseline p95 / shared floor p95       | `17.00ms` / `17.20ms`（`baseline / floor = 0.988`）                                  |
+| required Zeus p95（`0.8 × baseline`） | `13.60ms`，低于 floor，最优 floor 下改善上限 `1.18%`                                 |
+| Zeus interval union p95               | `2.30ms`                                                                             |
+| WorkbenchTable interval union p95     | `4.60ms`                                                                             |
+| `Q95(cpu_Z) / Q95(cpu_W)`             | `0.500`（远低于提案的 `0.80`）                                                       |
+| sidecar 完整性                        | 每侧 60 个 sample 关联 scroll commits、22 operations，validator 通过                 |
+| 报告 sha256                           | `fe476fb2ddd1614004ac7e7ed1fabab8bb9aaa344f120f90a1b94d18443c9434`（`/tmp`，非持久） |
+
+结论与限制：
+
+- v6 无法计算的对称 CPU ratio 现在可以计算，且本轮诊断值 `0.500` 明显低于提案阈值；但同一轮
+  `baseline / floor = 0.988`，`required` 仍在地板以下，20% 门依旧不可辨识。ratio 达标不等于
+  `Z1.3 = Go`。
+- 两侧只汇总 sidecar 中 `phase: 'sample'` 操作声明的 scroll commit：collector 还会记录一个
+  preposition scroll commit（Zeus 侧该 scroll operation 不带 commit link，另有一条独立 `resize`
+  提交），若只在一侧计入就会比较不同事件集。
+  修正后同一份 10k 报告由 `5.00ms / 0.460` 重算为 `4.60ms / 0.500`，两侧 commit 数均为 60。
+- `measureItemWidth` 只在需要量宽时被调用，固定行高路径下 `layoutReadIntervals` 允许为空；此时 union
+  仍被 handler window 覆盖，不会低估成 0。
+- WorkbenchTable 在构造后另注册的 scroll observer（只读缓存值 `scrollTop/scrollHeight/renderHeight`，
+  不强制 layout）落在 instrumentation window 之外，本轮不计入；这是已知口径限制，正式 v7 采数前必须
+  在 ADR 内固化。
+- 该 instrumentation 只在 `--diagnostic-profile true` 下启用，只增加 observer 开销、不替代 admission
+  timing；不写 `phase-z1-gate.json`，`Z1.3` 仍为 `NO-GO`，ADR 0004 仍为 `Proposed`。
+
+`1k x 20` 采样（同日追加）：harness 只在选择包含 `10k-x-50` 时装配 diagnostic report，因此这条命令把
+两个 primary workload 都带上，1k 记录随 10k 一起采集，再用新增的 workload 级入口提取：
+
+```bash
+node scripts/benchmark-sql-result-grid.mjs \
+  --renderer workbench-table,zeus --workload 1k-x-20,10k-x-50 --repeat 3 \
+  --workbench-table-implementation real --require-zeus true \
+  --zeus-bundle /tmp/nyala-zeus-ab/data-grid-bundle.js \
+  --diagnostic-profile true --output /tmp/nyala-wbt-diagnostic-1k-r3.json
+node scripts/analyze-sql-result-grid-floor-headroom.mjs \
+  --report /tmp/nyala-wbt-diagnostic-1k-r3.json --workload 1k-x-20
+```
+
+| 量                                | 1k x 20                                                          | 同一报告 10k x 50 |
+| --------------------------------- | ---------------------------------------------------------------- | ----------------- |
+| Zeus interval union p95           | `2.50ms`                                                         | `2.50ms`          |
+| WorkbenchTable interval union p95 | `3.10ms`                                                         | `5.10ms`          |
+| `Q95(cpu_Z) / Q95(cpu_W)`         | `0.806`（低于提案 non-inferiority 上界 `1.10`）                  | `0.490`           |
+| 记录 / 样本完整性                 | 6 records（Zeus/WBT 各 3）、每侧 60 commits、one-frame `120/120` | 6 records         |
+
+- 该值是单轮 Chromium/CDP point estimate，不是提案阈值所定义的 paired-bootstrap 置信上界，也不是
+  admission evidence；`1k x 20` 的 `0.806` 高于 `10k x 50` 的 superiority 阈值 `0.80`，正好落在
+  non-inferiority 与 superiority 两档之间，与 ADR 按 workload 分档的注册方式一致。
+- 报告 sha256 `50c766c88ca485a72e2bec23cf9c3bf3bca2681297059c03a81a5b2c2e7db7e4`（非持久）；
+  provenance 为 revision `882ba222`、`sourceTreeClean=false`、Zeus bundle `3f66cf7e…`、real-WBT
+  bundle `a5f54dff…`。
+- 不写 `phase-z1-gate.json`，`Z1.3` 仍为 `NO-GO`，ADR 0004 仍为 `Proposed`。
+
+`5-repeat 双 workload` 复核（同日追加，最新一轮）：把 `--repeat` 提到 5 并在同一份报告里同时采集两个
+primary workload，得到目前最完整的一轮诊断：
+
+```bash
+node scripts/benchmark-sql-result-grid.mjs \
+  --renderer workbench-table,zeus --workload 1k-x-20,10k-x-50 --repeat 5 \
+  --workbench-table-implementation real --require-zeus true \
+  --zeus-bundle /tmp/nyala-zeus-ab/data-grid-bundle.js \
+  --diagnostic-profile true --output /tmp/nyala-real-wbt-cpu-both-r5.json
+node scripts/analyze-sql-result-grid-floor-headroom.mjs \
+  --report /tmp/nyala-real-wbt-cpu-both-r5.json
+node scripts/analyze-sql-result-grid-floor-headroom.mjs \
+  --report /tmp/nyala-real-wbt-cpu-both-r5.json --workload 1k-x-20
+```
+
+| 量                                    | `10k x 50`                                                  | `1k x 20` |
+| ------------------------------------- | ----------------------------------------------------------- | --------- |
+| baseline p95 / shared floor p95       | `17.50ms` / `17.40ms`（`1.006`）                            | —         |
+| required Zeus p95（`0.8 × baseline`） | `14.00ms`，低于 floor `3.40ms`                              | —         |
+| Zeus interval union p95               | `3.00ms`                                                    | `3.00ms`  |
+| WorkbenchTable interval union p95     | `6.00ms`                                                    | `3.10ms`  |
+| `Q95(cpu_Z) / Q95(cpu_W)`             | `0.500`                                                     | `0.968`   |
+| 记录 / 完整性                         | 10 records（每侧 5）、每侧 100 commits、one-frame `200/200` | 同报告    |
+
+- floor-bounded 改善上限为 `0.57%`（最优 floor 下 `4.57%`），`floorBoundedSuperiorityReachable` 为
+  `false`：20% 门在 5-repeat 口径下同样不可辨识，`Z1.3 = NO-GO` 不变。
+- `1k x 20` 的两次点估计 `0.806`（`--repeat 3`）与 `0.968`（`--repeat 5`）跨过提案的 `0.80`
+  superiority 上界：同一台机器上的 run-to-run spread 说明单轮 point estimate 不能当作阈值判定，正式 v7
+  必须按注册口径计算 paired-bootstrap 置信界。
+- 报告 sha256 `d2d260db9f15f7b44533c7ab96e0e957e150c34c31f7f0a9dde07449f63c42f3`（非持久）；
+  provenance 为 revision `882ba222`、`sourceTreeClean=false`、Zeus bundle `3f66cf7e…`、real-WBT
+  bundle `a5f54dff…`。
+- 不写 `phase-z1-gate.json`，`Z1.3` 仍为 `NO-GO`，ADR 0004 仍为 `Proposed`；本机 benchmark 套件
+  `pnpm run test:sql-result-grid-benchmark` 为 exit 0（63/63）。
+
+### 2026-09-18 上游发行状态复核
+
+用已认证的 `gh`（`baicie`）与 npm registry 只读复核上游 Zeus 状态，未触发任何 workflow、未发布任何
+版本：
+
+| 对象    | 复核结果                                                                                                                                                              |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| zeus    | 最新 release 仍是 `v0.1.1-beta.2`（`2026-08-21T09:47:28Z`，SHA `a099abbf`）；tag 列表中另有 `vite-plugin@0.0.3` / `vite-plugin@0.0.4` 两个与 Data Grid 无关的 tag     |
+| zeus-ui | tag 仍停在 `v0.1.0-beta.4`（`548baa14`）；仓库没有任何 GitHub Release 对象；PR #41（`release: prepare 0.1.0-beta.5`）已于 2026-08-24 关闭，两个仓库当前都没有 open PR |
+| npm     | `@zeus-web/data-grid` 共 5 个版本（beta.0–beta.4），`beta = 0.1.0-beta.4`、`latest = 0.1.0-beta.0`，registry 最后修改时间 `2026-08-21T12:22:28Z`                      |
+
+即 core `0.1.1-beta.2` 与 zeus-ui `0.1.0-beta.4` 就是上游目前的全部整改与发行，没有等待审计的新版本；
+Z1.3 保持 `NO-GO` 的原因仍是 v6 五门在地板上不可辨识，而不是漏审某个已发布版本。
+
 ## CI 证据工作流
 
 跨平台证据入口为
@@ -450,7 +819,7 @@ Chromium 10k baseline 本轮有 `107.2ms` 长尾，Zeus `20.6ms`，改善 80.8% 
 0 artifacts；固定版本 actionlint 对对应 revision 精确报告 macOS/Windows job-level `env` 中的
 `${{ runner.temp }}` context 不被 GitHub 允许。当前工作树已将目录初始化移到 step runtime，并由
 Formatting CI 的 actionlint `v1.7.12` job 扫描全部 workflow；本地 actionlint exit 0，WebDriver
-workflow contract tests 为 8/8。正式 workflow 现在显式要求 real mode。后续 run `32706467306`
+workflow contract tests 当时为 8/8（2026-09-17 复测 13/13）。正式 workflow 现在显式要求 real mode。后续 run `32706467306`
 已在目标 revision 远端执行：Chromium 36/36、macOS/Windows 各 60/60 records
 与 12/12 screenshots 均完整，证明 workflow 与 native evidence contract 已修复；aggregate 仍因本文
 记录的 5 个性能门失败而按设计 `NO-GO`。
@@ -672,14 +1041,20 @@ run/artifact API metadata，经 GitHub artifact API URL 下载、核对 ZIP SHA-
 release report schema v3，并重算 Checkpoint W 四份与 Z1 六份 raw input SHA-256；同时校验完整 metric、
 measurement contract v6/order、screenshot、dependency audit、provenance、Z2 roadmap/production dependency/
 renderer boundary，拒绝最小或完整手写的 `GO` evidence、过期/伪造 artifact 与错误时序。
-`test:sql-mvp-vnext-release` 的 32/32 tests 已覆盖这些 fail-closed 路径，包括 real WorkbenchTable
+`test:sql-mvp-vnext-release` 的 35/35 tests 已覆盖这些 fail-closed 路径，包括 real WorkbenchTable
 identity check、跨平台 bundle digest binding 与 R0 summary 重校验。
 
-GitHub API 已确认默认分支 `mvp` 的 strict branch protection 存在，但仓库尚无 environment，且本地
-Z1 attestation/R0 workflow 尚未发布。管理员仍需创建 `sql-agent-checkpoint-w`、
-`sql-result-grid-z1-gate`、`sql-mvp-vnext-release` 三个 environment 并启用 required reviewers；即使
-feature-branch 双平台 evidence 已完整，在性能 gate、protected attestation、workflow 发布与环境配置
-全部通过前，Z1.3、Checkpoint W、R0 均保持 `NO-GO`，Z2 禁止开始。
+GitHub API 已确认默认分支 `mvp` 的 strict branch protection 存在；2026-09-17 复核时三个 attestation
+workflow 已发布到 `mvp`（blob SHA 与本地 HEAD 一致，runs 均为 0），仓库 environment 列表仍为空。
+**2026-09-18 更正**：environment 为空不构成阻塞——GitHub 文档写明 _"Running a workflow that references
+an environment that does not exist will create an environment with the referenced name … Otherwise, the
+newly created environment will not have any protection rules or secrets configured."_（[Managing
+environments for
+deployment](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)，
+2026-09-18 取得），三个 workflow 也只使用 `secrets.GITHUB_TOKEN`；人工预建 environment 只是可选的
+required-reviewers 纵深保护。即使 feature-branch 双平台 evidence 已完整，在性能 gate、受保护
+attestation、待合入 `mvp` 的本地修复与 Checkpoint W 人工证据全部通过前，Z1.3、Checkpoint W、R0 均保持
+`NO-GO`，Z2 禁止开始。
 
 当前 [`phase-vnext-release-gate.json`](./phase-vnext-release-gate.json) 仍为 `NO-GO`，因此
 `R0 = NO-GO`。这不等于 R0 已发布，也不授权绕过 Z1/A4 gate 或开始 Z2。

@@ -12,11 +12,12 @@ multiple phases or ownership boundaries.
 
 ## Index
 
-| ADR                                                   | Status   | Decision                                                                                                       |
-| ----------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
-| [0001](./0001-jdbc-sidecar-and-connector-boundary.md) | Proposed | Run JDBC drivers in a supervised Java sidecar and keep database connectors separate from Workbench extensions. |
-| [0002](./0002-signed-connector-marketplace.md)        | Proposed | Distribute connector packages through a curated, signed, rollback-resistant marketplace.                       |
-| [0003](./0003-sql-agent-parser-boundary.md)           | Accepted | Keep the local fail-closed SQL analyzer for A0.2; do not add `sqlparser` without a new approved spike.         |
+| ADR                                                     | Status   | Decision                                                                                                       |
+| ------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
+| [0001](./0001-jdbc-sidecar-and-connector-boundary.md)   | Proposed | Run JDBC drivers in a supervised Java sidecar and keep database connectors separate from Workbench extensions. |
+| [0002](./0002-signed-connector-marketplace.md)          | Proposed | Distribute connector packages through a curated, signed, rollback-resistant marketplace.                       |
+| [0003](./0003-sql-agent-parser-boundary.md)             | Accepted | Keep the local fail-closed SQL analyzer for A0.2; do not add `sqlparser` without a new approved spike.         |
+| [0004](./0004-zeus-data-grid-v7-floor-aware-metrics.md) | Proposed | Freeze v6 `NO-GO`; pre-register floor-aware v7 jank, renderer CPU, and one-frame correctness metrics.          |
 
 An ADR becoming `Accepted` does not by itself change a driver's runtime
 maturity. Runtime status remains governed by

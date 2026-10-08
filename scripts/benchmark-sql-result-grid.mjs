@@ -36,10 +36,47 @@ import {
 	SQL_RESULT_GRID_PRESENTATION_FLOOR_SAMPLE_COUNT
 } from './profile-sql-result-grid-feasibility.mjs';
 import {
+	createJankTraceCollector,
+	createScrollOffsetSampler,
+	createTraceScrollOffsets,
+	createSqlResultGridJankProfile,
+	isJankTraceRecord,
+	requireJankTraceClose,
+	SQL_RESULT_GRID_JANK_CORRELATION,
+	SQL_RESULT_GRID_JANK_FRAME_MULTIPLIER,
+	SQL_RESULT_GRID_JANK_INPUT_CADENCE_MS,
+	SQL_RESULT_GRID_JANK_INPUT_SEGMENTS,
+	SQL_RESULT_GRID_JANK_INPUT_SOURCE,
+	SQL_RESULT_GRID_JANK_MINIMUM_FRAME_INTERVALS,
+	SQL_RESULT_GRID_JANK_MINIMUM_HORIZONTAL_SPAN_PX,
+	SQL_RESULT_GRID_JANK_MINIMUM_VERTICAL_SPAN_PX,
+	SQL_RESULT_GRID_JANK_ONE_K_WORKLOAD_ID,
+	SQL_RESULT_GRID_JANK_TEN_K_WORKLOAD_ID,
+	SQL_RESULT_GRID_JANK_TRACE_DURATION_MS,
+	SQL_RESULT_GRID_JANK_TRACE_VERSION,
+	SQL_RESULT_GRID_JANK_VSYNC_CALIBRATION_FRAMES,
+	SQL_RESULT_GRID_JANK_VSYNC_SOURCE,
+	summarizeJankIntervals,
+	validateJankTraceSnapshot,
+	waitForJankTraceFlag
+} from './sql-result-grid-jank-trace.mjs';
+import {
 	SQL_RESULT_GRID_RUN_MARKER_LAYOUT,
 	SQL_RESULT_GRID_RUN_MARKER_MAGIC,
 	SQL_RESULT_GRID_RUN_MARKER_VERSION
 } from './sql-result-grid-run-marker.mjs';
+import {
+	createZeusDataGridDiagnosticCollector,
+	validateZeusDataGridDiagnosticSnapshot,
+	ZEUS_DATA_GRID_DIAGNOSTICS_CORRELATION,
+	ZEUS_DATA_GRID_DIAGNOSTICS_VERSION
+} from './sql-result-grid-zeus-diagnostics.mjs';
+import {
+	validateWorkbenchTableDiagnosticSnapshot,
+	WORKBENCH_TABLE_DIAGNOSTICS_CORRELATION,
+	WORKBENCH_TABLE_DIAGNOSTICS_INSTRUMENTATION,
+	WORKBENCH_TABLE_DIAGNOSTICS_VERSION
+} from './sql-result-grid-workbench-table-diagnostics.mjs';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const defaultOutput = join(repositoryRoot, 'docs/sql-mvp-phases/phase-z1-benchmark.json');
@@ -62,12 +99,14 @@ const workloads = [
 const cli = parseArgs(process.argv.slice(2));
 if (cli.help) {
 	process.stdout.write(
-		`Usage: node scripts/benchmark-sql-result-grid.mjs [options]\n\nOptions:\n  -h, --help                    Show this help\n  --repeat <n>                  Runs per workload/renderer (default: 1)\n  --renderer <names>            native,workbench-table,zeus, or all\n  --workload <ids>              Comma-separated workload ids\n  --workbench-table-implementation <mode>\n                                characterization (default) or real\n  --zeus-bundle <path>          Zeus data-grid browser bundle (or NYALA_ZEUS_BUNDLE)\n  --require-zeus <true|false>   Fail unless Zeus produces ok records\n  --diagnostic-profile <bool>   Measure the shared presentation floor (default: false)\n  --emit-page <path>            Write the standalone benchmark page and exit\n  --output <path>               Output benchmark JSON\n`
+		`Usage: node scripts/benchmark-sql-result-grid.mjs [options]\n\nOptions:\n  -h, --help                    Show this help\n  --repeat <n>                  Runs per workload/renderer (default: 1)\n  --renderer <names>            native,workbench-table,zeus, or all\n  --workload <ids>              Comma-separated workload ids\n  --workbench-table-implementation <mode>\n                                characterization (default) or real\n  --zeus-bundle <path>          Zeus data-grid browser bundle (or NYALA_ZEUS_BUNDLE)\n  --require-zeus <true|false>   Fail unless Zeus produces ok records\n  --diagnostic-profile <bool>   Measure presentation floor and Zeus internals (default: false)\n  --jank-trace <true|false>     Diagnostic continuous-scroll jank traces (default: false)\n  --zeus-measure-node-churn <bool>\n                                Diagnostic A/B: count DOM node churn after commit (default: true)\n  --emit-page <path>            Write the standalone benchmark page and exit\n  --output <path>               Output benchmark JSON\n`
 	);
 	process.exit(0);
 }
 const repeat = parsePositiveInteger(cli.repeat ?? '1', '--repeat');
 const diagnosticProfile = parseBoolean(cli['diagnostic-profile'] ?? 'false', '--diagnostic-profile');
+const jankTrace = parseBoolean(cli['jank-trace'] ?? 'false', '--jank-trace');
+const zeusMeasureNodeChurn = parseBoolean(cli['zeus-measure-node-churn'] ?? 'true', '--zeus-measure-node-churn');
 const selectedRenderers =
 	cli.renderer === 'all' || !cli.renderer ? ['native', 'workbench-table', 'zeus'] : cli.renderer.split(',');
 const supportedRenderers = new Set(['native', 'workbench-table', 'zeus']);
@@ -93,6 +132,21 @@ if (
 ) {
 	throw new Error(
 		'--diagnostic-profile requires repeat >= 3, workload 10k-x-50, Zeus, and a non-Zeus baseline renderer'
+	);
+}
+const missingJankTraceWorkloads = [SQL_RESULT_GRID_JANK_ONE_K_WORKLOAD_ID, SQL_RESULT_GRID_JANK_TEN_K_WORKLOAD_ID].filter(
+	workloadId => !selectedWorkloads.some(workload => workload.id === workloadId)
+);
+if (
+	jankTrace &&
+	(!diagnosticProfile ||
+		workbenchTableImplementation !== 'real' ||
+		!selectedRenderers.includes('workbench-table') ||
+		!selectedRenderers.includes('zeus') ||
+		missingJankTraceWorkloads.length > 0)
+) {
+	throw new Error(
+		'--jank-trace requires --diagnostic-profile true, --workbench-table-implementation real, the workbench-table and zeus renderers, and the 1k-x-20 and 10k-x-50 workloads'
 	);
 }
 const zeusBundle = cli['zeus-bundle'] ?? process.env.NYALA_ZEUS_BUNDLE;
@@ -154,7 +208,9 @@ try {
 			renderer,
 			iteration,
 			executionOrdinal,
-			diagnosticProfile
+			diagnosticProfile,
+			zeusMeasureNodeChurn,
+			jankTrace
 		);
 		records.push(record);
 		process.stdout.write(
@@ -185,11 +241,45 @@ try {
 					diagnosticProfile: {
 						version: SQL_RESULT_GRID_FEASIBILITY_PROFILE_VERSION,
 						presentationFloorSampleCount: SQL_RESULT_GRID_PRESENTATION_FLOOR_SAMPLE_COUNT,
+						zeusDataGridDiagnostics: {
+							version: ZEUS_DATA_GRID_DIAGNOSTICS_VERSION,
+							correlation: ZEUS_DATA_GRID_DIAGNOSTICS_CORRELATION,
+							instrumented: true,
+							measureNodeChurn: zeusMeasureNodeChurn
+						},
+						...(selectedRenderers.includes('workbench-table') && workbenchTableImplementation === 'real'
+							? {
+									workbenchTableDiagnostics: {
+										version: WORKBENCH_TABLE_DIAGNOSTICS_VERSION,
+										correlation: WORKBENCH_TABLE_DIAGNOSTICS_CORRELATION,
+										instrumentation: WORKBENCH_TABLE_DIAGNOSTICS_INSTRUMENTATION,
+										instrumented: true
+									}
+								}
+							: {}),
 						zeusAdapter: {
 							explicitRefreshViewport: false,
 							overscan: 4,
 							rowShape: 'array-index'
-						}
+						},
+						...(jankTrace
+							? {
+									jankTrace: {
+										version: SQL_RESULT_GRID_JANK_TRACE_VERSION,
+										correlation: SQL_RESULT_GRID_JANK_CORRELATION,
+										inputSource: SQL_RESULT_GRID_JANK_INPUT_SOURCE,
+										durationMs: SQL_RESULT_GRID_JANK_TRACE_DURATION_MS,
+										frameMultiplier: SQL_RESULT_GRID_JANK_FRAME_MULTIPLIER,
+										vsyncCalibrationFrames: SQL_RESULT_GRID_JANK_VSYNC_CALIBRATION_FRAMES,
+										vsyncSource: SQL_RESULT_GRID_JANK_VSYNC_SOURCE,
+										inputCadenceMs: SQL_RESULT_GRID_JANK_INPUT_CADENCE_MS,
+										minimumFrameIntervals: SQL_RESULT_GRID_JANK_MINIMUM_FRAME_INTERVALS,
+										minimumVerticalSpanPx: SQL_RESULT_GRID_JANK_MINIMUM_VERTICAL_SPAN_PX,
+										minimumHorizontalSpanPx: SQL_RESULT_GRID_JANK_MINIMUM_HORIZONTAL_SPAN_PX,
+										navigation: 'separate-observer-free-navigation'
+									}
+								}
+							: {})
 					}
 				}
 			: {}),
@@ -199,14 +289,40 @@ try {
 				? 'The WorkbenchTable renderer instantiates the repository WorkbenchTable with isolated platform services; it is not a full Workbench boot.'
 				: 'The WorkbenchTable renderer is a standalone fixed-row virtual-list characterization of the platform table contract, not a Workbench boot.',
 			'Scroll latency uses one scroll-controller input and a post-presentation-opportunity visible-row completion contract for all renderers; aggregate timings are recomputable from 20 real-displacement samples.',
-			'IPC and format timings measure the existing JSON-shaped result boundary and local cell formatting; no database or Tauri command is invoked.'
+			'IPC and format timings measure the existing JSON-shaped result boundary and local cell formatting; no database or Tauri command is invoked.',
+			'Data Grid model/commit diagnostics and WorkbenchTable ListView interval instrumentation are enabled only in diagnostic profiles and add observer overhead; they do not replace admission timings.',
+			...(jankTrace
+				? [
+						'Continuous-scroll jank traces are diagnostic: they dispatch DevTools-protocol wheel input in Chromium and cannot rewrite v6 admission evidence, flip the Z1 gate, or serve as v7 admission evidence.'
+					]
+				: [])
 		]
 	};
 	if (diagnosticProfile) {
 		report.feasibilityProfile = createSqlResultGridFeasibilityProfile(report);
 	}
+	const jankTraceFailures = [];
+	if (jankTrace) {
+		report.jankTraceProfiles = {};
+		for (const workloadId of [SQL_RESULT_GRID_JANK_ONE_K_WORKLOAD_ID, SQL_RESULT_GRID_JANK_TEN_K_WORKLOAD_ID]) {
+			try {
+				report.jankTraceProfiles[workloadId] = createSqlResultGridJankProfile(report, workloadId);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				jankTraceFailures.push({ workloadId, error: message });
+				report.jankTraceProfiles[workloadId] = { workloadId, error: message };
+			}
+		}
+	}
 	await writeFile(outputPath, `${JSON.stringify(report, null, '\t')}\n`, 'utf8');
 	process.stdout.write(`Wrote ${outputPath}\n`);
+	if (jankTraceFailures.length > 0) {
+		throw new Error(
+			`Jank trace profile failed for ${jankTraceFailures
+				.map(failure => `${failure.workloadId}: ${failure.error}`)
+				.join('; ')} (report written to ${outputPath})`
+		);
+	}
 	if (cli['require-zeus'] === 'true' && records.some(record => record.renderer === 'zeus' && record.status !== 'ok')) {
 		throw new Error('Zeus renderer did not produce an ok benchmark record');
 	}
@@ -366,7 +482,9 @@ async function runBrowserBenchmark(
 	renderer,
 	iteration,
 	executionOrdinal,
-	diagnosticProfile
+	diagnosticProfile,
+	measureNodeChurn,
+	jankTrace
 ) {
 	const runToken = randomUUID();
 	const query = new URLSearchParams({
@@ -375,6 +493,7 @@ async function runBrowserBenchmark(
 		executionOrder: EXECUTION_ORDER,
 		executionOrdinal: String(executionOrdinal),
 		diagnosticProfile: String(diagnosticProfile),
+		measureNodeChurn: String(measureNodeChurn),
 		rows: String(workload.rows),
 		columns: String(workload.columns),
 		wide: String(workload.wide),
@@ -401,7 +520,205 @@ async function runBrowserBenchmark(
 		workbenchTableImplementation,
 		workbenchTableBundleSha256: workbenchTableBundle?.sha256
 	});
+	const traced =
+		jankTrace && record.status === 'ok'
+			? await runJankTrace(client, baseUrl, workload, renderer, executionOrdinal)
+			: undefined;
+	if (traced) {
+		record.diagnostics = { ...(record.diagnostics ?? {}), jankTrace: traced };
+	}
 	return { ...record, workloadId: workload.id, iteration };
+}
+
+/**
+ * Runs one diagnostic continuous-scroll jank trace in its own observer-free
+ * navigation. The trace is collected after the paired Primary B record, so it
+ * never perturbs the admission-shaped record it is attached to.
+ */
+async function runJankTrace(client, baseUrl, workload, renderer, executionOrdinal) {
+	const traceRunToken = randomUUID();
+	const query = new URLSearchParams({
+		run: traceRunToken,
+		renderer,
+		workloadId: workload.id,
+		executionOrder: EXECUTION_ORDER,
+		executionOrdinal: String(executionOrdinal),
+		diagnosticProfile: 'false',
+		jankTrace: 'true',
+		rows: String(workload.rows),
+		columns: String(workload.columns),
+		wide: String(workload.wide),
+		width: String(workload.width),
+		height: String(workload.height)
+	});
+	const url = `${baseUrl}?${query}`;
+	const label = `${workload.id}/${renderer}`;
+	await client.send('Emulation.setDeviceMetricsOverride', {
+		width: workload.width,
+		height: workload.height,
+		deviceScaleFactor: 1,
+		mobile: false
+	});
+	const navigation = await client.send('Page.navigate', { url });
+	if (navigation.errorText) {
+		throw new Error(`Jank trace navigation failed for ${label}: ${navigation.errorText}`);
+	}
+	await waitForJankTraceReady(client, url, label);
+	const begin = await client.send('Runtime.evaluate', {
+		expression: `(() => {
+			const channel = globalThis.__nyalaJankControl;
+			if (!channel) throw new Error('Jank trace control channel is missing.');
+			channel.begin = true;
+			return true;
+		})()`,
+		returnByValue: true
+	});
+	if (begin.exceptionDetails) {
+		throw new Error(begin.exceptionDetails.text ?? `Jank trace begin handshake failed for ${label}.`);
+	}
+	await waitForJankTraceRunning(client, url, label);
+	const inputPlan = await dispatchJankTraceWheelInput(client, workload);
+	const control = await client.send('Runtime.evaluate', {
+		expression: `(() => {
+			const channel = globalThis.__nyalaJankControl;
+			if (!channel) throw new Error('Jank trace control channel is missing.');
+			channel.inputPlan = ${JSON.stringify(inputPlan)};
+			channel.stop = true;
+			return channel.running === true;
+		})()`,
+		returnByValue: true
+	});
+	if (control.exceptionDetails) {
+		throw new Error(control.exceptionDetails.text ?? `Jank trace control handshake failed for ${label}.`);
+	}
+	if (control.result?.value !== true) {
+		throw new Error(`Jank trace collector was not running for ${label}.`);
+	}
+	const snapshot = await waitForJankTraceResult(client, Date.now() + browserRecordTimeoutMs, url, traceRunToken);
+	validateJankTraceSnapshot(snapshot, { expectedWorkload: workload, expectedTraceRunToken: traceRunToken });
+	return { ...snapshot, navigation: { separateNavigation: true, observerFree: true, renderer } };
+}
+
+async function waitForJankTraceReady(client, expectedUrl, label) {
+	const deadline = Date.now() + 60_000;
+	let lastError;
+	while (Date.now() < deadline) {
+		try {
+			const response = await client.send('Runtime.evaluate', {
+				expression: `({ href: location.href, ready: globalThis.__nyalaJankControl?.ready === true, resultText: document.querySelector('#benchmark-result')?.textContent || '' })`,
+				returnByValue: true
+			});
+			const page = response.result?.value;
+			if (page?.href === expectedUrl) {
+				if (page.ready) return;
+				if (typeof page.resultText === 'string' && page.resultText.trim()) {
+					throw new Error(`Jank trace page failed before wheel input for ${label}: ${page.resultText.slice(0, 400)}`);
+				}
+			}
+		} catch (error) {
+			if (error instanceof Error && error.message.startsWith('Jank trace page failed')) throw error;
+			lastError = error;
+		}
+		await delay(25);
+	}
+	const detail = lastError instanceof Error ? ` Last error: ${lastError.message}` : '';
+	throw new Error(`Jank trace did not become ready for ${label}.${detail}`);
+}
+
+async function waitForJankTraceRunning(client, expectedUrl, label) {
+	const deadline = Date.now() + 30_000;
+	let lastError;
+	while (Date.now() < deadline) {
+		try {
+			const response = await client.send('Runtime.evaluate', {
+				expression: `({ href: location.href, running: globalThis.__nyalaJankControl?.running === true, resultText: document.querySelector('#benchmark-result')?.textContent || '' })`,
+				returnByValue: true
+			});
+			const page = response.result?.value;
+			if (page?.href === expectedUrl) {
+				if (page.running) return;
+				if (typeof page.resultText === 'string' && page.resultText.trim()) {
+					throw new Error(
+						`Jank trace page failed before wheel input for ${label}: ${page.resultText.slice(0, 400)}`
+					);
+				}
+			}
+		} catch (error) {
+			if (error instanceof Error && error.message.startsWith('Jank trace page failed')) throw error;
+			lastError = error;
+		}
+		await delay(10);
+	}
+	const detail = lastError instanceof Error ? ` Last error: ${lastError.message}` : '';
+	throw new Error(`Jank trace collector did not start for ${label}.${detail}`);
+}
+
+async function dispatchJankTraceWheelInput(client, workload) {
+	const segments = SQL_RESULT_GRID_JANK_INPUT_SEGMENTS;
+	const segmentDurationMs = SQL_RESULT_GRID_JANK_TRACE_DURATION_MS / segments.length;
+	const eventsPerSegment = Math.max(1, Math.round(segmentDurationMs / SQL_RESULT_GRID_JANK_INPUT_CADENCE_MS));
+	const totalEvents = eventsPerSegment * segments.length;
+	const cadenceMs = SQL_RESULT_GRID_JANK_TRACE_DURATION_MS / totalEvents;
+	const x = Math.round(workload.width / 2);
+	const y = Math.round(workload.height / 2);
+	const start = Date.now();
+	for (let index = 0; index < totalEvents; index += 1) {
+		const segment = segments[Math.floor(index / eventsPerSegment)];
+		const waitMs = start + index * cadenceMs - Date.now();
+		if (waitMs > 0) await delay(waitMs);
+		await client.send('Input.dispatchMouseEvent', {
+			type: 'mouseWheel',
+			x,
+			y,
+			deltaX: segment.deltaX,
+			deltaY: segment.deltaY,
+			button: 'none',
+			clickCount: 0
+		});
+	}
+	return {
+		source: SQL_RESULT_GRID_JANK_INPUT_SOURCE,
+		durationMs: SQL_RESULT_GRID_JANK_TRACE_DURATION_MS,
+		cadenceMs: SQL_RESULT_GRID_JANK_INPUT_CADENCE_MS,
+		segmentDurationMs,
+		eventsPerSegment,
+		eventCount: totalEvents,
+		dispatchDurationMs: Date.now() - start,
+		segments: segments.map(segment => ({ label: segment.label, deltaX: segment.deltaX, deltaY: segment.deltaY }))
+	};
+}
+
+async function waitForJankTraceResult(client, deadline, expectedUrl, expectedTraceRunToken) {
+	let lastError;
+	while (Date.now() < deadline) {
+		try {
+			const response = await client.send('Runtime.evaluate', {
+				expression: `({ href: location.href, readyState: document.readyState, resultText: document.querySelector('#benchmark-result')?.textContent || '' })`,
+				returnByValue: true
+			});
+			const page = response.result?.value;
+			if (page?.href === expectedUrl && page.readyState !== 'loading' && page.resultText.trim()) {
+				const record = JSON.parse(page.resultText);
+				if (record?.runToken === expectedTraceRunToken) {
+					if (record.status !== 'ok') {
+						throw new Error(
+							`Jank trace navigation failed: ${String(record.error ?? record.reason ?? record.status).slice(0, 400)}`
+						);
+					}
+					if (isJankTraceRecord(record.jankTrace)) return record.jankTrace;
+					lastError = new Error('Jank trace result is missing its trace payload.');
+				} else {
+					lastError = new Error('Ignored stale or mismatched jank trace result.');
+				}
+			}
+		} catch (error) {
+			if (error instanceof Error && error.message.startsWith('Jank trace navigation failed')) throw error;
+			lastError = error;
+		}
+		await delay(25);
+	}
+	const detail = lastError instanceof Error ? ` Last error: ${lastError.message}` : '';
+	throw new Error(`Jank trace timed out for run ${expectedTraceRunToken}.${detail}`);
 }
 
 async function waitForBenchmarkResult(client, deadline, expectedUrl, expected) {
@@ -539,6 +856,9 @@ const runToken = params.get('run') || 'standalone';
 	const executionOrder = params.get('executionOrder') || '';
 	const executionOrdinal = Number(params.get('executionOrdinal') || 0);
 	const diagnosticProfile = params.get('diagnosticProfile') === 'true';
+	const jankTrace = params.get('jankTrace') === 'true';
+	const jankTraceWorkloadId = params.get('workloadId') || '';
+	const measureNodeChurn = params.get('measureNodeChurn');
 const workbenchTableImplementation = ${JSON.stringify(workbenchTableImplementation)};
 const WORKBENCH_TABLE_IMPLEMENTATION_ID = ${JSON.stringify(WORKBENCH_TABLE_IMPLEMENTATION_ID)};
 const WORKBENCH_TABLE_RUNTIME_PROOF = ${JSON.stringify(WORKBENCH_TABLE_RUNTIME_PROOF)};
@@ -567,9 +887,32 @@ const PRESENTATION_OPPORTUNITY_TIMEOUT_MS = 15_000;
 const SCROLL_ROW_TOLERANCE = ${SCROLL_ROW_TOLERANCE};
 const SCROLL_OFFSET_TOLERANCE = ${SCROLL_OFFSET_TOLERANCE};
 const SCROLL_COMMIT_ATTEMPTS = ${SCROLL_COMMIT_ATTEMPTS};
+const SQL_RESULT_GRID_JANK_TRACE_VERSION = ${SQL_RESULT_GRID_JANK_TRACE_VERSION};
+const SQL_RESULT_GRID_JANK_TRACE_DURATION_MS = ${SQL_RESULT_GRID_JANK_TRACE_DURATION_MS};
+const SQL_RESULT_GRID_JANK_FRAME_MULTIPLIER = ${SQL_RESULT_GRID_JANK_FRAME_MULTIPLIER};
+const SQL_RESULT_GRID_JANK_VSYNC_CALIBRATION_FRAMES = ${SQL_RESULT_GRID_JANK_VSYNC_CALIBRATION_FRAMES};
+const SQL_RESULT_GRID_JANK_CORRELATION = ${JSON.stringify(SQL_RESULT_GRID_JANK_CORRELATION)};
+const SQL_RESULT_GRID_JANK_VSYNC_SOURCE = ${JSON.stringify(SQL_RESULT_GRID_JANK_VSYNC_SOURCE)};
+const SQL_RESULT_GRID_JANK_INPUT_SOURCE = ${JSON.stringify(SQL_RESULT_GRID_JANK_INPUT_SOURCE)};
+const SQL_RESULT_GRID_JANK_INPUT_SEGMENTS = ${JSON.stringify(SQL_RESULT_GRID_JANK_INPUT_SEGMENTS)};
+const SQL_RESULT_GRID_JANK_MINIMUM_FRAME_INTERVALS = ${SQL_RESULT_GRID_JANK_MINIMUM_FRAME_INTERVALS};
+const SQL_RESULT_GRID_JANK_MINIMUM_VERTICAL_SPAN_PX = ${SQL_RESULT_GRID_JANK_MINIMUM_VERTICAL_SPAN_PX};
+const SQL_RESULT_GRID_JANK_MINIMUM_HORIZONTAL_SPAN_PX = ${SQL_RESULT_GRID_JANK_MINIMUM_HORIZONTAL_SPAN_PX};
+const JANK_TRACE_CONTROL_TIMEOUT_MS = 30_000;
 ${isValidVisibleRowIndex.toString()}
 ${maximumVirtualRenderedRows.toString()}
 ${waitForPresentationOpportunity.toString()}
+${createZeusDataGridDiagnosticCollector.toString()}
+${validateZeusDataGridDiagnosticSnapshot.toString()}
+${validateWorkbenchTableDiagnosticSnapshot.toString()}
+${summarizeJankIntervals.toString()}
+${isJankTraceRecord.toString()}
+${requireJankTraceClose.toString()}
+${createJankTraceCollector.toString()}
+${createScrollOffsetSampler.toString()}
+${createTraceScrollOffsets.toString()}
+${waitForJankTraceFlag.toString()}
+${validateJankTraceSnapshot.toString()}
 const workload = { rows: rowCount, columns: columnCount, wide, viewportWidth, viewportHeight };
 
 function createFixture() {
@@ -768,6 +1111,22 @@ async function commitScroll(rendered, targetOffset, sampleIndex) {
 	};
 }
 
+async function commitScrollWithDiagnostics(rendered, targetOffset, sampleIndex, phase) {
+	const diagnosticSampleIndex = phase === 'sample' ? sampleIndex : null;
+	const zeusOperation = rendered.zeusDiagnostics?.beginOperation(phase, diagnosticSampleIndex);
+	const workbenchTableOperation = rendered.diagnostics?.beginOperation(phase, diagnosticSampleIndex);
+	const sample = await commitScroll(rendered, targetOffset, sampleIndex);
+	if (zeusOperation || workbenchTableOperation) {
+		// Let synchronously emitted commit callbacks (and their diagnostics
+		// traversal) settle past the microtask boundary before closing the
+		// operation window, so commits correlate to exactly this scroll.
+		await Promise.resolve();
+		if (zeusOperation) rendered.zeusDiagnostics.endOperation(zeusOperation);
+		if (workbenchTableOperation) rendered.diagnostics.endOperation(workbenchTableOperation);
+	}
+	return sample;
+}
+
 function summarizeSamples(samples, field) {
 	const values = samples.map(sample => sample[field]);
 	const sorted = [...values].sort((left, right) => left - right);
@@ -803,14 +1162,14 @@ async function measureScroll(rendered) {
 	}
 	await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
 	void rendered.scroll.offsetHeight;
-	const preposition = await commitScroll(rendered, maxOffset, -1);
+	const preposition = await commitScrollWithDiagnostics(rendered, maxOffset, -1, 'preposition');
 	if (!preposition.committed) {
 		throw new Error('Scroll workload could not preposition at its maximum offset.');
 	}
 	for (let sampleIndex = 0; sampleIndex < SCROLL_SAMPLE_COUNT; sampleIndex += 1) {
 		const [numerator, denominator] = SCROLL_TARGET_RATIOS[sampleIndex];
 		const targetOffset = maxOffset * numerator / denominator;
-		const sample = await commitScroll(rendered, targetOffset, sampleIndex);
+		const sample = await commitScrollWithDiagnostics(rendered, targetOffset, sampleIndex, 'sample');
 		if (!sample.committed) {
 			throw new Error(
 				'Scroll sample ' + sampleIndex + ' did not commit: expected row ' + sample.expectedRowIndex +
@@ -913,13 +1272,14 @@ function renderWorkbenchTable(root, rows, columns) {
     height: Math.max(1, viewportHeight - 20),
     rowHeight: ROW_HEIGHT,
     headerHeight: HEADER_HEIGHT
-  });
+  }, diagnosticProfile);
   const implementation = rendered?.implementation;
   if (
     implementation?.id !== WORKBENCH_TABLE_IMPLEMENTATION_ID ||
     implementation?.runtimeProof !== WORKBENCH_TABLE_RUNTIME_PROOF ||
     implementation?.exactPrototype !== true ||
     implementation?.domVerified !== true ||
+    (diagnosticProfile && implementation?.diagnosticsInstalled !== true) ||
     !/^[a-f0-9]{64}$/.test(WORKBENCH_TABLE_BUNDLE_SHA256 || '')
   ) {
     rendered?.dispose?.();
@@ -938,6 +1298,10 @@ function renderWorkbenchTable(root, rows, columns) {
 async function renderZeus(root, rows, columns) {
   if (!customElements.get('zw-data-grid')) return { unavailable: 'Zeus bundle was not provided.' };
   const grid = document.createElement('zw-data-grid');
+	const zeusDiagnostics = diagnosticProfile ? createZeusDataGridDiagnosticCollector(
+		measureNodeChurn === 'false' ? { measureNodeChurn: false } : undefined
+	) : undefined;
+	if (zeusDiagnostics) grid.diagnostics = zeusDiagnostics.observer;
   grid.setAttribute('aria-label', 'SQL result benchmark');
   grid.virtual = true; grid.rowHeight = ROW_HEIGHT; grid.overscan = 4; grid.overscanColumns = 1; grid.keyboardNavigation = true; grid.selectionMode = 'single';
   grid.columns = columns.map(column => ({ id: column.id, header: column.name, field: String(column.ordinal), width: 112, minWidth: 80, maxWidth: 480, sortable: false, resizable: false }));
@@ -946,10 +1310,10 @@ async function renderZeus(root, rows, columns) {
 	if (grid.componentOnReady) await grid.componentOnReady();
 	void root.offsetHeight;
 	const scroll = getScrollElement(root);
-	return { scroll, viewport: scroll, totalHeight: rows.length * 28 + 28, grid };
+	return { scroll, viewport: scroll, totalHeight: rows.length * 28 + 28, grid, zeusDiagnostics };
 }
 
-async function main() {
+async function prepareBenchmarkRoot() {
   const root = document.getElementById('root');
 	if (renderer === 'workbench-table' && workbenchTableImplementation === 'real') {
 		await waitForRealWorkbenchTableBundle();
@@ -960,6 +1324,10 @@ async function main() {
       new Promise(resolve => setTimeout(resolve, 5000))
     ]);
   }
+  return root;
+}
+
+async function renderBenchmarkGrid(root) {
   const fixtureStart = performance.now();
   const fixture = createFixture();
   const fixtureBytes = new TextEncoder().encode(JSON.stringify(fixture)).byteLength;
@@ -973,7 +1341,13 @@ async function main() {
     : renderer === 'workbench-table'
       ? renderWorkbenchTable(root, formatted.rows, fixture.columns)
       : await renderZeus(root, formatted.rows, fixture.columns);
-	  const renderMs = performance.now() - renderStart;
+  const renderMs = performance.now() - renderStart;
+  return { fixture, fixtureBytes, parseMs, formatted, beforeHeap, renderMs, rendered };
+}
+
+async function main() {
+  const root = await prepareBenchmarkRoot();
+  const { fixture, fixtureBytes, parseMs, formatted, beforeHeap, renderMs, rendered } = await renderBenchmarkGrid(root);
 	  if (rendered.unavailable) {
 	    writeBenchmarkResult({ status: 'unavailable', reason: rendered.unavailable });
 	    return;
@@ -981,7 +1355,7 @@ async function main() {
 	void root.offsetHeight;
 	const scroll = await measureScroll(rendered);
 	const presentationFloor = diagnosticProfile ? await measurePresentationFloor() : undefined;
-	const reset = await commitScroll(rendered, 0, -1);
+	const reset = await commitScrollWithDiagnostics(rendered, 0, -1, 'reset');
 	if (!reset.committed) throw new Error('Renderer did not reset to its first visible row.');
 	await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
 	void root.offsetHeight;
@@ -999,6 +1373,22 @@ async function main() {
 		await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
 	}
 	const documentElement = document.documentElement;
+	const zeusDataGrid = rendered.zeusDiagnostics?.snapshot();
+	if (zeusDataGrid) {
+		validateZeusDataGridDiagnosticSnapshot(zeusDataGrid, {
+			expectedSampleCount: SCROLL_SAMPLE_COUNT,
+			workload,
+			scrollSamples: scroll.samples
+		});
+	}
+	const workbenchTableDiagnostics = rendered.diagnostics?.snapshot();
+	if (workbenchTableDiagnostics) {
+		validateWorkbenchTableDiagnosticSnapshot(workbenchTableDiagnostics, {
+			expectedSampleCount: SCROLL_SAMPLE_COUNT,
+			workload,
+			scrollSamples: scroll.samples
+		});
+	}
 	const documentViewport = {
 		clientWidth: documentElement.clientWidth,
 		clientHeight: documentElement.clientHeight,
@@ -1019,7 +1409,12 @@ async function main() {
 	    userAgent: navigator.userAgent, formatMs: formatted.formatMs, parseMs, renderMs,
 	    scroll, domNodes, fixtureBytes,
 		rendererImplementation: rendered.implementation,
-		diagnostics: diagnosticProfile ? { presentationFloor } : undefined,
+		diagnostics: diagnosticProfile ? {
+			presentationFloor,
+			measureNodeChurn: measureNodeChurn === 'false' ? false : true,
+			...(zeusDataGrid ? { zeusDataGrid } : {}),
+			...(workbenchTableDiagnostics ? { workbenchTable: workbenchTableDiagnostics } : {})
+		} : undefined,
     heapBytes: beforeHeap !== null && afterHeap !== null && afterHeap > beforeHeap ? afterHeap - beforeHeap : null,
 	    renderedRows,
 	    visualProbe: {
@@ -1045,12 +1440,58 @@ async function main() {
 	  };
 		  writeBenchmarkResult(result);
 	}
+	async function runJankTrace() {
+		const root = await prepareBenchmarkRoot();
+		const { rendered } = await renderBenchmarkGrid(root);
+		if (rendered.unavailable) {
+			throw new Error('Jank trace renderer is unavailable: ' + rendered.unavailable);
+		}
+		void root.offsetHeight;
+		await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
+		const collector = createJankTraceCollector({ frameMultiplier: SQL_RESULT_GRID_JANK_FRAME_MULTIPLIER });
+		const calibration = await collector.calibrate(SQL_RESULT_GRID_JANK_VSYNC_CALIBRATION_FRAMES);
+		const control = globalThis.__nyalaJankControl;
+		if (!control) throw new Error('Jank trace control channel is missing.');
+		control.vsyncMs = calibration.medianMs;
+		control.ready = true;
+		await waitForJankTraceFlag(control, 'begin', JANK_TRACE_CONTROL_TIMEOUT_MS);
+		const sampler = createScrollOffsetSampler(createTraceScrollOffsets(rendered));
+		const session = collector.begin();
+		control.running = true;
+		await waitForJankTraceFlag(control, 'stop', JANK_TRACE_CONTROL_TIMEOUT_MS);
+		sampler.stop();
+		const trace = {
+			...collector.end(session, calibration),
+			traceRunToken: runToken,
+			workloadId: jankTraceWorkloadId,
+			workload: { rows: rowCount, columns: columnCount },
+			inputPlan: control.inputPlan,
+			scrollOffsets: sampler.snapshot()
+		};
+		validateJankTraceSnapshot(trace, {
+			expectedWorkload: { id: jankTraceWorkloadId, rows: rowCount, columns: columnCount },
+			expectedTraceRunToken: runToken
+		});
+		writeBenchmarkResult({ status: 'ok', jankTrace: trace, domNodes: measureDomNodes() });
+	}
 	function formatBenchmarkError(error) {
 		const message = String(error && error.message || error);
 		const stack = String(error && error.stack || '');
 		return stack && !stack.includes(message) ? message + String.fromCharCode(10) + stack : stack || message;
 	}
-	const startBenchmark = () => main().catch(error => { writeBenchmarkResult({ status: 'error', error: formatBenchmarkError(error) }); });
+	if (jankTrace) {
+		globalThis.__nyalaJankControl = {
+			ready: false,
+			begin: false,
+			stop: false,
+			running: false,
+			inputPlan: null,
+			vsyncMs: null
+		};
+	}
+	const startBenchmark = () => (jankTrace ? runJankTrace() : main()).catch(error => {
+		writeBenchmarkResult({ status: 'error', error: formatBenchmarkError(error) });
+	});
 	if (params.get('deferStart') === 'true') {
 		globalThis.addEventListener('nyala-benchmark-start', startBenchmark, { once: true });
 	} else {
@@ -1070,9 +1511,12 @@ async function exists(filePath) {
 
 function formatRecord(record) {
 	if (record.status !== 'ok') {
-		return `${record.status}${record.reason ? ` (${record.reason})` : ''}`;
+		const detail = record.reason ?? record.error?.split(/\r?\n/, 1)[0];
+		return `${record.status}${detail ? ` (${detail})` : ''}`;
 	}
-	return `render=${record.renderMs.toFixed(2)}ms scroll-p95=${record.scroll.p95Ms.toFixed(2)}ms dom=${record.domNodes} heap=${record.heapBytes ?? 'n/a'}`;
+	const trace = record.diagnostics?.jankTrace;
+	const jankDetail = trace ? ` jank=${(trace.jankRate * 100).toFixed(1)}%` : '';
+	return `render=${record.renderMs.toFixed(2)}ms scroll-p95=${record.scroll.p95Ms.toFixed(2)}ms dom=${record.domNodes} heap=${record.heapBytes ?? 'n/a'}${jankDetail}`;
 }
 
 function summarize(records) {

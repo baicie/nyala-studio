@@ -86,10 +86,11 @@ const requiredZ1ProvenanceCheckIds = new Set([
 	'workbench-table-bundle-provenance'
 ]);
 const packageJson = JSON.parse(await readFile(resolve(repositoryRoot, 'package.json'), 'utf8'));
-const z1GateBytes = await readFile(z1GatePath);
-const z1Gate = JSON.parse(z1GateBytes.toString('utf8'));
-const z1GateSha256 = createHash('sha256').update(z1GateBytes).digest('hex');
-const a4Gate = JSON.parse(await readFile(a4GatePath, 'utf8'));
+const z1GateArtifact = await loadJsonEvidence(z1GatePath, 'Z1 gate artifact');
+const a4GateArtifact = await loadJsonEvidence(a4GatePath, 'A4 Checkpoint W gate artifact');
+const z1Gate = z1GateArtifact.value ?? {};
+const z1GateSha256 = z1GateArtifact.sha256;
+const a4Gate = a4GateArtifact.value ?? {};
 const z1Inputs = await loadZ1AttestationInputs();
 const a4Inputs = await loadCheckpointWInputs();
 const z1AttestationRun = verifyZ1AttestationRun(z1Inputs);
@@ -111,6 +112,18 @@ const a4GateIntegrity = validateCheckpointWGate(a4Gate, {
 const roadmap = await readFile(resolve(repositoryRoot, 'docs/sql-mvp-phases/mvp-vnext-agent-zeus-roadmap.md'), 'utf8');
 
 const checks = [
+	check(
+		'z1-gate-artifact',
+		!z1GateArtifact.error,
+		`Z1 gate artifact is readable JSON (${displayPath(z1GatePath)})`,
+		z1GateArtifact.error ?? 'Z1 gate artifact is not a readable JSON object'
+	),
+	check(
+		'a4-checkpoint-w-artifact',
+		!a4GateArtifact.error,
+		`A4 Checkpoint W gate artifact is readable JSON (${displayPath(a4GatePath)})`,
+		a4GateArtifact.error ?? 'A4 Checkpoint W gate artifact is not a readable JSON object'
+	),
 	check(
 		'release-source-revision',
 		/^[a-f0-9]{40}$/.test(expectedSourceRevision),

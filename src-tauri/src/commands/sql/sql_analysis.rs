@@ -463,6 +463,7 @@ mod tests {
             "WITH recent AS (SELECT * FROM orders",
             "SELECT 'unterminated",
             "SELECT 1 /* unterminated comment",
+            "SELECT [unterminated",
             "SELECT (1",
             "SELECT 1)",
             "WITH removed AS (DELETE FROM users RETURNING *) SELECT * FROM removed",

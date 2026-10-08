@@ -29,7 +29,8 @@ Source of truth for phase progress: **`docs/sql-mvp-phases/README.md`** and the 
 - MVP core loop (the 10-item Definition of Done) met on commit `60ab89c0`. Verification report: `docs/sql-mvp-phases/phase-do-d-verification.md`.
 - Phases 00–08 are implemented at P0 scope. Phase 08 native Demo and live MySQL Preview Validate were recorded complete on `mvp@1dca498f`.
 - The active MVP vNext route adds SQL Workspace Agent A0–A4 and a gated Zeus Data Grid Preview. Source of truth: `docs/sql-mvp-phases/mvp-vnext-agent-zeus-roadmap.md`.
-- Agent A0.1/A0.2, A1.1-A1.3, A2.1-A2.4, A3.1/A3.2, and A4.1/A4.2 are implemented; Checkpoint R is complete with automated and macOS native Generate/Fix/Explore evidence, while A4 Checkpoint W still needs native keyboard, Windows WebView2, and real VoiceOver/Narrator walkthroughs. A0.2 is a recorded parser No-Go, A1.2/A1.3 provide bounded schema/FK graph search and cache, A2.1-A2.4 provide the runtime domain, Rust policy, deterministic Suggest-only loop, and Workbench/Tauri bridge, A3.1/A3.2 provide SQLite read-only explain/execute plus bounded result shape/aggregate/sample policy, and A4.1/A4.2 provide stale-safe editor artifacts, Schema/Result actions, and the SQL Agent Panel. A2 remains Suggest Only with zero query calls; A3 requires an explicitly read-only SQLite connection and keeps rows out of default evidence. Zeus Z1.1/Z1.2 remain non-production audits/benchmarks; Z1.3 is `NO-GO` because the recorded performance thresholds fail and revision-bound macOS/Windows evidence plus a fresh bundle audit are missing. There is still no production Zeus dependency or renderer integration, and Z2 must not start.
+- Agent A0.1/A0.2, A1.1-A1.3, A2.1-A2.4, A3.1/A3.2, A4.1/A4.2, and the post-vNext A5 SQLite query-optimization slice are implemented; Checkpoint R is complete with automated and macOS native Generate/Fix/Explore evidence, while A4 Checkpoint W still needs native keyboard, Windows WebView2, and real VoiceOver/Narrator walkthroughs. A0.2 is a recorded parser No-Go, A1.2/A1.3 provide bounded schema/FK graph search and cache, A2.1-A2.4 provide the runtime domain, Rust policy, deterministic Suggest-only loop, and Workbench/Tauri bridge, A3.1/A3.2 provide SQLite read-only explain/execute plus bounded result shape/aggregate/sample policy, and A4.1/A4.2 provide stale-safe editor artifacts, Schema/Result actions, and the SQL Agent Panel. A2 remains Suggest Only with zero query calls; A3 requires an explicitly read-only SQLite connection and keeps rows out of default evidence. Zeus Z1.1/Z1.2 remain non-production audits/benchmarks; Z1.3 is `NO-GO` **solely** because five pre-registered measurement-contract v6 performance gates still fail — the revision-bound macOS WKWebView + Windows WebView2 evidence and the fresh structured bundle audit do exist (`9d68c91d`, workflow run `32706467306`). The v7 floor-aware re-registration in `docs/adr/0004-zeus-data-grid-v7-floor-aware-metrics.md` is still `Proposed` and is not admission evidence. There is still no production Zeus dependency or renderer integration, and Z2 must not start.
+- Nyala's side of ADR 0004 prerequisite 6 (symmetric WorkbenchTable CPU-interval sidecar plus `rendererCpuRatio`, `--diagnostic-profile true` only) landed on 2026-09-18: the `10k x 50` ratio reads `0.500` and the `1k x 20` single-run point estimates are `0.806` / `0.968`, while `required` still sits below the shared presentation floor, so the 20% gate stays unidentifiable. It is diagnostic evidence only: no gate status changes, no production dependency, and Z2 still must not start.
 - Recent cleanup: SCM provider unloaded (`09bf4b65`), AGENTS Phase 7 dropped (`0306f70f`), AGENTS reorganized (`a0d56767`).
 
 **Never claim a phase is met from this file alone — open `docs/sql-mvp-phases/README.md` and the matching phase doc first.**
@@ -253,7 +254,8 @@ pnpm run rust:check    # cargo check
 pnpm run rust:clippy   # cargo clippy --all-targets -- -D warnings
 pnpm run rust:fmt      # cargo fmt --all -- --check
 pnpm run rust:fmt:fix  # auto-fix
-pnpm run test          # full chain: branding + runtime-status + rust + 8 frontend suites
+pnpm run test          # full chain, 28 steps: release/workflow/branding/icons/seed scripts,
+                       # runtime status, Rust, Agent + Zeus gate suites, 8 frontend suites
 pnpm run test:rust     # cargo test --lib
 pnpm run test:branding
 pnpm run test:sql-runtime-status
@@ -266,6 +268,19 @@ pnpm run test:sql-result
 pnpm run test:sql-history
 pnpm run test:sql-product
 pnpm run test:sql-advanced
+pnpm run test:sql-agent                   # Rust agent suites + capability guards
+pnpm run test:sql-result-grid-benchmark   # Zeus/WorkbenchTable deterministic benchmark
+pnpm run test:sql-result-grid-webdriver
+pnpm run test:sql-result-grid-visual
+pnpm run test:sql-result-grid-zeus-audit
+pnpm run test:sql-result-grid-platform-evidence
+pnpm run test:sql-result-grid-gate        # Z1 gate verifier (fail-closed, still NO-GO)
+pnpm run test:sql-result-grid-attestation
+pnpm run test:sql-agent-workbench-visual
+pnpm run test:sql-agent-checkpoint-w      # A4 Checkpoint W gate verifier
+pnpm run test:sql-mvp-vnext-release       # R0 release verifier (fail-closed, still NO-GO)
+pnpm run test:search
+pnpm run test:preferences
 pnpm run test:mysql-integration   # ignored by default; opt in
 ```
 
@@ -426,4 +441,4 @@ The 10-item Core MVP gate was met on commit `60ab89c0`. Verification report: `do
 9. `pnpm run rust:check` is clean.
 10. `pnpm run test` passes end to end (branding, runtime status, Rust + 8 frontend suites).
 
-This list is **read-only** and a historical anchor only. Core phase evidence remains in the matching phase doc; all new Agent/Zeus work is checked against `docs/sql-mvp-phases/mvp-vnext-agent-zeus-roadmap.md`.
+This list is **read-only** and a historical anchor only. Core phase evidence remains in the matching phase doc; all new Agent/Zeus work is checked against `docs/sql-mvp-phases/mvp-vnext-agent-zeus-roadmap.md`. Item 10 records the chain as it stood at `60ab89c0`; the current chain is the 28-step list under **Testing & Verification**.

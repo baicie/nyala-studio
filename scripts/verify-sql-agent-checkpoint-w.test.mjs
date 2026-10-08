@@ -22,6 +22,14 @@ test('Checkpoint W becomes GO only with two native surfaces and complete manual 
 		assert.equal(report.decision, 'GO');
 		assert.equal(report.sourceRevision, sourceRevision);
 		assert.ok(report.checks.every(check => check.passed));
+		assert.deepEqual(report.evidence.macos.frontendSource, {
+			kind: 'tauri-asset-protocol',
+			url: 'tauri://localhost'
+		});
+		assert.deepEqual(report.evidence.windows.frontendSource, {
+			kind: 'tauri-asset-protocol',
+			url: 'https://tauri.localhost/'
+		});
 		assert.deepEqual(report.evidence.manual.gateEvidence, {
 			macosKeyboard: 'qa://checkpoint-w/macos-keyboard',
 			voiceOver: 'qa://checkpoint-w/voiceover',
@@ -51,6 +59,209 @@ test('Checkpoint W rejects a forged Windows WebView2 identity', async () => {
 		assert.equal(report.decision, 'NO-GO');
 		assert.equal(report.checks.find(check => check.id === 'windows-native-identity')?.passed, false);
 	});
+});
+
+test('Checkpoint W rejects legacy loopback frontend evidence', async () => {
+	await withEvidence(async paths => {
+		const macos = createPlatformEvidence('macos');
+		macos.frontendSource = { kind: 'local-dist-server', url: 'http://127.0.0.1:54322/' };
+		await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+		await assert.rejects(runVerifier(paths));
+		const report = JSON.parse(await readFile(paths.output, 'utf8'));
+		assert.match(report.checks.find(check => check.id === 'macos-native-identity')?.reason ?? '', /asset protocol/);
+	});
+});
+
+test('Checkpoint W independently rejects forged and cross-platform asset frontend URLs', async () => {
+	for (const frontendSource of [
+		{ kind: 'tauri-asset-protocol', url: 'http://127.0.0.1:54322/' },
+		{ kind: 'tauri-asset-protocol', url: 'https://tauri.localhost/' },
+		{ kind: 'tauri-asset-protocol', url: 'tauri://localhost?capture=forged' },
+		{ kind: 'tauri-asset-protocol', url: 'tauri://localhost/' }
+	]) {
+		await withEvidence(async paths => {
+			const macos = createPlatformEvidence('macos');
+			macos.frontendSource = frontendSource;
+			await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+			await assert.rejects(runVerifier(paths));
+			const report = JSON.parse(await readFile(paths.output, 'utf8'));
+			assert.match(
+				report.checks.find(check => check.id === 'macos-native-identity')?.reason ?? '',
+				/asset protocol frontend URL/
+			);
+		});
+	}
+});
+
+test('Checkpoint W rejects canonicalized variants of the Windows asset root', async () => {
+	for (const url of ['https://tauri.localhost', 'https://tauri.localhost:443/']) {
+		await withEvidence(async paths => {
+			const windows = createPlatformEvidence('windows');
+			windows.frontendSource.url = url;
+			await writeFile(paths.windows, `${JSON.stringify(windows, null, 2)}\n`, 'utf8');
+
+			await assert.rejects(runVerifier(paths));
+			const report = JSON.parse(await readFile(paths.output, 'utf8'));
+			assert.match(
+				report.checks.find(check => check.id === 'windows-native-identity')?.reason ?? '',
+				/asset protocol frontend URL/
+			);
+		});
+	}
+});
+
+test('Checkpoint W requires the SQL Product bootstrap completion contract', async () => {
+	await withEvidence(async paths => {
+		const macos = createPlatformEvidence('macos');
+		delete macos.sqlProductBootstrap;
+		await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+		await assert.rejects(runVerifier(paths));
+		const report = JSON.parse(await readFile(paths.output, 'utf8'));
+		assert.match(report.checks.find(check => check.id === 'macos-native-identity')?.reason ?? '', /bootstrap/);
+	});
+});
+
+test('Checkpoint W accepts every exact SQL Product bootstrap success sequence', async () => {
+	for (const sqlProductBootstrap of [
+		{ version: 1, status: 'succeeded', mode: 'restore', completedCommands: ['bootstrapDemo'] },
+		{ version: 1, status: 'succeeded', mode: 'onboarding', completedCommands: ['bootstrapDemo'] },
+		{
+			version: 1,
+			status: 'succeeded',
+			mode: 'onboarding',
+			completedCommands: ['bootstrapDemo', 'focusConnections', 'openResults']
+		},
+		{
+			version: 1,
+			status: 'succeeded',
+			mode: 'onboarding',
+			completedCommands: ['bootstrapDemo', 'focusWelcome', 'newQuery']
+		},
+		{
+			version: 1,
+			status: 'succeeded',
+			mode: 'onboarding',
+			completedCommands: ['bootstrapDemo', 'focusConnections', 'openResults', 'focusWelcome', 'newQuery']
+		}
+	]) {
+		await withEvidence(async paths => {
+			const macos = createPlatformEvidence('macos');
+			macos.sqlProductBootstrap = sqlProductBootstrap;
+			await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+			await runVerifier(paths);
+			const report = JSON.parse(await readFile(paths.output, 'utf8'));
+			assert.equal(report.decision, 'GO');
+			assert.deepEqual(report.evidence.macos.sqlProductBootstrap, sqlProductBootstrap);
+		});
+	}
+});
+
+test('Checkpoint W rejects failed, disposed, malformed, or mode-mismatched SQL Product bootstrap outcomes', async () => {
+	for (const sqlProductBootstrap of [
+		{
+			version: 1,
+			status: 'failed',
+			mode: 'onboarding',
+			completedCommands: [],
+			failedStep: 'bootstrapDemo',
+			errorCode: 'startup-command-failed'
+		},
+		{ version: 1, status: 'disposed', mode: 'restore', completedCommands: [] },
+		{ version: 2, status: 'succeeded', mode: 'restore', completedCommands: ['bootstrapDemo'] },
+		{ version: 1, status: 'succeeded', mode: 'preview', completedCommands: ['bootstrapDemo'] },
+		{ version: 1, status: 'succeeded', mode: 'restore', completedCommands: 'bootstrapDemo' },
+		{ version: 1, status: 'succeeded', mode: 'restore', completedCommands: ['newQuery'] },
+		{
+			version: 1,
+			status: 'succeeded',
+			mode: 'restore',
+			completedCommands: ['bootstrapDemo', 'focusWelcome', 'newQuery']
+		},
+		{
+			version: 1,
+			status: 'succeeded',
+			mode: 'onboarding',
+			completedCommands: ['bootstrapDemo', 'newQuery', 'focusWelcome']
+		},
+		{
+			version: 1,
+			status: 'succeeded',
+			mode: 'onboarding',
+			completedCommands: ['bootstrapDemo', 'unknownCommand']
+		},
+		{
+			version: 1,
+			status: 'succeeded',
+			mode: 'restore',
+			completedCommands: ['bootstrapDemo'],
+			unexpected: 'private /Users/example/demo.db?token=secret'
+		}
+	]) {
+		await withEvidence(async paths => {
+			const macos = createPlatformEvidence('macos');
+			macos.sqlProductBootstrap = sqlProductBootstrap;
+			await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+			await assert.rejects(runVerifier(paths));
+			const reportText = await readFile(paths.output, 'utf8');
+			const report = JSON.parse(reportText);
+			assert.match(report.checks.find(check => check.id === 'macos-native-identity')?.reason ?? '', /bootstrap/i);
+			assert.doesNotMatch(reportText, /private|Users|demo\.db|token=secret/);
+		});
+	}
+});
+
+test('Checkpoint W report preserves only safe bootstrap prepare-failure fields', async () => {
+	await withEvidence(async paths => {
+		const macos = createPlatformEvidence('macos');
+		macos.sqlProductBootstrap = {
+			version: 1,
+			status: 'failed',
+			mode: 'onboarding',
+			completedCommands: [],
+			failedStep: 'prepare',
+			errorCode: 'startup-prepare-failed',
+			rawError: 'private /Users/example/demo.db?token=secret'
+		};
+		await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+		await assert.rejects(runVerifier(paths));
+		const reportText = await readFile(paths.output, 'utf8');
+		const report = JSON.parse(reportText);
+		assert.deepEqual(report.evidence.macos.sqlProductBootstrap, {
+			version: 1,
+			status: 'failed',
+			mode: 'onboarding',
+			completedCommands: [],
+			failedStep: 'prepare',
+			errorCode: 'startup-prepare-failed'
+		});
+		assert.doesNotMatch(reportText, /private|Users|demo\.db|token=secret/);
+	});
+});
+
+test('Checkpoint W rejects missing or changed viewport document bindings', async () => {
+	for (const mutate of [
+		artifact => delete artifact.documentBinding,
+		artifact => (artifact.documentBinding.beforeSnapshot.frontendSource.url = 'https://example.test/?token=secret'),
+		artifact => (artifact.documentBinding.afterScreenshot.runNonceSha256 = 'f'.repeat(64))
+	]) {
+		await withEvidence(async paths => {
+			const macos = createPlatformEvidence('macos');
+			mutate(macos.artifacts[0]);
+			await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+			await assert.rejects(runVerifier(paths));
+			const report = JSON.parse(await readFile(paths.output, 'utf8'));
+			const reason = report.checks.find(check => check.id === 'macos-automated-surface')?.reason ?? '';
+			assert.match(reason, /document binding|asset protocol|nonce/i);
+			assert.doesNotMatch(reason, /token=secret/);
+		});
+	}
 });
 
 test('Checkpoint W rejects non-keyboard automated failures', async () => {
@@ -104,6 +315,31 @@ test('Checkpoint W rejects manual evidence from a different workflow run', async
 		assert.equal(report.checks.find(check => check.id === 'provenance-match')?.passed, false);
 		assert.match(report.checks.find(check => check.id === 'provenance-match')?.reason ?? '', /workflowRunId/);
 	});
+});
+
+test('Checkpoint W rejects a capture artifact whose archive download URL was rewritten or dropped', async () => {
+	for (const archiveUrl of [
+		'https://api.github.com/repos/attacker/nyala-studio/actions/artifacts/111/zip',
+		'https://api.github.com/repos/baicie/nyala-studio/actions/artifacts/222/zip',
+		'https://api.github.com/repos/baicie/nyala-studio/actions/artifacts/111/zip?forged=1',
+		undefined
+	]) {
+		await withEvidence(async paths => {
+			const captureRun = createCaptureRunMetadata();
+			if (archiveUrl === undefined) delete captureRun.artifacts[0].archiveUrl;
+			else captureRun.artifacts[0].archiveUrl = archiveUrl;
+			await writeFile(paths.captureRun, `${JSON.stringify(captureRun, null, 2)}\n`, 'utf8');
+
+			await assert.rejects(runVerifier(paths));
+			const report = JSON.parse(await readFile(paths.output, 'utf8'));
+			assert.equal(report.decision, 'NO-GO');
+			assert.equal(report.checks.find(check => check.id === 'capture-run-metadata')?.passed, false);
+			assert.match(
+				report.checks.find(check => check.id === 'capture-run-metadata')?.reason ?? '',
+				/archive download URL/i
+			);
+		});
+	}
 });
 
 test('Checkpoint W requires attestation to occur in a later workflow run', async () => {
@@ -217,6 +453,137 @@ test('Checkpoint W requires snapshot evidence that Start is enabled and Cancel i
 		const reason = report.checks.find(check => check.id === 'macos-automated-surface')?.reason ?? '';
 		assert.match(reason, /Start Agent run.*explicitly enabled/);
 		assert.match(reason, /Cancel Agent run.*explicitly disabled/);
+	});
+});
+
+test('Checkpoint W rejects a snapshot control that overlaps the statusbar', async () => {
+	await withEvidence(async paths => {
+		const macos = createPlatformEvidence('macos');
+		const snapshot = macos.artifacts[0].snapshot;
+		snapshot.statusBar = {
+			visible: true,
+			rect: { left: 0, top: 20, right: 1440, bottom: 40, width: 1440, height: 20 }
+		};
+		await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+		await assert.rejects(runVerifier(paths));
+		const report = JSON.parse(await readFile(paths.output, 'utf8'));
+		assert.match(report.checks.find(check => check.id === 'macos-automated-surface')?.reason ?? '', /statusbar/);
+	});
+});
+
+test('Checkpoint W rejects an Agent root that overlaps the statusbar', async () => {
+	await withEvidence(async paths => {
+		const macos = createPlatformEvidence('macos');
+		const snapshot = macos.artifacts[0].snapshot;
+		snapshot.agentRoot.rect = {
+			left: 0,
+			top: 0,
+			right: 1440,
+			bottom: 890,
+			width: 1440,
+			height: 890
+		};
+		await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+		await assert.rejects(runVerifier(paths));
+		const report = JSON.parse(await readFile(paths.output, 'utf8'));
+		assert.match(
+			report.checks.find(check => check.id === 'macos-automated-surface')?.reason ?? '',
+			/Agent root snapshot overlaps the statusbar/
+		);
+	});
+});
+
+test('Checkpoint W rejects a snapshot without statusbar geometry', async () => {
+	await withEvidence(async paths => {
+		const macos = createPlatformEvidence('macos');
+		delete macos.artifacts[0].snapshot.statusBar;
+		await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+		await assert.rejects(runVerifier(paths));
+		const report = JSON.parse(await readFile(paths.output, 'utf8'));
+		assert.match(
+			report.checks.find(check => check.id === 'macos-automated-surface')?.reason ?? '',
+			/statusbar snapshot/
+		);
+	});
+});
+
+test('Checkpoint W rejects statusbar geometry outside the viewport', async () => {
+	await withEvidence(async paths => {
+		const macos = createPlatformEvidence('macos');
+		const snapshot = macos.artifacts[0].snapshot;
+		snapshot.statusBar.rect = {
+			left: 0,
+			top: 900,
+			right: 1440,
+			bottom: 924,
+			width: 1440,
+			height: 24
+		};
+		await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+		await assert.rejects(runVerifier(paths));
+		const report = JSON.parse(await readFile(paths.output, 'utf8'));
+		assert.match(
+			report.checks.find(check => check.id === 'macos-automated-surface')?.reason ?? '',
+			/statusbar snapshot is outside the viewport/
+		);
+	});
+});
+
+test('Checkpoint W rejects a snapshot without notification overlay geometry', async () => {
+	await withEvidence(async paths => {
+		const macos = createPlatformEvidence('macos');
+		delete macos.artifacts[0].snapshot.notificationOverlays;
+		await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+		await assert.rejects(runVerifier(paths));
+		const report = JSON.parse(await readFile(paths.output, 'utf8'));
+		assert.match(
+			report.checks.find(check => check.id === 'macos-automated-surface')?.reason ?? '',
+			/notification overlay snapshot is missing/
+		);
+	});
+});
+
+test('Checkpoint W independently rejects a warning toast that occludes the Agent surface', async () => {
+	await withEvidence(async paths => {
+		const macos = createPlatformEvidence('macos');
+		macos.artifacts[0].snapshot.notificationOverlays.push({
+			kind: 'toast',
+			severity: 'warning',
+			visible: true,
+			rect: { left: 10, top: 10, right: 110, bottom: 50, width: 100, height: 40 }
+		});
+		await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+		await assert.rejects(runVerifier(paths));
+		const report = JSON.parse(await readFile(paths.output, 'utf8'));
+		const reason = report.checks.find(check => check.id === 'macos-automated-surface')?.reason ?? '';
+		assert.match(reason, /notification toast overlaps the Agent root/);
+		assert.match(reason, /notification toast overlaps Start Agent run/);
+	});
+});
+
+test('Checkpoint W independently rejects a visible error notification outside the Agent surface', async () => {
+	await withEvidence(async paths => {
+		const macos = createPlatformEvidence('macos');
+		macos.artifacts[0].snapshot.notificationOverlays.push({
+			kind: 'toast',
+			severity: 'error',
+			visible: true,
+			rect: { left: 1200, top: 100, right: 1400, bottom: 200, width: 200, height: 100 }
+		});
+		await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+		await assert.rejects(runVerifier(paths));
+		const report = JSON.parse(await readFile(paths.output, 'utf8'));
+		assert.match(
+			report.checks.find(check => check.id === 'macos-automated-surface')?.reason ?? '',
+			/visible error notification toast/
+		);
 	});
 });
 
@@ -417,6 +784,7 @@ function createCaptureRunMetadata() {
 				name: 'sql-agent-native-macos',
 				bytes: 4096,
 				digest: 'd'.repeat(64),
+				archiveUrl: 'https://api.github.com/repos/baicie/nyala-studio/actions/artifacts/111/zip',
 				createdAt: '2026-08-16T01:30:00.000Z',
 				updatedAt: '2026-08-16T01:31:00.000Z'
 			},
@@ -425,6 +793,7 @@ function createCaptureRunMetadata() {
 				name: 'sql-agent-native-windows',
 				bytes: 4096,
 				digest: 'e'.repeat(64),
+				archiveUrl: 'https://api.github.com/repos/baicie/nyala-studio/actions/artifacts/222/zip',
 				createdAt: '2026-08-16T01:30:00.000Z',
 				updatedAt: '2026-08-16T01:31:00.000Z'
 			}
@@ -461,9 +830,19 @@ function createPlatformEvidence(platform) {
 		webdriverOwnership: {
 			driverUrl: 'http://127.0.0.1:54321',
 			portSource: 'os-assigned',
-			runNonceVerified: true
+			runNonceVerified: true,
+			runNonceSha256: '9'.repeat(64)
 		},
-		frontendSource: { kind: 'local-dist-server', url: 'http://127.0.0.1:54322/' },
+		sqlProductBootstrap: {
+			version: 1,
+			status: 'succeeded',
+			mode: 'onboarding',
+			completedCommands: ['bootstrapDemo', 'focusConnections', 'openResults', 'focusWelcome', 'newQuery']
+		},
+		frontendSource: {
+			kind: 'tauri-asset-protocol',
+			url: windows ? 'https://tauri.localhost/' : 'tauri://localhost'
+		},
 		manualGates: {
 			nativeKeyboard: 'pending',
 			screenReader: 'pending'
@@ -500,6 +879,22 @@ function createViewportArtifact(platform, id, width, height) {
 		viewport: { id, width, height, devicePixelRatio: 1 },
 		status: 'ready',
 		automatedSurfaceStatus: 'ready',
+		documentBinding: {
+			beforeSnapshot: {
+				frontendSource: {
+					kind: 'tauri-asset-protocol',
+					url: platform === 'windows' ? 'https://tauri.localhost/' : 'tauri://localhost'
+				},
+				runNonceSha256: '9'.repeat(64)
+			},
+			afterScreenshot: {
+				frontendSource: {
+					kind: 'tauri-asset-protocol',
+					url: platform === 'windows' ? 'https://tauri.localhost/' : 'tauri://localhost'
+				},
+				runNonceSha256: '9'.repeat(64)
+			}
+		},
 		screenshot: `sql-agent-${platform}-${id}.png`,
 		screenshotBytes: screenshotBytes(platform, id).byteLength,
 		screenshotSha256: createHash('sha256').update(screenshotBytes(platform, id)).digest('hex'),
@@ -510,6 +905,11 @@ function createViewportArtifact(platform, id, width, height) {
 			devicePixelRatio: 1,
 			primarySidebarVisible: id !== 'narrow',
 			agentRoot: { visible: true, rect },
+			statusBar: {
+				visible: true,
+				rect: { left: 0, top: height - 24, right: width, bottom: height, width, height: 24 }
+			},
+			notificationOverlays: [],
 			ariaLabels: [
 				'Agent prompt',
 				'Agent task',
@@ -531,6 +931,9 @@ function createViewportArtifact(platform, id, width, height) {
 		},
 		checks: [
 			{ id: 'workbench-ready', passed: true, scope: 'automated', reason: 'ready' },
+			{ id: 'statusbar-bounds', passed: true, scope: 'automated', reason: 'bounded' },
+			{ id: 'notification-overlay-bounds', passed: true, scope: 'automated', reason: 'bounded' },
+			{ id: 'no-visible-error-notifications', passed: true, scope: 'automated', reason: 'absent' },
 			...(id === 'narrow'
 				? [{ id: 'narrow-focused-layout', passed: true, scope: 'automated', reason: 'focused' }]
 				: []),
