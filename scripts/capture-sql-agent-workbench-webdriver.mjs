@@ -10,7 +10,6 @@ import {
 	convergeWindowRectForCssViewport,
 	createWebdriverRunNonce,
 	createEmbeddedWebdriverSession,
-	dimensionsWithinTolerance,
 	identifyEmbeddedWebview,
 	launchTauriEmbeddedWebdriver,
 	resolveLoopbackDriverEndpoint,
@@ -682,7 +681,7 @@ export async function executeWorkbenchCommandAndWait(
 }
 
 export function validateRequestedViewport(requested, actual, calibration) {
-	const dimensionsMatch = dimensionsWithinTolerance(requested, actual, viewportCalibrationTolerance);
+	const dimensionsMatch = requested?.width === actual?.width && requested?.height === actual?.height;
 	const viewportConverged = calibration?.viewportConverged === true;
 	return {
 		id: 'requested-viewport',
@@ -693,7 +692,10 @@ export function validateRequestedViewport(requested, actual, calibration) {
 
 export function initialWindowRectForNativeViewport(platform, viewport) {
 	if (platform === 'windows' && viewport?.id === 'narrow') {
-		return { width: Math.max(1, viewport.width - 1), height: viewport.height };
+		// WebView2's Windows frame was observed to add a 16px horizontal and 8px
+		// vertical inset in the hosted runner. Start at the corresponding outer rect
+		// so calibration can record the exact requested CSS viewport.
+		return { width: viewport.width + 16, height: viewport.height + 8 };
 	}
 	return { width: viewport.width, height: viewport.height };
 }
