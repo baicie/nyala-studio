@@ -54,7 +54,11 @@ export function createAgentWorkbenchSnapshotExpression() {
       return { visible: visible(element), rect: rect(element) };
     })(),
     agentRoot: { visible: visible(root), rect: rect(root) },
-    statusElement: { visible: visible(statusElement), rect: rect(statusElement) },
+    statusElement: {
+      visible: visible(statusElement),
+      rect: rect(statusElement),
+      contentFits: Boolean(statusElement && statusElement.scrollWidth <= statusElement.clientWidth && statusElement.scrollHeight <= statusElement.clientHeight)
+    },
     notificationOverlays,
     ariaLabels: [...document.querySelectorAll('.sql-agent-view [aria-label]')].map(element => element.getAttribute('aria-label')),
     controls,
@@ -123,6 +127,13 @@ export function validateAgentWorkbenchSnapshot(snapshot, viewport, tabOrder) {
 				clearsStatusBarRectWithTolerance(statusElementRect, statusBarRect) &&
 				clearsNotificationOverlays(statusElementRect, notificationOverlays),
 			`${formatRect(statusElementRect)} in ${viewport.width}x${viewport.height}; clear of statusbar and notification overlays`
+		)
+	);
+	checks.push(
+		check(
+			'status-element-content-fit',
+			snapshot.statusElement?.contentFits === true,
+			'Agent status text fits without overflow'
 		)
 	);
 	const agentRootRect = snapshot.agentRoot?.rect;

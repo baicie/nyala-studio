@@ -550,6 +550,9 @@ function validateSnapshot(snapshot, expectedViewport, reasons) {
 	if (snapshot.statusElement?.visible !== true || !isPositiveRect(statusElementRect)) {
 		reasons.push(`${prefix} Agent status snapshot is not visible and bounded`);
 	}
+	if (snapshot.statusElement?.contentFits !== true) {
+		reasons.push(`${prefix} Agent status text overflows its visible area`);
+	}
 	const statusBarRect = snapshot.statusBar?.rect;
 	if (snapshot.statusBar?.visible !== true || !isPositiveRect(statusBarRect)) {
 		reasons.push(`${prefix} statusbar snapshot is missing, hidden, or unbounded`);

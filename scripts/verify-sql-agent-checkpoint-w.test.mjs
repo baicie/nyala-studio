@@ -530,6 +530,21 @@ test('Checkpoint W rejects Agent status text hidden by the statusbar', async () 
 	});
 });
 
+test('Checkpoint W rejects Agent status text that overflows its visible area', async () => {
+	await withEvidence(async paths => {
+		const macos = createPlatformEvidence('macos');
+		macos.artifacts[0].snapshot.statusElement.contentFits = false;
+		await writeFile(paths.macos, `${JSON.stringify(macos, null, 2)}\n`, 'utf8');
+
+		await assert.rejects(runVerifier(paths));
+		const report = JSON.parse(await readFile(paths.output, 'utf8'));
+		assert.match(
+			report.checks.find(check => check.id === 'macos-automated-surface')?.reason ?? '',
+			/Agent status text overflows/
+		);
+	});
+});
+
 test('Checkpoint W rejects a snapshot without statusbar geometry', async () => {
 	await withEvidence(async paths => {
 		const macos = createPlatformEvidence('macos');
@@ -942,7 +957,8 @@ function createViewportArtifact(platform, id, width, height) {
 			agentRoot: { visible: true, rect },
 			statusElement: {
 				visible: true,
-				rect: { left: 10, top: height - 42, right: 110, bottom: height - 24, width: 100, height: 18 }
+				rect: { left: 10, top: height - 42, right: 110, bottom: height - 24, width: 100, height: 18 },
+				contentFits: true
 			},
 			statusBar: {
 				visible: true,

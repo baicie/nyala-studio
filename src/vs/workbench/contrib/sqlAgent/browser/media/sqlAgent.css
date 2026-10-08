@@ -76,6 +76,7 @@
 	min-height: 14px;
 	font-size: 12px;
 	line-height: 14px;
+	overflow-wrap: anywhere;
 	color: var(--vscode-descriptionForeground);
 }
 

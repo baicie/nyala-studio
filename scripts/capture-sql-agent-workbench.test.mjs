@@ -67,6 +67,13 @@ test('SQL Agent Workbench contract requires the status text to remain visible ab
 	assert.equal(checks.find(check => check.id === 'status-element-bounds')?.passed, false);
 });
 
+test('SQL Agent Workbench contract rejects status text that overflows its visible area', () => {
+	const snapshot = createSnapshot();
+	snapshot.statusElement.contentFits = false;
+	const checks = validateAgentWorkbenchSnapshot(snapshot, viewport, expectedAgentTabOrder);
+	assert.equal(checks.find(check => check.id === 'status-element-content-fit')?.passed, false);
+});
+
 test('SQL Agent Workbench contract requires visible statusbar geometry', () => {
 	const snapshot = createSnapshot();
 	delete snapshot.statusBar;
@@ -98,7 +105,13 @@ test('SQL Agent Workbench snapshot records visible notification overlays without
 					['.monaco-workbench .part.statusbar', statusBar],
 					[
 						'.sql-agent-status',
-						Object.assign(createElement(rect(0, 792, 390, 18), ['sql-agent-status']), { textContent: 'Ready.' })
+						Object.assign(createElement(rect(0, 792, 390, 18), ['sql-agent-status']), {
+							textContent: 'Ready.',
+							clientWidth: 390,
+							scrollWidth: 390,
+							clientHeight: 18,
+							scrollHeight: 18
+						})
 					]
 				]).get(selector),
 			querySelectorAll: selector => {
@@ -218,7 +231,7 @@ function createSnapshot() {
 		primarySidebarVisible: false,
 		statusBar: { visible: true, rect: rect(0, 820, 390, 24) },
 		agentRoot: { visible: true, rect: rect(0, 500, 390, 310) },
-		statusElement: { visible: true, rect: rect(8, 792, 180, 18) },
+		statusElement: { visible: true, rect: rect(8, 792, 180, 18), contentFits: true },
 		notificationOverlays: [],
 		ariaLabels: [...requiredAgentAriaLabels],
 		controls: labels.map((ariaLabel, index) => ({
