@@ -6,7 +6,7 @@
 
 本文只回答一个问题：**要把 Z1 的跨平台证据重新变成可下载、可复算、可绑定的证据，需要按什么顺序做什么。**
 
-2026-10-09 更新：Zeus core `0.1.1-beta.3` 与 zeus-ui `0.1.0-beta.5` 已发布并完成 registry 核验。Nyala 已将 platform workflow 和审计契约更新到 data-grid beta.5；beta.5 的实际 peer/dependency 闭包仍是 Zeus core beta.2，因此本次发布不会被记录为 core beta.3 已接入。新的双 WebView 证据尚未采集，Z1.3 仍为 `NO-GO`。
+2026-10-09 更新：Zeus core `0.1.1-beta.3` 与 zeus-ui `0.1.0-beta.5` 已发布并完成 registry 核验。Nyala 已将 platform workflow 和审计契约更新到 data-grid beta.5；beta.5 的实际 peer/dependency 闭包仍是 Zeus core beta.2，因此本次发布不会被记录为 core beta.3 已接入。合并后的 `mvp` 已完成新一轮双 WebView 采集（run `37937953442`），证据完整但 Z1.3 仍为 `NO-GO`：Chromium 10k x 50 为 `-27.1%`，macOS 1k x 20 回归 `18.8%`。
 它不是新的验收报告，也不能把任何失败门改写成通过。
 
 ## 0. 需要授权的三项（当前只阻塞在这里）
@@ -47,7 +47,7 @@ protection rule）——属于可选加固，不阻塞任何路径。
 | 最后一次平台 run `32706467306`：`head_branch = codex/feat-sql-agent-schema-adapter`、`head_sha = 9d68c91d`、attempt `1`、2026-08-24；prepare / macOS / Windows 三个 job 成功，aggregate 按设计在 Z1 verifier 处 exit 1      | `gh run view 32706467306 --json ...`、job `97372057070` 日志末行 `NO-GO: .../phase-z1-gate.json`                                   |
 | 该 run 的 4 个 artifacts 全部 `expired: true`（audit 7 天、其余 14 天）→ **当前没有任何可下载复核的 revision-bound 证据**                                                                                                   | `gh api repos/baicie/nyala-studio/actions/runs/32706467306/artifacts`                                                              |
 | GitHub environments `total_count = 0`；按 §0.1 这**不阻塞**，首次 dispatch 会自动创建同名 environment                                                                                                                       | `gh api repos/baicie/nyala-studio/environments`、`gh api .../actions/workflows/<id>/runs`（runs 均为 0）                           |
-| Nyala 已 pin `@zeus-web/data-grid@0.1.0-beta.5`；其 npm `beta` 已指向 beta.5，但发布包仍 exact 依赖/peer Zeus core beta.2；新平台证据尚未产生                                                                               | `pnpm view @zeus-web/data-grid@0.1.0-beta.5 ...`、workflow 第 70-71 行、`docs/reviews/2026-10-09-zeus-beta-release-integration.md` |
+| Nyala 已 pin `@zeus-web/data-grid@0.1.0-beta.5`；其 npm `beta` 已指向 beta.5，但发布包仍 exact 依赖/peer Zeus core beta.2；run `37937953442` 已生成未过期的双 WebView artifacts                                             | `pnpm view @zeus-web/data-grid@0.1.0-beta.5 ...`、workflow 第 70-71 行、`docs/reviews/2026-10-09-zeus-beta-release-integration.md` |
 | zeus-ui `v0.1.0-beta.5` 已发布，tag/main 为 `52baa1e18ca11671de48bd24c7b1983b7413a516`；npm provenance/signatures 与 36 包发布校验通过                                                                                      | zeus-ui CI/Release/Publish runs、npm tarball/integrity 核验                                                                        |
 
 结论：Z1 的问题不是「缺一个 workflow」，而是两件事叠加——**证据过期**，以及**预先注册的 v6 阈值在 1/60s 地板上不可辨识**。两者分别对应下面的路径 A 与路径 B。

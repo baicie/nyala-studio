@@ -35,9 +35,27 @@ The following suites pass after the pin update:
 - `pnpm run test:sql-result-grid-gate` (19/19)
 - `pnpm run test:sql-mvp-vnext-release` (35/35)
 
-No new macOS WKWebView or Windows WebView2 benchmark has been collected from
-this revision. Z1.3 remains `NO-GO`; A4 Checkpoint W still lacks the four real
-manual accessibility/keyboard walkthroughs, and Z2/R0 must remain blocked.
+Before the post-merge run below, no new macOS WKWebView or Windows WebView2
+benchmark had been collected from this revision. Z1.3 remains `NO-GO`; A4
+Checkpoint W still lacks the four real manual accessibility/keyboard
+walkthroughs, and Z2/R0 must remain blocked.
+
+### Platform run `37937953442`
+
+The first post-merge run was dispatched from `mvp` at revision
+`bf0040a4c2f694cb093d22c31588eb82b382db4a` with `repeat=5`. Both native jobs
+completed successfully and all four artifacts were uploaded without expiry:
+
+- Windows WebView2 artifact digest: `sha256:d24037273f5d51a9dad155d204de1e13aad3245192309830ae1978ba1e24e07f`
+- macOS WKWebView artifact digest: `sha256:9f4f0f73f3346bfea952ee32b47f5a2f02b226e7259c2242f3c13fdcd21dc11e`
+- aggregate gate artifact digest: `sha256:da21530f64b0cbfec456cb65ea5696dc070ed82ba6a422cadf2edf861fe2fb0e`
+- Zeus audit artifact digest: `sha256:1f52db605ee49ebf7645647e17e3a91e9e582080f35cd1679e4d591a28aee384`
+
+The aggregate gate was `NO-GO` for two measured reasons: the Chromium 10k x 50
+Zeus p95 was 26.3 ms versus a 20.7 ms WorkbenchTable baseline (`-27.1%`), and
+macOS 1k x 20 was 38 ms versus a 32 ms baseline (`18.8%` regression, above the
+10% limit). Chromium 1k x 20 passed at `5.2%` regression. The run therefore
+refreshes the evidence but does not change the Z1 decision.
 
 ## Follow-up
 
