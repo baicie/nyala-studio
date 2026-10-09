@@ -47,8 +47,8 @@ const expectedZeusPackage = {
 	name: '@zeus-web/data-grid',
 	version: '0.1.0-beta.6',
 	license: 'MIT',
-	integrity: 'sha512-dhfYvfFSzbukfrqQBR/RCUyhsEzpz7lL6U/np9U6OKaUIgMfSe6mSBD8SN66qciJEiLE99hK6U+7PvoG3jFgjw==',
-	unpackedSize: 344_316,
+	integrity: 'sha512-iGH1lEUo+7f6YuvwnxBqM5IPhdS7Aknv5dCYXHFnk9clc9MUvdEzyWJ7wOjQDuyi3FPkvhNEaWnyieW3Wz560A==',
+	unpackedSize: 344_932,
 	dependencies: {
 		'@zeus-js/output-react-wrapper': '0.1.1-beta.3',
 		'@zeus-js/output-vue-wrapper': '0.1.1-beta.3',
