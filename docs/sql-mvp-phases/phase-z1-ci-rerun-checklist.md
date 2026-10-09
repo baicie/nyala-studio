@@ -5,6 +5,8 @@
 - Related: [Z1 spike 验证记录](./phase-z1-spike-verification.md)、[ADR 0004 v7 floor-aware metrics](../adr/0004-zeus-data-grid-v7-floor-aware-metrics.md)、[性能整改报告](../reviews/2026-08-18-zeus-data-grid-performance-remediation.md)、[`sql-result-grid-platform.yml`](../../.github/workflows/sql-result-grid-platform.yml)、[`sql-result-grid-gate-attest.yml`](../../.github/workflows/sql-result-grid-gate-attest.yml)
 
 本文只回答一个问题：**要把 Z1 的跨平台证据重新变成可下载、可复算、可绑定的证据，需要按什么顺序做什么。**
+
+2026-10-09 更新：Zeus core `0.1.1-beta.3` 与 zeus-ui `0.1.0-beta.5` 已发布并完成 registry 核验。Nyala 已将 platform workflow 和审计契约更新到 data-grid beta.5；beta.5 的实际 peer/dependency 闭包仍是 Zeus core beta.2，因此本次发布不会被记录为 core beta.3 已接入。新的双 WebView 证据尚未采集，Z1.3 仍为 `NO-GO`。
 它不是新的验收报告，也不能把任何失败门改写成通过。
 
 ## 0. 需要授权的三项（当前只阻塞在这里）
@@ -12,11 +14,11 @@
 本地可自动完成的分析、工具与复验都已做完（floor 分解、未发布工作树审计、脚本 suites 全绿）；
 Z1.3 不会因为再跑一次本地诊断而改变结论。要往前推进，需要以下三项被授权：
 
-| #   | 决策                                            | 授权后能做什么                                                                                   | 不授权的后果                                                        |
-| --- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
-| 1   | ADR 0004 由 `Proposed` 改为 `Accepted`          | 允许构建 v7 schema/verifier 并按预注册采样，Z1 才有合法翻 `GO` 的通道（路径 B）                  | v6 的 20% 门在地板上不可辨识，Z1.3 永远停在 `NO-GO`，Z2/R0 不可开始 |
-| 2   | zeus-ui `0.1.0-beta.5` 发布授权                 | split timing / `measureNodeChurn` 进入已发布 pin，v7 的 renderer-owned CPU 才有可 pin 的数据来源 | renderer 成本只能停在「未发布的本地诊断」口径                       |
-| 3   | 把本地修复经 PR 合入受保护 `mvp`（commit/push） | A4 捕获与 Z1/A4/R0 attestation 才跑在修复后的 driver/verifier 上                                 | 受保护分支仍是旧脚本，attestation 结构上跑不出 `GO`                 |
+| #   | 决策                                                             | 授权后能做什么                                                                             | 不授权的后果                                                        |
+| --- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| 1   | ADR 0004 由 `Proposed` 改为 `Accepted`                           | 允许构建 v7 schema/verifier 并按预注册采样，Z1 才有合法翻 `GO` 的通道（路径 B）            | v6 的 20% 门在地板上不可辨识，Z1.3 永远停在 `NO-GO`，Z2/R0 不可开始 |
+| 2   | zeus-ui beta.5 发布（已完成）；后续 core beta.3 闭包仍待上游发布 | beta.5 已包含 split timing / `measureNodeChurn`；其实际 peer/dependency 仍指向 core beta.2 | 在 core beta.3 闭包发布前，不能声称 Nyala 已消费 core beta.3        |
+| 3   | 把本地修复经 PR 合入受保护 `mvp`（commit/push）                  | A4 捕获与 Z1/A4/R0 attestation 才跑在修复后的 driver/verifier 上                           | 受保护分支仍是旧脚本，attestation 结构上跑不出 `GO`                 |
 
 注：第 2 项要求先提交 zeus-ui 那 4 个文件并合入 `main`（`release.yml` 只允许从 `main` dispatch）；
 第 3 项需要人工授权后执行（本会话约束为不 commit/push），`mvp` 的 required checks 为
@@ -38,15 +40,15 @@ protection rule）——属于可选加固，不阻塞任何路径。
 
 ## 1. 当前事实（2026-09-17 核查）
 
-| 事实                                                                                                                                                                                                                        | 证据来源                                                                                                 |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| 默认分支是 `mvp`（不是 `main`），且被保护；required checks 为 `Lint, build, and test` / `Prettier` / `rustfmt` / `taplo`，`strict = true`，required approvals `0`，禁止 force push                                          | `gh api repos/baicie/nyala-studio/branches/mvp`、`.../branches/mvp/protection`、`.../rules/branches/mvp` |
-| `origin/mvp`（`3c97f73a`）已包含 `sql-result-grid-platform.yml`，且与本地（修复后）文件逐字节相同；但**缺少**最后三个提交 `737de61c` / `b900750c` / `9d68c91d`，即 native webdriver 启动、viewport 校准与 evidence 对齐修复 | `git diff origin/mvp -- .github/workflows/` 为空；`git log --oneline origin/mvp..9d68c91d`               |
-| 最后一次平台 run `32706467306`：`head_branch = codex/feat-sql-agent-schema-adapter`、`head_sha = 9d68c91d`、attempt `1`、2026-08-24；prepare / macOS / Windows 三个 job 成功，aggregate 按设计在 Z1 verifier 处 exit 1      | `gh run view 32706467306 --json ...`、job `97372057070` 日志末行 `NO-GO: .../phase-z1-gate.json`         |
-| 该 run 的 4 个 artifacts 全部 `expired: true`（audit 7 天、其余 14 天）→ **当前没有任何可下载复核的 revision-bound 证据**                                                                                                   | `gh api repos/baicie/nyala-studio/actions/runs/32706467306/artifacts`                                    |
-| GitHub environments `total_count = 0`；按 §0.1 这**不阻塞**，首次 dispatch 会自动创建同名 environment                                                                                                                       | `gh api repos/baicie/nyala-studio/environments`、`gh api .../actions/workflows/<id>/runs`（runs 均为 0） |
-| 依赖 pin 仍是 `@zeus-web/data-grid@0.1.0-beta.4`；npm `beta = 0.1.0-beta.4`、`latest = 0.1.0-beta.0`，没有 beta.5                                                                                                           | `pnpm view @zeus-web/data-grid dist-tags`、workflow 第 70-71 行                                          |
-| zeus-ui 分支 `codex/release-0.1.0-beta.5`（`678d95b`，已推送）另有 4 个未提交文件：`commitEndTime` / `diagnosticsEndTime` 分离与 `measureNodeChurn` 开关                                                                    | `git -C ../zeus-ui status`                                                                               |
+| 事实                                                                                                                                                                                                                        | 证据来源                                                                                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 默认分支是 `mvp`（不是 `main`），且被保护；required checks 为 `Lint, build, and test` / `Prettier` / `rustfmt` / `taplo`，`strict = true`，required approvals `0`，禁止 force push                                          | `gh api repos/baicie/nyala-studio/branches/mvp`、`.../branches/mvp/protection`、`.../rules/branches/mvp`                           |
+| `origin/mvp`（`3c97f73a`）已包含 `sql-result-grid-platform.yml`，且与本地（修复后）文件逐字节相同；但**缺少**最后三个提交 `737de61c` / `b900750c` / `9d68c91d`，即 native webdriver 启动、viewport 校准与 evidence 对齐修复 | `git diff origin/mvp -- .github/workflows/` 为空；`git log --oneline origin/mvp..9d68c91d`                                         |
+| 最后一次平台 run `32706467306`：`head_branch = codex/feat-sql-agent-schema-adapter`、`head_sha = 9d68c91d`、attempt `1`、2026-08-24；prepare / macOS / Windows 三个 job 成功，aggregate 按设计在 Z1 verifier 处 exit 1      | `gh run view 32706467306 --json ...`、job `97372057070` 日志末行 `NO-GO: .../phase-z1-gate.json`                                   |
+| 该 run 的 4 个 artifacts 全部 `expired: true`（audit 7 天、其余 14 天）→ **当前没有任何可下载复核的 revision-bound 证据**                                                                                                   | `gh api repos/baicie/nyala-studio/actions/runs/32706467306/artifacts`                                                              |
+| GitHub environments `total_count = 0`；按 §0.1 这**不阻塞**，首次 dispatch 会自动创建同名 environment                                                                                                                       | `gh api repos/baicie/nyala-studio/environments`、`gh api .../actions/workflows/<id>/runs`（runs 均为 0）                           |
+| Nyala 已 pin `@zeus-web/data-grid@0.1.0-beta.5`；其 npm `beta` 已指向 beta.5，但发布包仍 exact 依赖/peer Zeus core beta.2；新平台证据尚未产生                                                                               | `pnpm view @zeus-web/data-grid@0.1.0-beta.5 ...`、workflow 第 70-71 行、`docs/reviews/2026-10-09-zeus-beta-release-integration.md` |
+| zeus-ui `v0.1.0-beta.5` 已发布，tag/main 为 `52baa1e18ca11671de48bd24c7b1983b7413a516`；npm provenance/signatures 与 36 包发布校验通过                                                                                      | zeus-ui CI/Release/Publish runs、npm tarball/integrity 核验                                                                        |
 
 结论：Z1 的问题不是「缺一个 workflow」，而是两件事叠加——**证据过期**，以及**预先注册的 v6 阈值在 1/60s 地板上不可辨识**。两者分别对应下面的路径 A 与路径 B。
 
@@ -148,11 +150,11 @@ exit `1` + `NO-GO` 是预期结果；关键是打开 `/tmp/nyala-replay-<RUN_ID>
    从通过 validator 的 report 复算。注意 `14.8ms` 来自已删除的 attribution report，不再引用；ADR 只保留可复算口径。
    仍需产品侧确认的是 `Accepted` 决定本身。
 
-### B1 发布 zeus-ui `0.1.0-beta.5`
+### B1 发布 zeus-ui `0.1.0-beta.5`（已完成）
 
-1. 在 zeus-ui checkout（下文以 `$ZEUS_UI_REPO` 表示）提交 4 个未提交文件（`packages/advanced/data-grid/src/types.ts`、`packages/advanced/data-grid/src/components/data-grid.tsx`、`e2e/advanced/data-grid/data-grid-diagnostics-runtime.spec.ts`、`docs/internal/packages.md`），跑通 zeus-ui CI。
-2. `release.yml`（`workflow_dispatch`，inputs：`version=0.1.0-beta.5`、`tag=beta`、`release_sha=<sha>`）创建 `v0.1.0-beta.5` tag 并 dispatch `publish.yml`。
-3. 验收：`pnpm view @zeus-web/data-grid@0.1.0-beta.5` 存在、36 包验证通过、`beta` dist-tag 指向 `0.1.0-beta.5`、`latest` 不变；记录 release / publish run id。
+1. zeus-ui `v0.1.0-beta.5` 已由 GitHub Actions 发布，tag/main 为 `52baa1e18ca11671de48bd24c7b1983b7413a516`。
+2. `@zeus-web/data-grid`、`@zeus-web/virtual`、`@zeus-web/zeus-compat` 的 beta.5 tarball、integrity、provenance/signatures 与 36 包发布校验已通过。
+3. 发布包仍 exact 依赖/peer `@zeus-js/zeus@0.1.1-beta.2`；若要使用 core beta.3，zeus-ui 需要后续 beta 发布修正依赖闭包，Nyala 再单独更新合同。
 
 本地 pack/publish 不可用于登记证据；beta.4 的记录明确要求由 GitHub Actions 发布。
 
