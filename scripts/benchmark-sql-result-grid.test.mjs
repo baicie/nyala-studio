@@ -933,7 +933,7 @@ test('diagnostic benchmark page assigns the beta.4 observer before data and DOM 
 		assert.match(source, /zeusDataGrid/);
 		assert.match(source, /const measureNodeChurn = params\.get\('measureNodeChurn'\)/);
 		assert.match(source, /measureNodeChurn === 'false' \? \{ measureNodeChurn: false \} : undefined/);
-		assert.match(source, /measureNodeChurn: measureNodeChurn === 'false' \? false : true/);
+		assert.match(source, /measureNodeChurn: segmentTrace \|\| \(diagnosticProfile && measureNodeChurn !== 'false'\)/);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -947,6 +947,8 @@ test('benchmark CLI records the Zeus node-churn A/B arm in diagnostic metadata',
 	assert.match(source, /zeusMeasureNodeChurn = parseBoolean\(cli\['zeus-measure-node-churn'\]/);
 	assert.match(source, /measureNodeChurn: zeusMeasureNodeChurn/);
 	assert.match(source, /measureNodeChurn: String\(measureNodeChurn\)/);
+	assert.match(source, /traceProfile = parseBoolean\(cli\['trace-profile'\]/);
+	assert.match(source, /traceProfile: String\(traceProfile\)/);
 });
 
 test('Zeus adapter reuses formatted row arrays without a redundant viewport refresh', async () => {

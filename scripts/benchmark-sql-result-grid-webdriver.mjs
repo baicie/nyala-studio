@@ -36,6 +36,7 @@ import {
 	inspectSqlResultGridRunMarker,
 	SQL_RESULT_GRID_RUN_MARKER_VERSION
 } from './sql-result-grid-run-marker.mjs';
+import { validateObserverFreeSegmentTraceSnapshot } from './sql-result-grid-segment-trace.mjs';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const defaultOutput = join(repositoryRoot, 'platform-evidence.json');
@@ -58,6 +59,7 @@ if (cli.help === 'true') {
   --workflow-run-id <id> GitHub Actions run provenance
   --workflow-run-attempt <n> GitHub Actions attempt provenance
   --script-timeout-ms <n> WebDriver script budget (default: 120000)
+  --trace-profile <true|false>  Record observer-free scroll timing segments
 `);
 	process.exit(0);
 }
@@ -80,6 +82,7 @@ const scriptTimeoutMs = parseBoundedPositiveInteger(
 	'--script-timeout-ms',
 	300_000
 );
+const traceProfile = String(cli['trace-profile'] ?? 'false') === 'true';
 const outputPath = resolve(cli.output ?? defaultOutput);
 const screenshotDir = resolve(cli['screenshot-dir'] ?? join(repositoryRoot, 'platform-screenshots'));
 const zeusBundle = cli['zeus-bundle'] ?? '/tmp/nyala-zeus-audit/data-grid-bundle.js';
@@ -175,6 +178,7 @@ async function run() {
 				height: String(workload.height),
 				deferStart: 'true'
 			};
+			if (traceProfile) query.traceProfile = 'true';
 			if (iteration === 1) {
 				query.screenshotRunMarker = Buffer.from(createSqlResultGridRunMarkerBytes(runToken)).toString('hex');
 			}
@@ -247,6 +251,15 @@ async function run() {
 					enriched.status = 'error';
 					enriched.reason = screenshotProbe.reason;
 				}
+			}
+			if (traceProfile && enriched.status === 'ok') {
+				enriched.segmentTrace = await runObserverFreeSegmentTraceNavigation(
+					driverUrl,
+					sessionId,
+					Boolean(appBinary),
+					benchmarkServer.url,
+					{ renderer, executionOrdinal, workload, workbenchTableBundleSha256: provenance.workbenchTableBundleSha256 }
+				);
 			}
 			records.push(enriched);
 			process.stdout.write(
@@ -513,6 +526,41 @@ async function setSessionTimeouts(baseUrl, sessionId, scriptMs) {
 		pageLoad: scriptMs,
 		script: scriptMs
 	});
+}
+
+async function runObserverFreeSegmentTraceNavigation(baseUrl, sessionId, embedded, benchmarkBaseUrl, expected) {
+	const traceRunToken = randomUUID();
+	const query = new URLSearchParams({
+		run: traceRunToken,
+		renderer: expected.renderer,
+		executionOrder: EXECUTION_ORDER,
+		executionOrdinal: String(expected.executionOrdinal),
+		segmentTrace: 'true',
+		diagnosticProfile: 'true',
+		measureNodeChurn: 'false',
+		rows: String(expected.workload.rows),
+		columns: String(expected.workload.columns),
+		wide: String(expected.workload.wide),
+		width: String(expected.workload.width),
+		height: String(expected.workload.height)
+	});
+	const url = `${benchmarkBaseUrl}?${query}`;
+	await webdriverRequest(baseUrl, `/session/${sessionId}/url`, 'POST', { url });
+	await waitForNavigation(baseUrl, sessionId, url);
+	const record = await waitForResult(baseUrl, sessionId, embedded, {
+		runToken: traceRunToken,
+		renderer: expected.renderer,
+		executionOrder: EXECUTION_ORDER,
+		executionOrdinal: expected.executionOrdinal,
+		workload: expected.workload,
+		workbenchTableImplementation: 'real',
+		workbenchTableBundleSha256: expected.workbenchTableBundleSha256
+	});
+	if (record.status !== 'ok' || !record.segmentTrace) {
+		throw new Error(`Observer-free segment trace failed for ${expected.workload.id}/${expected.renderer}.`);
+	}
+	validateObserverFreeSegmentTraceSnapshot(record.segmentTrace, { expectedSampleCount: 22 });
+	return record.segmentTrace;
 }
 
 async function waitForResult(baseUrl, sessionId, embedded, expected) {

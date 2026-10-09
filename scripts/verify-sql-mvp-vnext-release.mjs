@@ -408,7 +408,7 @@ function validateZ1Gate(gate, expectedRevision, options) {
 	}
 	if (
 		dependency?.package?.name !== '@zeus-web/data-grid' ||
-		dependency?.package?.version !== '0.1.0-beta.5' ||
+		dependency?.package?.version !== '0.1.0-beta.6' ||
 		dependency?.package?.license !== 'MIT' ||
 		dependency?.package?.integrity !==
 			'sha512-dhfYvfFSzbukfrqQBR/RCUyhsEzpz7lL6U/np9U6OKaUIgMfSe6mSBD8SN66qciJEiLE99hK6U+7PvoG3jFgjw==' ||

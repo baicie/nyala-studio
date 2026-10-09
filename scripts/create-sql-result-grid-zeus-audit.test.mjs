@@ -12,18 +12,18 @@ const execFileAsync = promisify(execFile);
 const scriptPath = new URL('./create-sql-result-grid-zeus-audit.mjs', import.meta.url).pathname;
 const packageMetadata = {
 	name: '@zeus-web/data-grid',
-	version: '0.1.0-beta.5',
+	version: '0.1.0-beta.6',
 	license: 'MIT',
 	dependencies: {
-		'@zeus-js/output-react-wrapper': '0.1.1-beta.2',
-		'@zeus-js/output-vue-wrapper': '0.1.1-beta.2',
-		'@zeus-js/runtime-dom': '0.1.1-beta.2',
-		'@zeus-js/web-c-runtime': '0.1.1-beta.2',
-		'@zeus-web/virtual': '0.1.0-beta.5',
-		'@zeus-web/zeus-compat': '0.1.0-beta.5'
+		'@zeus-js/output-react-wrapper': '0.1.1-beta.3',
+		'@zeus-js/output-vue-wrapper': '0.1.1-beta.3',
+		'@zeus-js/runtime-dom': '0.1.1-beta.3',
+		'@zeus-js/web-c-runtime': '0.1.1-beta.3',
+		'@zeus-web/virtual': '0.1.0-beta.6',
+		'@zeus-web/zeus-compat': '0.1.0-beta.6'
 	},
 	peerDependencies: {
-		'@zeus-js/zeus': '0.1.1-beta.2',
+		'@zeus-js/zeus': '0.1.1-beta.3',
 		react: '>=18 || >=19',
 		vue: '>=3'
 	}
