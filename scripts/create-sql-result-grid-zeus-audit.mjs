@@ -3,14 +3,28 @@
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { gzipSync } from 'node:zlib';
 
 const expectedPackage = {
 	name: '@zeus-web/data-grid',
-	version: '0.1.0-beta.4',
+	version: '0.1.0-beta.5',
 	license: 'MIT',
-	integrity: 'sha512-hiaTjf29UY8E/hrMkDm81nVORNWSrqTcInJXQcxZ7azfCfVkN82M8UMe/GDlbQBWksJetq8lT3GbapJEbqZbHA==',
-	unpackedSize: 341_232
+	integrity: 'sha512-dhfYvfFSzbukfrqQBR/RCUyhsEzpz7lL6U/np9U6OKaUIgMfSe6mSBD8SN66qciJEiLE99hK6U+7PvoG3jFgjw==',
+	unpackedSize: 344_316,
+	dependencies: {
+		'@zeus-js/output-react-wrapper': '0.1.1-beta.2',
+		'@zeus-js/output-vue-wrapper': '0.1.1-beta.2',
+		'@zeus-js/runtime-dom': '0.1.1-beta.2',
+		'@zeus-js/web-c-runtime': '0.1.1-beta.2',
+		'@zeus-web/virtual': '0.1.0-beta.5',
+		'@zeus-web/zeus-compat': '0.1.0-beta.5'
+	},
+	peerDependencies: {
+		'@zeus-js/zeus': '0.1.1-beta.2',
+		react: '>=18 || >=19',
+		vue: '>=3'
+	}
 };
 const cli = parseArgs(process.argv.slice(2));
 const outputPath = resolve(required(cli.output, '--output'));
@@ -29,15 +43,16 @@ try {
 		version: packageMetadata.version,
 		license: packageMetadata.license,
 		integrity: registryMetadata['dist.integrity'] ?? registryMetadata.dist?.integrity,
-		unpackedSize: registryMetadata['dist.unpackedSize'] ?? registryMetadata.dist?.unpackedSize
+		unpackedSize: registryMetadata['dist.unpackedSize'] ?? registryMetadata.dist?.unpackedSize,
+		dependencies: packageMetadata.dependencies,
+		peerDependencies: packageMetadata.peerDependencies
 	};
 	const checks = Object.entries(expectedPackage).map(([field, expected]) => ({
 		id: `package-${field}`,
-		passed: observed[field] === expected,
-		reason:
-			observed[field] === expected
-				? `${field} matches the pre-registered value`
-				: `${field}=${JSON.stringify(observed[field])} does not match ${JSON.stringify(expected)}`
+		passed: isDeepStrictEqual(observed[field], expected),
+		reason: isDeepStrictEqual(observed[field], expected)
+			? `${field} matches the pre-registered value`
+			: `${field}=${JSON.stringify(observed[field])} does not match ${JSON.stringify(expected)}`
 	}));
 	for (const [field, validator] of Object.entries({
 		repository: value => typeof value === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value),

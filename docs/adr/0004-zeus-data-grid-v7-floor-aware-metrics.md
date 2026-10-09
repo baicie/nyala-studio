@@ -7,8 +7,13 @@
 
 ## Context
 
-Z1.1 and Z1.2 are complete. Zeus core `0.1.1-beta.2` and zeus-ui `0.1.0-beta.4`
-are published. Revision-bound macOS WKWebView and Windows WebView2 evidence exists.
+Z1.1 and Z1.2 are complete. Zeus core `0.1.1-beta.3` and zeus-ui
+`0.1.0-beta.5` are published. The currently published zeus-ui beta.5 package
+still declares the Zeus runtime and peer closure at core `0.1.1-beta.2`, so
+Nyala's beta.5 audit records the actual closure and does not claim core beta.3
+integration. Revision-bound macOS WKWebView and Windows WebView2 evidence exists
+for the earlier pinned revision, but no new evidence has been collected for the
+beta.5 pin.
 Measurement contract v6 still fails five performance checks, so `Z1.3 = NO-GO`.
 
 The failure is not a missing audit. It is a measurement-contract defect: v6
