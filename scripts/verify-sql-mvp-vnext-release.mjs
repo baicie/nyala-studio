@@ -408,11 +408,11 @@ function validateZ1Gate(gate, expectedRevision, options) {
 	}
 	if (
 		dependency?.package?.name !== '@zeus-web/data-grid' ||
-		dependency?.package?.version !== '0.1.0-beta.6' ||
+		dependency?.package?.version !== '0.1.0-beta.8' ||
 		dependency?.package?.license !== 'MIT' ||
 		dependency?.package?.integrity !==
-			'sha512-iGH1lEUo+7f6YuvwnxBqM5IPhdS7Aknv5dCYXHFnk9clc9MUvdEzyWJ7wOjQDuyi3FPkvhNEaWnyieW3Wz560A==' ||
-		dependency?.package?.unpackedSize !== 344_932
+			'sha512-A1MZ4IQ26UOV+D4KjiHM+skPVcF8P9jyymqsBilr1pIzfx9Y5OiPw6W98wo9hMUg/9nrxOGvNdxCxrJMoQ5Shw==' ||
+		dependency?.package?.unpackedSize !== 344_371
 	) {
 		reasons.push('Zeus package audit summary is invalid');
 	}

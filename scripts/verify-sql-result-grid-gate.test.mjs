@@ -498,17 +498,17 @@ async function writeSyntheticBenchmark(root) {
 			},
 			package: {
 				name: '@zeus-web/data-grid',
-				version: '0.1.0-beta.6',
+				version: '0.1.0-beta.8',
 				license: 'MIT',
-				integrity: 'sha512-iGH1lEUo+7f6YuvwnxBqM5IPhdS7Aknv5dCYXHFnk9clc9MUvdEzyWJ7wOjQDuyi3FPkvhNEaWnyieW3Wz560A==',
-				unpackedSize: 344_932,
+				integrity: 'sha512-A1MZ4IQ26UOV+D4KjiHM+skPVcF8P9jyymqsBilr1pIzfx9Y5OiPw6W98wo9hMUg/9nrxOGvNdxCxrJMoQ5Shw==',
+				unpackedSize: 344_371,
 				dependencies: {
 					'@zeus-js/output-react-wrapper': '0.1.1-beta.3',
 					'@zeus-js/output-vue-wrapper': '0.1.1-beta.3',
 					'@zeus-js/runtime-dom': '0.1.1-beta.3',
 					'@zeus-js/web-c-runtime': '0.1.1-beta.3',
-					'@zeus-web/virtual': '0.1.0-beta.6',
-					'@zeus-web/zeus-compat': '0.1.0-beta.6'
+					'@zeus-web/virtual': '0.1.0-beta.8',
+					'@zeus-web/zeus-compat': '0.1.0-beta.8'
 				},
 				peerDependencies: {
 					'@zeus-js/zeus': '0.1.1-beta.3',
