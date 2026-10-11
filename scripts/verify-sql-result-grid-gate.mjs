@@ -97,7 +97,13 @@ const platformIntegrity = Object.fromEntries(
 	)
 );
 const benchmarkIntegrity = validateBenchmarkEvidence(benchmark, expectedProvenance);
-const metricChecks = evaluateMetrics({ summary: benchmarkIntegrity.summary });
+// v7 makes every renderer comparison floor-aware, Chromium included. Without
+// this the shared presentation floor would only excuse regressions on the two
+// embedded WebViews while Chromium still failed on the same unmeasurable gap.
+const benchmarkMetricChecks = evaluateFloorAwareBenchmarkMetrics(benchmarkIntegrity.summary);
+const metricChecks = isFloorAwareSummary(benchmarkIntegrity.summary)
+	? benchmarkMetricChecks
+	: evaluateMetrics({ summary: benchmarkIntegrity.summary });
 const dependencyCheck = await evaluateZeusAudit(zeusAuditPath, expectedProvenance);
 const platformMetricChecks = Object.entries(platformEvidence).flatMap(([key, evidence]) =>
 	evaluatePlatformMetrics({ ...evidence, summary: platformIntegrity[key].summary })
@@ -1247,11 +1253,18 @@ function evaluatePlatformMetrics(evidence) {
 			}
 		];
 	}
-	const metricChecks = evaluateMetrics({ summary: evidence.summary }).map(check => ({
-		...check,
-		id: `${evidence.label}-${check.id}`,
-		reason: `${evidence.label}: ${check.reason}`
-	}));
+	// Under v7 the floor-aware evaluator owns every performance verdict. Running
+	// the legacy metric evaluator alongside it double-reported each workload and,
+	// when a shared floor made a target not discriminable, emitted a contradicting
+	// failure next to the NOT-EVALUABLE outcome.
+	const floorAware = isFloorAwareEvidence(evidence);
+	const metricChecks = floorAware
+		? []
+		: evaluateMetrics({ summary: evidence.summary }).map(check => ({
+				...check,
+				id: `${evidence.label}-${check.id}`,
+				reason: `${evidence.label}: ${check.reason}`
+			}));
 	const floorChecks = evaluateFloorAwarePlatformMetrics(evidence);
 	const longTailChecks = [];
 	for (const workloadId of ['1k-x-20', '10k-x-50']) {
@@ -1284,19 +1297,40 @@ function evaluatePlatformMetrics(evidence) {
  */
 function evaluateFloorAwarePlatformMetrics(evidence) {
 	if (!isFloorAwareEvidence(evidence)) return [];
+	return evaluateFloorAwareRendererMetrics(evidence.summary, check => ({
+		...check,
+		id: `${evidence.label}-${check.id}`,
+		reason: `${evidence.label}: ${check.reason}`
+	}));
+}
+
+/**
+ * v7 admission is floor-aware for every renderer comparison, so the same
+ * evaluability rules apply whether the evidence came from an embedded WebView
+ * or from the revision-bound Chromium characterization run.
+ */
+function evaluateFloorAwareBenchmarkMetrics(summary) {
+	return evaluateFloorAwareRendererMetrics(summary, check => check);
+}
+
+function isFloorAwareSummary(summary) {
+	return Object.values(summary ?? {}).some(metrics => Number.isFinite(metrics?.presentationFloorP95Ms?.median));
+}
+
+function evaluateFloorAwareRendererMetrics(summary, decorate) {
 	const checks = [];
 	for (const [workloadId, rule] of [
 		['1k-x-20', { kind: 'non-inferiority', maxRegression: 0.1 }],
 		['10k-x-50', { kind: 'superiority', requiredImprovement: 0.2 }]
 	]) {
-		const summary = getSummary(evidence.summary, workloadId);
-		if (!summary) continue;
-		const baseline = bestNonZeus(summary, 'scrollP95Ms');
-		const zeus = summary.zeus?.scrollP95Ms?.median;
-		const label = `${evidence.label}-${workloadId}`;
+		const workloadSummary = getSummary(summary, workloadId);
+		if (!workloadSummary) continue;
+		const baseline = bestNonZeus(workloadSummary, 'scrollP95Ms');
+		const zeus = workloadSummary.zeus?.scrollP95Ms?.median;
+		const label = `${workloadId}`;
 		if (!Number.isFinite(baseline) || !Number.isFinite(zeus)) continue;
 
-		const floorP95ByRenderer = Object.entries(summary)
+		const floorP95ByRenderer = Object.entries(workloadSummary)
 			.map(([, metrics]) => metrics.presentationFloorP95Ms?.median)
 			.filter(value => Number.isFinite(value));
 		const sharedPresentationFloorP95Ms = sharedPresentationFloorP95(floorP95ByRenderer);
@@ -1309,13 +1343,18 @@ function evaluateFloorAwarePlatformMetrics(evidence) {
 				requiredImprovement: rule.requiredImprovement
 			});
 			if (!evaluability.evaluable) {
-				checks.push({
-					id: `${label}-evaluability`,
-					passed: false,
-					outcome: evaluability.outcome,
-					...evaluability,
-					reason: evaluability.notEvaluableReason
-				});
+				checks.push(
+					decorate(
+						{
+							id: `${label}-evaluability`,
+							passed: false,
+							outcome: evaluability.outcome,
+							...evaluability,
+							reason: evaluability.notEvaluableReason
+						},
+						workloadId
+					)
+				);
 				continue;
 			}
 			const verdict = createSuperiorityVerdict({
@@ -1325,11 +1364,16 @@ function evaluateFloorAwarePlatformMetrics(evidence) {
 				requiredImprovement: rule.requiredImprovement,
 				sharedPresentationFloorP95Ms
 			});
-			checks.push({
-				id: `${label}-primary`,
-				passed: verdict.outcome === SQL_RESULT_GRID_EVALUABLE_OUTCOME.superiorWithinThreshold,
-				...verdict
-			});
+			checks.push(
+				decorate(
+					{
+						id: `${label}-primary`,
+						passed: verdict.outcome === SQL_RESULT_GRID_EVALUABLE_OUTCOME.superiorWithinThreshold,
+						...verdict
+					},
+					workloadId
+				)
+			);
 			continue;
 		}
 
@@ -1340,11 +1384,16 @@ function evaluateFloorAwarePlatformMetrics(evidence) {
 			maxRegression: rule.maxRegression,
 			sharedPresentationFloorP95Ms
 		});
-		checks.push({
-			id: `${label}-interaction`,
-			passed: verdict.outcome === SQL_RESULT_GRID_EVALUABLE_OUTCOME.nonInferiorWithinThreshold,
-			...verdict
-		});
+		checks.push(
+			decorate(
+				{
+					id: `${label}-interaction`,
+					passed: verdict.outcome === SQL_RESULT_GRID_EVALUABLE_OUTCOME.nonInferiorWithinThreshold,
+					...verdict
+				},
+				workloadId
+			)
+		);
 	}
 	return checks;
 }

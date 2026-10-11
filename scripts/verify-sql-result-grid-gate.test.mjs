@@ -757,9 +757,11 @@ test('Z1.3 verifier accepts embedded WKWebView and WebView2 evidence', async () 
 		);
 		assert.equal(report.platformEvidence.macosWebKit.screenshots.length, 12);
 		assert.equal(report.platformEvidence.windowsWebView2.screenshots.length, 12);
-		// 18 legacy ratio/long-tail checks plus four v7 floor-aware decisions:
-		// one superiority and one non-inferiority check per platform.
-		assert.equal(report.platformMetricChecks.length, 22);
+		// Under v7 the floor-aware evaluator owns every performance verdict, so
+		// the legacy ratio checks no longer duplicate them: 14 identity/long-tail
+		// checks plus four floor-aware decisions (one superiority and one
+		// non-inferiority check per platform).
+		assert.equal(report.platformMetricChecks.length, 18);
 		assert.ok(report.platformMetricChecks.every(check => check.passed));
 		assert.match(report.platformMetricChecks[0].reason, /embedded WKWebView identity verified/);
 		assert.match(
@@ -914,7 +916,7 @@ test('Z1.3 v7 still fails the gate on a real one-k regression despite a high flo
 			}
 			evidence.macosWebKit.summary = summarize(evidence.macosWebKit.records);
 		},
-		/macOS WebKit-1k-x-20.*regression .*exceeds the 10% limit/i
+		/macOS WebKit: 1k-x-20: scroll p95 regression .*exceeds the 10% limit/i
 	);
 });
 
@@ -941,6 +943,46 @@ test('Z1.3 v7 reports NOT-EVALUABLE when the presentation floor exceeds the supe
 		},
 		/NOT-EVALUABLE|not discriminable/i
 	);
+});
+
+test('Z1.3 v7 never reports a contradicting failure beside a NOT-EVALUABLE outcome', async () => {
+	// When the shared floor makes a superiority target not discriminable, the
+	// legacy metric evaluator must not also emit a regression for the same
+	// workload. Exactly one verdict per workload keeps the report coherent.
+	await withTempRoot('nyala-z1-v7-single-verdict-test-', async tempRoot => {
+		const evidencePath = join(tempRoot, 'platform-evidence.json');
+		const outputPath = join(tempRoot, 'gate.json');
+		const benchmarkPath = await writeSyntheticBenchmark(tempRoot);
+		const benchmark = JSON.parse(await readFile(benchmarkPath, 'utf8'));
+		const evidence = await createEmbeddedPlatformEvidence(tempRoot);
+		for (const record of evidence.windowsWebView2.records.filter(candidate => candidate.workloadId === '10k-x-50')) {
+			record.diagnostics.presentationFloor = {
+				sampleCount: PRESENTATION_FLOOR_SAMPLE_COUNT,
+				medianMs: 16.4,
+				p95Ms: 16.4,
+				maxMs: 16.4,
+				samples: Array.from({ length: PRESENTATION_FLOOR_SAMPLE_COUNT }, (_value, sampleIndex) => ({
+					sampleIndex,
+					totalMs: 16.4
+				}))
+			};
+		}
+		evidence.windowsWebView2.summary = summarize(evidence.windowsWebView2.records);
+		await writeFile(benchmarkPath, `${JSON.stringify(benchmark)}\n`, 'utf8');
+		await writeFile(evidencePath, `${JSON.stringify(evidence)}\n`, 'utf8');
+		await assert.rejects(
+			execFileAsync(process.execPath, [verifierPath, benchmarkPath, outputPath], {
+				env: gateEnv(tempRoot, evidencePath),
+				cwd: new URL('..', import.meta.url).pathname
+			})
+		);
+		const report = JSON.parse(await readFile(outputPath, 'utf8'));
+		assert.equal(report.decision, 'NO-GO');
+		assert.match(report.reasons.join('\n'), /Windows WebView2: 10k-x-50: .*not discriminable/i);
+		// The legacy evaluator must stay silent for v7 evidence, so the same
+		// workload never also shows up as a plain improvement failure.
+		assert.doesNotMatch(report.reasons.join('\n'), /Windows WebView2-10k-x-50 scroll p95 improvement/i);
+	});
 });
 
 test('Z1.3 verifier rejects platform WorkbenchTable evidence from another bundle', async () => {
