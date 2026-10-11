@@ -53,17 +53,17 @@ const expectedWorkloads = new Map(
 const expectedRenderers = ['native', 'workbench-table', 'zeus'];
 const expectedZeusPackage = {
 	name: '@zeus-web/data-grid',
-	version: '0.1.0-beta.22',
+	version: '0.1.0-beta.23',
 	license: 'MIT',
-	integrity: 'sha512-XvfxnMQX3YS2PmqlRc4dlZKOw6aozE3iJoW0QiHIJ7ruf0i9NZWZAgWz9Ki//EukJag4K1LMAyA/50UNHdzr8A==',
-	unpackedSize: 342_700,
+	integrity: 'sha512-A9JriCz/zTnB5J8NzyHcYq3p1wqsBQo5MKONhJyRnG4ChVeC2X1NzPrL2xdjxG5QovdS7dX1GwbwFXxc/bw3Mw==',
+	unpackedSize: 340_604,
 	dependencies: {
 		'@zeus-js/output-react-wrapper': '0.1.1-beta.7',
 		'@zeus-js/output-vue-wrapper': '0.1.1-beta.7',
 		'@zeus-js/runtime-dom': '0.1.1-beta.7',
 		'@zeus-js/web-c-runtime': '0.1.1-beta.7',
-		'@zeus-web/virtual': '0.1.0-beta.22',
-		'@zeus-web/zeus-compat': '0.1.0-beta.22'
+		'@zeus-web/virtual': '0.1.0-beta.23',
+		'@zeus-web/zeus-compat': '0.1.0-beta.23'
 	},
 	peerDependencies: {
 		'@zeus-js/zeus': '0.1.1-beta.7',
