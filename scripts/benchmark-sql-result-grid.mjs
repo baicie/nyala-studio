@@ -867,6 +867,7 @@ ${zeusTag}
 <script>
 const params = new URLSearchParams(location.search);
 const runToken = params.get('run') || 'standalone';
+const resultEndpoint = params.get('resultEndpoint');
 	const renderer = params.get('renderer') || 'native';
 	const executionOrder = params.get('executionOrder') || '';
 	const executionOrdinal = Number(params.get('executionOrdinal') || 0);
@@ -970,7 +971,7 @@ function measureDomNodes() {
 }
 
 function writeBenchmarkResult(result) {
-	document.getElementById('benchmark-result').textContent = JSON.stringify({
+	const payload = {
 		runToken,
 		renderer,
 		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
@@ -984,7 +985,16 @@ function writeBenchmarkResult(result) {
 			devicePixelRatio: window.devicePixelRatio
 		},
 		...result
-	});
+	};
+	const serialized = JSON.stringify(payload);
+	document.getElementById('benchmark-result').textContent = serialized;
+	if (resultEndpoint) {
+		fetch(resultEndpoint, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: serialized
+		}).catch(() => undefined);
+	}
 }
 
 function renderScreenshotRunMarker() {
