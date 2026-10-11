@@ -1,7 +1,7 @@
 import {
 	createBalancedBenchmarkPlan,
 	EXECUTION_ORDER,
-	MEASUREMENT_CONTRACT_VERSION,
+	SUPPORTED_MEASUREMENT_CONTRACT_VERSIONS,
 	SCROLL_COMMIT_BOUNDARY,
 	SCROLL_TIMING_TOLERANCE_MS
 } from './sql-result-grid-benchmark-contract.mjs';
@@ -35,7 +35,8 @@ export function createSqlResultGridFeasibilityProfile(report) {
 
 	return {
 		version: SQL_RESULT_GRID_FEASIBILITY_PROFILE_VERSION,
-		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
+		// Echo the analyzed version so legacy v6 evidence stays self-describing.
+		measurementContractVersion: report.measurementContractVersion,
 		scrollCommitBoundary: SCROLL_COMMIT_BOUNDARY,
 		executionOrder: EXECUTION_ORDER,
 		conclusion: thresholdMet
@@ -63,8 +64,12 @@ function validateReport(report) {
 	if (!report || typeof report !== 'object' || Array.isArray(report)) {
 		throw new TypeError('A benchmark report object is required.');
 	}
-	if (report.measurementContractVersion !== MEASUREMENT_CONTRACT_VERSION) {
-		throw new Error(`Benchmark measurement contract must be version ${MEASUREMENT_CONTRACT_VERSION}.`);
+	// The floor decomposition is valid for both contract versions, so the
+	// analyzer must keep recomputing legacy v6 evidence rather than rejecting it.
+	if (!SUPPORTED_MEASUREMENT_CONTRACT_VERSIONS.includes(report.measurementContractVersion)) {
+		throw new Error(
+			`Benchmark measurement contract must be one of ${SUPPORTED_MEASUREMENT_CONTRACT_VERSIONS.join(', ')}.`
+		);
 	}
 	if (report.scrollCommitBoundary !== SCROLL_COMMIT_BOUNDARY) {
 		throw new Error(`Benchmark scroll commit boundary must be ${SCROLL_COMMIT_BOUNDARY}.`);
@@ -113,8 +118,10 @@ function validateRecords(report) {
 		if (!record || typeof record !== 'object' || record.status !== 'ok') {
 			throw new Error(`${tuple} benchmark record is missing or not ok.`);
 		}
-		if (record.measurementContractVersion !== MEASUREMENT_CONTRACT_VERSION) {
-			throw new Error(`${tuple} measurement contract must be version ${MEASUREMENT_CONTRACT_VERSION}.`);
+		if (!SUPPORTED_MEASUREMENT_CONTRACT_VERSIONS.includes(record.measurementContractVersion)) {
+			throw new Error(
+				`${tuple} measurement contract must be one of ${SUPPORTED_MEASUREMENT_CONTRACT_VERSIONS.join(', ')}.`
+			);
 		}
 		if (record.scrollCommitBoundary !== SCROLL_COMMIT_BOUNDARY) {
 			throw new Error(`${tuple} scroll commit boundary must be ${SCROLL_COMMIT_BOUNDARY}.`);

@@ -1,6 +1,18 @@
-export const MEASUREMENT_CONTRACT_VERSION = 6;
+export const MEASUREMENT_CONTRACT_VERSION_LEGACY = 6;
+export const MEASUREMENT_CONTRACT_VERSION = 7;
+export const SUPPORTED_MEASUREMENT_CONTRACT_VERSIONS = Object.freeze([
+	MEASUREMENT_CONTRACT_VERSION_LEGACY,
+	MEASUREMENT_CONTRACT_VERSION
+]);
 export const EXECUTION_ORDER = 'renderer-balanced-rotation-v1';
 export const SCROLL_COMMIT_BOUNDARY = 'post-presentation-opportunity';
+/**
+ * v7 makes the admission decision floor-aware. Every v7 record carries the
+ * cost of an empty measurement loop so the gate can tell renderer work apart
+ * from host presentation wait. v6 records do not, so they can only be judged
+ * with the legacy ratio rules.
+ */
+export const FLOOR_AWARE_CONTRACT_VERSION = MEASUREMENT_CONTRACT_VERSION;
 export const WORKBENCH_TABLE_IMPLEMENTATION_ID = 'vs.platform.list.browser.WorkbenchTable';
 export const WORKBENCH_TABLE_RUNTIME_PROOF = 'exact-prototype-and-monaco-dom-v1';
 export const WORKBENCH_TABLE_CHARACTERIZATION_ID = 'nyala.benchmark.fixed-row-virtual-list-characterization';

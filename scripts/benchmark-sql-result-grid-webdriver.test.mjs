@@ -64,7 +64,10 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /binarySha256/);
 	assert.match(source, /zeusBundleSha256/);
 	assert.match(source, /provenance/);
-	assert.equal(MEASUREMENT_CONTRACT_VERSION, 6);
+	assert.equal(MEASUREMENT_CONTRACT_VERSION, 7);
+	// v7 platform records must request the presentation floor without paying for
+	// renderer observers, because observer cost would bias scrollP95Ms.
+	assert.match(source, /floorOnly:\s*'true'/);
 	assert.equal(SCROLL_COMMIT_BOUNDARY, 'post-presentation-opportunity');
 	assert.equal(EXECUTION_ORDER, 'renderer-balanced-rotation-v1');
 	assert.match(source, /measurementContractVersion:\s*MEASUREMENT_CONTRACT_VERSION/);

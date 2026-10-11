@@ -307,7 +307,7 @@ test('scroll metric uses one completion contract for every renderer', async () =
 		fs.readFile(new URL('./benchmark-sql-result-grid.mjs', import.meta.url), 'utf8')
 	);
 	const presentationSource = waitForPresentationOpportunity.toString();
-	assert.equal(MEASUREMENT_CONTRACT_VERSION, 6);
+	assert.equal(MEASUREMENT_CONTRACT_VERSION, 7);
 	assert.equal(EXECUTION_ORDER, 'renderer-balanced-rotation-v1');
 	assert.equal(SCROLL_COMMIT_BOUNDARY, 'post-presentation-opportunity');
 	assert.match(source, /measurementContractVersion:\s*MEASUREMENT_CONTRACT_VERSION/);
@@ -933,7 +933,10 @@ test('diagnostic benchmark page assigns the beta.4 observer before data and DOM 
 		assert.match(source, /zeusDataGrid/);
 		assert.match(source, /const measureNodeChurn = params\.get\('measureNodeChurn'\)/);
 		assert.match(source, /measureNodeChurn === 'false' \? \{ measureNodeChurn: false \} : undefined/);
-		assert.match(source, /measureNodeChurn: segmentTrace \|\| \(diagnosticProfile && measureNodeChurn !== 'false'\)/);
+		assert.match(
+			source,
+			/measureNodeChurn: segmentTrace \|\| \(diagnosticProfile && !floorOnly && measureNodeChurn !== 'false'\)/
+		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

@@ -52,6 +52,8 @@ const workloads = [
 	{ id: 'narrow-panel', rows: 1_000, columns: 20, width: 390, height: 420, wide: false }
 ];
 const renderers = ['native', 'workbench-table', 'zeus'];
+const PRESENTATION_FLOOR_SAMPLE_COUNT = 20;
+const expectedWorkloads = new Map(workloads.map(workload => [workload.id, workload]));
 
 function createSyntheticBenchmark() {
 	const records = createBalancedBenchmarkPlan(workloads, renderers, 3).map(
@@ -270,6 +272,25 @@ function createPlatformRecord(platformName, workload, renderer, iteration, execu
 			]
 		};
 	}
+	// v7 records carry the empty-loop presentation floor for their platform and
+	// workload so the gate can decide whether a target is discriminable at all.
+	// Keep the fixture floor below the demanded value so the fixture stays
+	// evaluable and continues to assert an overall GO.
+	record.diagnostics = {
+		presentationFloor: {
+			sampleCount: PRESENTATION_FLOOR_SAMPLE_COUNT,
+			medianMs: Number((platformScrollP95(workload.id, renderer) * 0.5).toFixed(4)),
+			p95Ms: Number((platformScrollP95(workload.id, renderer) * 0.6).toFixed(4)),
+			maxMs: Number((platformScrollP95(workload.id, renderer) * 0.7).toFixed(4)),
+			samples: Array.from({ length: PRESENTATION_FLOOR_SAMPLE_COUNT }, (_value, sampleIndex) => ({
+				sampleIndex,
+				totalMs: Number((platformScrollP95(workload.id, renderer) * 0.6).toFixed(4))
+			}))
+		},
+		measureNodeChurn: false,
+		floorOnly: true,
+		traceProfile: false
+	};
 	return record;
 }
 
@@ -351,6 +372,9 @@ function summarize(records) {
 				renderMs: summarizeMetric(group.map(record => record.renderMs)),
 				scrollP95Ms: summarizeMetric(group.map(record => record.scroll.p95Ms)),
 				scrollMaxMs: summarizeMetric(group.map(record => record.scroll.maxMs)),
+				presentationFloorP95Ms: summarizeMetric(
+					group.map(record => record.diagnostics?.presentationFloor?.p95Ms).filter(value => Number.isFinite(value))
+				),
 				domNodes: summarizeMetric(group.map(record => record.domNodes)),
 				heapBytes: summarizeMetric(group.map(record => record.heapBytes)),
 				formatMs: summarizeMetric(group.map(record => record.formatMs)),
@@ -733,10 +757,19 @@ test('Z1.3 verifier accepts embedded WKWebView and WebView2 evidence', async () 
 		);
 		assert.equal(report.platformEvidence.macosWebKit.screenshots.length, 12);
 		assert.equal(report.platformEvidence.windowsWebView2.screenshots.length, 12);
-		assert.equal(report.platformMetricChecks.length, 18);
+		// 18 legacy ratio/long-tail checks plus four v7 floor-aware decisions:
+		// one superiority and one non-inferiority check per platform.
+		assert.equal(report.platformMetricChecks.length, 22);
 		assert.ok(report.platformMetricChecks.every(check => check.passed));
 		assert.match(report.platformMetricChecks[0].reason, /embedded WKWebView identity verified/);
-		assert.match(report.platformMetricChecks[9].reason, /embedded WebView2 identity verified/);
+		assert.match(
+			report.platformMetricChecks.find(check => check.id.includes('Windows WebView2-identity')).reason,
+			/embedded WebView2 identity verified/
+		);
+		// The floor-aware checks must be present and passing on an evaluable fixture.
+		const floorChecks = report.platformMetricChecks.filter(check => check.outcome);
+		assert.equal(floorChecks.length, 4);
+		assert.ok(floorChecks.every(check => check.passed));
 	} finally {
 		await rm(tempRoot, { recursive: true, force: true });
 	}
@@ -800,13 +833,13 @@ test('Z1.3 verifier cannot issue GO without trusted expected workflow provenance
 	}
 });
 
-test('Z1.3 verifier rejects a Chromium benchmark without measurement contract v6', async () => {
+test('Z1.3 verifier rejects a Chromium benchmark without the current measurement contract', async () => {
 	await assertBenchmarkRejected(
 		'nyala-z1-benchmark-measurement-contract-test-',
 		benchmark => {
 			delete benchmark.measurementContractVersion;
 		},
-		/Chromium benchmark.*measurement contract.*expected 6/i
+		/Chromium benchmark.*measurement contract.*expected 7/i
 	);
 });
 
@@ -861,6 +894,52 @@ test('Z1.3 verifier binds every WorkbenchTable record to the report bundle diges
 			record.rendererImplementation.bundleSha256 = 'e'.repeat(64);
 		},
 		/WorkbenchTable implementation proof is invalid/i
+	);
+});
+
+test('Z1.3 v7 still fails the gate on a real one-k regression despite a high floor', async () => {
+	// The floor must never launder an actual regression into a pass. Raising the
+	// floor only affects superiority targets, so a non-inferiority regression on
+	// 1k-x-20 has to keep failing the gate.
+	await assertPlatformEvidenceRejected(
+		'nyala-z1-v7-real-regression-test-',
+		evidence => {
+			for (const record of evidence.macosWebKit.records.filter(
+				candidate => candidate.workloadId === '1k-x-20' && candidate.renderer === 'zeus'
+			)) {
+				record.scroll = createScrollMeasurement(
+					expectedWorkloads.get('1k-x-20'),
+					platformScrollP95('1k-x-20', 'zeus') * 1.6
+				);
+			}
+			evidence.macosWebKit.summary = summarize(evidence.macosWebKit.records);
+		},
+		/macOS WebKit-1k-x-20.*regression .*exceeds the 10% limit/i
+	);
+});
+
+test('Z1.3 v7 reports NOT-EVALUABLE when the presentation floor exceeds the superiority target', async () => {
+	// Windows 10k in the real beta22 run demanded 13.1ms while the floor was
+	// 16.4ms. v7 must surface that as an explicit unresolved outcome rather than
+	// either a pass or a fabricated regression.
+	await assertPlatformEvidenceRejected(
+		'nyala-z1-v7-not-evaluable-test-',
+		evidence => {
+			for (const record of evidence.windowsWebView2.records.filter(candidate => candidate.workloadId === '10k-x-50')) {
+				record.diagnostics.presentationFloor = {
+					sampleCount: PRESENTATION_FLOOR_SAMPLE_COUNT,
+					medianMs: 16.4,
+					p95Ms: 16.4,
+					maxMs: 16.4,
+					samples: Array.from({ length: PRESENTATION_FLOOR_SAMPLE_COUNT }, (_value, sampleIndex) => ({
+						sampleIndex,
+						totalMs: 16.4
+					}))
+				};
+			}
+			evidence.windowsWebView2.summary = summarize(evidence.windowsWebView2.records);
+		},
+		/NOT-EVALUABLE|not discriminable/i
 	);
 });
 
@@ -1060,7 +1139,7 @@ test('Z1.3 verifier rejects a raw record from a legacy measurement contract', as
 			assert.ok(record);
 			record.measurementContractVersion = 2;
 		},
-		/Chromium benchmark.*record measurement contract version is 2.*expected 6/i
+		/Chromium benchmark.*record measurement contract version is 2.*expected 7/i
 	);
 });
 
@@ -1435,13 +1514,13 @@ test('Z1.3 verifier rejects an unknown platform evidence schema version', async 
 	);
 });
 
-test('Z1.3 verifier rejects platform evidence without measurement contract v6', async () => {
+test('Z1.3 verifier rejects platform evidence without the current measurement contract', async () => {
 	await assertPlatformEvidenceRejected(
 		'nyala-z1-platform-measurement-contract-test-',
 		evidence => {
 			delete evidence.macosWebKit.measurementContractVersion;
 		},
-		/macOS WebKit.*measurement contract.*expected 6/i
+		/macOS WebKit.*measurement contract.*expected 7/i
 	);
 });
 

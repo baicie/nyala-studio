@@ -177,7 +177,14 @@ async function run() {
 				wide: String(workload.wide),
 				width: String(workload.width),
 				height: String(workload.height),
-				deferStart: 'true'
+				deferStart: 'true',
+				// v7 admission decisions are floor-aware, so every platform record
+				// must carry the empty-loop presentation floor for its platform and
+				// workload. floorOnly samples that floor without installing any
+				// renderer observer, because observer overhead would land inside
+				// scrollP95Ms and bias the comparison the floor exists to inform.
+				diagnosticProfile: 'true',
+				floorOnly: 'true'
 			};
 			query.resultEndpoint = benchmarkServer.resultUrl;
 			if (traceProfile) query.traceProfile = 'true';
