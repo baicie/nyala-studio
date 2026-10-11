@@ -12,6 +12,7 @@ import {
 	EXECUTION_ORDER,
 	expectedScrollViewportHeight,
 	expectedVisibleRowIndex,
+	FLOOR_AWARE_CONTRACT_VERSION,
 	isValidVisibleRowIndex,
 	maximumVirtualRenderedRows,
 	maximumScrollOffset,
@@ -26,6 +27,13 @@ import {
 	scrollTargetOffset,
 	isValidWorkbenchTableRendererImplementation
 } from './sql-result-grid-benchmark-contract.mjs';
+import {
+	createNonInferiorityVerdict,
+	createSuperiorityEvaluability,
+	createSuperiorityVerdict,
+	sharedPresentationFloorP95,
+	SQL_RESULT_GRID_EVALUABLE_OUTCOME
+} from './sql-result-grid-floor-evaluable.mjs';
 import {
 	hasVisiblePngDiversity,
 	inspectPngPixels,
@@ -1163,6 +1171,11 @@ function summarizeRecords(records) {
 				renderMs: summarizeMetric(group.map(record => record.renderMs)),
 				scrollP95Ms: summarizeMetric(group.map(record => record.scroll.p95Ms)),
 				scrollMaxMs: summarizeMetric(group.map(record => record.scroll.maxMs)),
+				// v7 admission reads the shared presentation floor from here, so the
+				// per-record empty-loop p95 must survive into the summary.
+				presentationFloorP95Ms: summarizeMetric(
+					group.map(record => record.diagnostics?.presentationFloor?.p95Ms).filter(value => Number.isFinite(value))
+				),
 				domNodes: summarizeMetric(group.map(record => record.domNodes)),
 				heapBytes: summarizeMetric(group.map(record => record.heapBytes).filter(value => value !== null)),
 				formatMs: summarizeMetric(group.map(record => record.formatMs)),
@@ -1239,6 +1252,7 @@ function evaluatePlatformMetrics(evidence) {
 		id: `${evidence.label}-${check.id}`,
 		reason: `${evidence.label}: ${check.reason}`
 	}));
+	const floorChecks = evaluateFloorAwarePlatformMetrics(evidence);
 	const longTailChecks = [];
 	for (const workloadId of ['1k-x-20', '10k-x-50']) {
 		for (const renderer of ['native', 'workbench-table', 'zeus']) {
@@ -1255,7 +1269,88 @@ function evaluatePlatformMetrics(evidence) {
 			});
 		}
 	}
-	return [...(identityCheck ? [identityCheck] : []), ...metricChecks, ...longTailChecks];
+	return [...(identityCheck ? [identityCheck] : []), ...metricChecks, ...floorChecks, ...longTailChecks];
+}
+
+/**
+ * v7 admission decisions are floor-aware. Before scoring any renderer we ask
+ * whether the target is discriminable at all: when the shared presentation
+ * floor already exceeds the absolute value the gate demands, no implementation
+ * can satisfy it, and reporting a regression would be a measurement artifact
+ * rather than a property of the renderer under test.
+ *
+ * A NOT-EVALUABLE outcome is never a pass. It is recorded as its own check so
+ * the gate still reports the scenario as unresolved.
+ */
+function evaluateFloorAwarePlatformMetrics(evidence) {
+	if (!isFloorAwareEvidence(evidence)) return [];
+	const checks = [];
+	for (const [workloadId, rule] of [
+		['1k-x-20', { kind: 'non-inferiority', maxRegression: 0.1 }],
+		['10k-x-50', { kind: 'superiority', requiredImprovement: 0.2 }]
+	]) {
+		const summary = getSummary(evidence.summary, workloadId);
+		if (!summary) continue;
+		const baseline = bestNonZeus(summary, 'scrollP95Ms');
+		const zeus = summary.zeus?.scrollP95Ms?.median;
+		const label = `${evidence.label}-${workloadId}`;
+		if (!Number.isFinite(baseline) || !Number.isFinite(zeus)) continue;
+
+		const floorP95ByRenderer = Object.entries(summary)
+			.map(([, metrics]) => metrics.presentationFloorP95Ms?.median)
+			.filter(value => Number.isFinite(value));
+		const sharedPresentationFloorP95Ms = sharedPresentationFloorP95(floorP95ByRenderer);
+
+		if (rule.kind === 'superiority') {
+			const evaluability = createSuperiorityEvaluability({
+				label,
+				baselineP95Ms: baseline,
+				sharedPresentationFloorP95Ms,
+				requiredImprovement: rule.requiredImprovement
+			});
+			if (!evaluability.evaluable) {
+				checks.push({
+					id: `${label}-evaluability`,
+					passed: false,
+					outcome: evaluability.outcome,
+					...evaluability,
+					reason: evaluability.notEvaluableReason
+				});
+				continue;
+			}
+			const verdict = createSuperiorityVerdict({
+				label,
+				baselineP95Ms: baseline,
+				zeusP95Ms: zeus,
+				requiredImprovement: rule.requiredImprovement,
+				sharedPresentationFloorP95Ms
+			});
+			checks.push({
+				id: `${label}-primary`,
+				passed: verdict.outcome === SQL_RESULT_GRID_EVALUABLE_OUTCOME.superiorWithinThreshold,
+				...verdict
+			});
+			continue;
+		}
+
+		const verdict = createNonInferiorityVerdict({
+			label,
+			baselineP95Ms: baseline,
+			zeusP95Ms: zeus,
+			maxRegression: rule.maxRegression,
+			sharedPresentationFloorP95Ms
+		});
+		checks.push({
+			id: `${label}-interaction`,
+			passed: verdict.outcome === SQL_RESULT_GRID_EVALUABLE_OUTCOME.nonInferiorWithinThreshold,
+			...verdict
+		});
+	}
+	return checks;
+}
+
+function isFloorAwareEvidence(evidence) {
+	return evidence.measurementContractVersion === FLOOR_AWARE_CONTRACT_VERSION && Boolean(evidence.summary);
 }
 
 function evaluatePlatformIdentity(evidence) {

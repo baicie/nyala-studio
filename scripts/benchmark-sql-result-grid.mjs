@@ -107,12 +107,13 @@ const workloads = [
 const cli = parseArgs(process.argv.slice(2));
 if (cli.help) {
 	process.stdout.write(
-		`Usage: node scripts/benchmark-sql-result-grid.mjs [options]\n\nOptions:\n  -h, --help                    Show this help\n  --repeat <n>                  Runs per workload/renderer (default: 1)\n  --renderer <names>            native,workbench-table,zeus, or all\n  --workload <ids>              Comma-separated workload ids\n  --workbench-table-implementation <mode>\n                                characterization (default) or real\n  --zeus-bundle <path>          Zeus data-grid browser bundle (or NYALA_ZEUS_BUNDLE)\n  --require-zeus <true|false>   Fail unless Zeus produces ok records\n  --diagnostic-profile <bool>   Measure presentation floor and Zeus internals (default: false)\n  --jank-trace <true|false>     Diagnostic continuous-scroll jank traces (default: false)\n  --segment-trace <true|false>  Observer-free input/handler/range/commit/paint trace (default: false)\n  --zeus-measure-node-churn <bool>\n                                Diagnostic A/B: count DOM node churn after commit (default: true)\n  --emit-page <path>            Write the standalone benchmark page and exit\n  --output <path>               Output benchmark JSON\n`
+		`Usage: node scripts/benchmark-sql-result-grid.mjs [options]\n\nOptions:\n  -h, --help                    Show this help\n  --repeat <n>                  Runs per workload/renderer (default: 1)\n  --renderer <names>            native,workbench-table,zeus, or all\n  --workload <ids>              Comma-separated workload ids\n  --workbench-table-implementation <mode>\n                                characterization (default) or real\n  --zeus-bundle <path>          Zeus data-grid browser bundle (or NYALA_ZEUS_BUNDLE)\n  --require-zeus <true|false>   Fail unless Zeus produces ok records\n  --diagnostic-profile <bool>   Measure presentation floor and Zeus internals (default: false)\n  --floor-only <bool>           Sample the presentation floor without installing renderer observers (default: false)\n  --jank-trace <true|false>     Diagnostic continuous-scroll jank traces (default: false)\n  --segment-trace <true|false>  Observer-free input/handler/range/commit/paint trace (default: false)\n  --zeus-measure-node-churn <bool>\n                                Diagnostic A/B: count DOM node churn after commit (default: true)\n  --emit-page <path>            Write the standalone benchmark page and exit\n  --output <path>               Output benchmark JSON\n`
 	);
 	process.exit(0);
 }
 const repeat = parsePositiveInteger(cli.repeat ?? '1', '--repeat');
 const diagnosticProfile = parseBoolean(cli['diagnostic-profile'] ?? 'false', '--diagnostic-profile');
+const floorOnly = parseBoolean(cli['floor-only'] ?? 'false', '--floor-only');
 const traceProfile = parseBoolean(cli['trace-profile'] ?? 'false', '--trace-profile');
 const jankTrace = parseBoolean(cli['jank-trace'] ?? 'false', '--jank-trace');
 const segmentTrace = parseBoolean(cli['segment-trace'] ?? 'false', '--segment-trace');
@@ -508,6 +509,7 @@ async function runBrowserBenchmark(
 		executionOrder: EXECUTION_ORDER,
 		executionOrdinal: String(executionOrdinal),
 		diagnosticProfile: String(diagnosticProfile),
+		floorOnly: String(floorOnly),
 		traceProfile: String(traceProfile),
 		segmentTrace: String(segmentTrace),
 		measureNodeChurn: String(measureNodeChurn),
@@ -871,9 +873,14 @@ const resultEndpoint = params.get('resultEndpoint');
 	const renderer = params.get('renderer') || 'native';
 	const executionOrder = params.get('executionOrder') || '';
 	const executionOrdinal = Number(params.get('executionOrdinal') || 0);
-	const segmentTrace = params.get('segmentTrace') === 'true';
-	const diagnosticProfile = params.get('diagnosticProfile') === 'true' || segmentTrace;
-	const traceProfile = params.get('traceProfile') === 'true';
+const segmentTrace = params.get('segmentTrace') === 'true';
+const diagnosticProfile = params.get('diagnosticProfile') === 'true' || segmentTrace;
+// v7 admission records need the empty-loop presentation floor but must not pay
+// for renderer-side instrumentation, because that overhead would land inside
+// scrollP95Ms and bias the very comparison the floor exists to inform. floorOnly
+// therefore suppresses every renderer observer while still sampling the floor.
+const floorOnly = params.get('floorOnly') === 'true';
+const traceProfile = params.get('traceProfile') === 'true';
 	const jankTrace = params.get('jankTrace') === 'true';
 	const jankTraceWorkloadId = params.get('workloadId') || '';
 	const measureNodeChurn = params.get('measureNodeChurn');
@@ -1304,14 +1311,17 @@ function renderWorkbenchTable(root, rows, columns) {
     height: Math.max(1, viewportHeight - 20),
     rowHeight: ROW_HEIGHT,
     headerHeight: HEADER_HEIGHT
-  }, diagnosticProfile);
+	  }, diagnosticProfile && !floorOnly);
   const implementation = rendered?.implementation;
+  // floorOnly must leave the renderer uninstrumented, so a floor-profile run
+  // is not allowed to demand the diagnosticsInstalled proof.
+  const requireDiagnosticsProof = diagnosticProfile && !floorOnly;
   if (
     implementation?.id !== WORKBENCH_TABLE_IMPLEMENTATION_ID ||
     implementation?.runtimeProof !== WORKBENCH_TABLE_RUNTIME_PROOF ||
     implementation?.exactPrototype !== true ||
     implementation?.domVerified !== true ||
-    (diagnosticProfile && implementation?.diagnosticsInstalled !== true) ||
+    (requireDiagnosticsProof && implementation?.diagnosticsInstalled !== true) ||
     !/^[a-f0-9]{64}$/.test(WORKBENCH_TABLE_BUNDLE_SHA256 || '')
   ) {
     rendered?.dispose?.();
@@ -1330,7 +1340,7 @@ function renderWorkbenchTable(root, rows, columns) {
 async function renderZeus(root, rows, columns) {
   if (!customElements.get('zw-data-grid')) return { unavailable: 'Zeus bundle was not provided.' };
   const grid = document.createElement('zw-data-grid');
-	const zeusDiagnostics = diagnosticProfile ? createZeusDataGridDiagnosticCollector(
+	const zeusDiagnostics = diagnosticProfile && !floorOnly ? createZeusDataGridDiagnosticCollector(
 		segmentTrace || measureNodeChurn === 'false' ? { measureNodeChurn: false } : undefined
 	) : undefined;
 	if (zeusDiagnostics) grid.diagnostics = zeusDiagnostics.observer;
@@ -1443,7 +1453,8 @@ async function main() {
 		rendererImplementation: rendered.implementation,
 		diagnostics: diagnosticProfile || traceProfile ? {
 			...(diagnosticProfile ? { presentationFloor } : {}),
-			measureNodeChurn: segmentTrace || (diagnosticProfile && measureNodeChurn !== 'false'),
+			measureNodeChurn: segmentTrace || (diagnosticProfile && !floorOnly && measureNodeChurn !== 'false'),
+			floorOnly,
 			traceProfile,
 			...(zeusDataGrid ? { zeusDataGrid } : {}),
 			...(workbenchTableDiagnostics ? { workbenchTable: workbenchTableDiagnostics } : {})
