@@ -178,6 +178,7 @@ async function run() {
 				height: String(workload.height),
 				deferStart: 'true'
 			};
+			query.resultEndpoint = benchmarkServer.resultUrl;
 			if (traceProfile) query.traceProfile = 'true';
 			if (iteration === 1) {
 				query.screenshotRunMarker = Buffer.from(createSqlResultGridRunMarkerBytes(runToken)).toString('hex');
@@ -192,15 +193,21 @@ async function run() {
 				);
 			}
 			await startDeferredBenchmark(driverUrl, sessionId, Boolean(appBinary));
-			const record = await waitForResult(driverUrl, sessionId, Boolean(appBinary), {
-				runToken,
-				renderer,
-				executionOrder: EXECUTION_ORDER,
-				executionOrdinal,
-				workload,
-				workbenchTableImplementation: 'real',
-				workbenchTableBundleSha256: provenance.workbenchTableBundleSha256
-			});
+			const record = await waitForResult(
+				driverUrl,
+				sessionId,
+				Boolean(appBinary),
+				{
+					runToken,
+					renderer,
+					executionOrder: EXECUTION_ORDER,
+					executionOrdinal,
+					workload,
+					workbenchTableImplementation: 'real',
+					workbenchTableBundleSha256: provenance.workbenchTableBundleSha256
+				},
+				benchmarkServer
+			);
 			if (renderer === 'workbench-table') {
 				const bundleSha256 = record.rendererImplementation?.bundleSha256;
 				if (
@@ -258,6 +265,7 @@ async function run() {
 					sessionId,
 					Boolean(appBinary),
 					benchmarkServer.url,
+					benchmarkServer,
 					{ renderer, executionOrdinal, workload, workbenchTableBundleSha256: provenance.workbenchTableBundleSha256 }
 				);
 			}
@@ -311,8 +319,33 @@ async function run() {
 
 async function serveBenchmarkPage(pagePath) {
 	const html = await readFile(pagePath);
+	const results = new Map();
 	const server = createServer((request, response) => {
 		const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+		if (request.method === 'POST' && requestUrl.pathname === '/benchmark-result') {
+			const chunks = [];
+			let size = 0;
+			request.on('data', chunk => {
+				size += chunk.length;
+				if (size <= 2 * 1024 * 1024) chunks.push(chunk);
+			});
+			request.on('end', () => {
+				try {
+					if (size > 2 * 1024 * 1024) throw new Error('result payload exceeds 2 MiB');
+					const result = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+					if (typeof result?.runToken !== 'string' || result.runToken.length === 0) {
+						throw new Error('result payload is missing runToken');
+					}
+					results.set(result.runToken, result);
+					response.writeHead(204);
+					response.end();
+				} catch (error) {
+					response.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
+					response.end(error instanceof Error ? error.message : String(error));
+				}
+			});
+			return;
+		}
 		if (request.method !== 'GET' || requestUrl.pathname !== '/benchmark.html') {
 			response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
 			response.end('Not found');
@@ -338,6 +371,12 @@ async function serveBenchmarkPage(pagePath) {
 	}
 	return {
 		url: `http://127.0.0.1:${address.port}/benchmark.html`,
+		resultUrl: `http://127.0.0.1:${address.port}/benchmark-result`,
+		readResult: runToken => {
+			const result = results.get(runToken);
+			if (result) results.delete(runToken);
+			return result;
+		},
 		close: () => new Promise(resolveClose => server.close(() => resolveClose()))
 	};
 }
@@ -528,7 +567,14 @@ async function setSessionTimeouts(baseUrl, sessionId, scriptMs) {
 	});
 }
 
-async function runObserverFreeSegmentTraceNavigation(baseUrl, sessionId, embedded, benchmarkBaseUrl, expected) {
+async function runObserverFreeSegmentTraceNavigation(
+	baseUrl,
+	sessionId,
+	embedded,
+	benchmarkBaseUrl,
+	resultChannel,
+	expected
+) {
 	const traceRunToken = randomUUID();
 	const query = new URLSearchParams({
 		run: traceRunToken,
@@ -544,18 +590,25 @@ async function runObserverFreeSegmentTraceNavigation(baseUrl, sessionId, embedde
 		width: String(expected.workload.width),
 		height: String(expected.workload.height)
 	});
+	query.set('resultEndpoint', resultChannel.resultUrl);
 	const url = `${benchmarkBaseUrl}?${query}`;
 	await webdriverRequest(baseUrl, `/session/${sessionId}/url`, 'POST', { url });
 	await waitForNavigation(baseUrl, sessionId, url);
-	const record = await waitForResult(baseUrl, sessionId, embedded, {
-		runToken: traceRunToken,
-		renderer: expected.renderer,
-		executionOrder: EXECUTION_ORDER,
-		executionOrdinal: expected.executionOrdinal,
-		workload: expected.workload,
-		workbenchTableImplementation: 'real',
-		workbenchTableBundleSha256: expected.workbenchTableBundleSha256
-	});
+	const record = await waitForResult(
+		baseUrl,
+		sessionId,
+		embedded,
+		{
+			runToken: traceRunToken,
+			renderer: expected.renderer,
+			executionOrder: EXECUTION_ORDER,
+			executionOrdinal: expected.executionOrdinal,
+			workload: expected.workload,
+			workbenchTableImplementation: 'real',
+			workbenchTableBundleSha256: expected.workbenchTableBundleSha256
+		},
+		resultChannel
+	);
 	if (record.status !== 'ok' || !record.segmentTrace) {
 		throw new Error(`Observer-free segment trace failed for ${expected.workload.id}/${expected.renderer}.`);
 	}
@@ -563,20 +616,37 @@ async function runObserverFreeSegmentTraceNavigation(baseUrl, sessionId, embedde
 	return record.segmentTrace;
 }
 
-async function waitForResult(baseUrl, sessionId, embedded, expected) {
+async function waitForResult(baseUrl, sessionId, embedded, expected, resultChannel) {
 	const deadline = Date.now() + scriptTimeoutMs;
 	let lastMismatch;
 	while (Date.now() < deadline) {
-		const text = embedded
-			? await readBenchmarkResultViaDirectEval(baseUrl)
-			: unwrapWebdriverValue(
-					await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
-						script: "return document.querySelector('#benchmark-result')?.textContent || '';",
-						args: []
-					})
-				);
-		if (typeof text === 'string' && text.trim()) {
-			const result = JSON.parse(text);
+		const postedResult = resultChannel?.readResult(expected.runToken);
+		let text = postedResult;
+		if (text === undefined && !resultChannel) {
+			try {
+				text = embedded
+					? await readBenchmarkResultViaDirectEval(baseUrl)
+					: unwrapWebdriverValue(
+							await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
+								script: "return document.querySelector('#benchmark-result')?.textContent || '';",
+								args: []
+							})
+						);
+			} catch (error) {
+				lastMismatch = error instanceof Error ? error.message : String(error);
+				await new Promise(resolve => setTimeout(resolve, 100));
+				continue;
+			}
+		}
+		if ((typeof text === 'string' && text.trim()) || (text && typeof text === 'object')) {
+			let result;
+			try {
+				result = typeof text === 'string' ? JSON.parse(text) : text;
+			} catch (error) {
+				lastMismatch = error instanceof Error ? error.message : String(error);
+				await new Promise(resolve => setTimeout(resolve, 100));
+				continue;
+			}
 			if (
 				(result.status === 'ok' || result.status === 'error' || result.status === 'unavailable') &&
 				isBenchmarkResultForRun(result, expected)

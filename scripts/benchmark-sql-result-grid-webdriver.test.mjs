@@ -31,6 +31,10 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /createEmbeddedWebdriverSession/);
 	assert.match(source, /identifyEmbeddedWebview/);
 	assert.match(source, /serveBenchmarkPage/);
+	assert.match(source, /resultEndpoint/);
+	assert.match(source, /benchmark-result/);
+	assert.match(source, /resultChannel\?\.readResult/);
+	assert.match(source, /result payload exceeds 2 MiB/);
 	assert.match(source, /server\.listen\(0, '127\.0\.0\.1'/);
 	assert.doesNotMatch(source, /pathToFileURL/);
 	assert.match(source, /waitForNavigation/);
@@ -88,6 +92,16 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.doesNotMatch(source, /window\/rect[^\n]*\.catch/);
 	assert.match(source, /sha256: createHash\('sha256'\)/);
 	assert.match(source, /screenshots\.push\(\{/);
+});
+
+test('benchmark page posts completed results to the runner channel', async () => {
+	const source = await import('node:fs/promises').then(fs =>
+		fs.readFile(new URL('./benchmark-sql-result-grid.mjs', import.meta.url), 'utf8')
+	);
+	assert.match(source, /const resultEndpoint = params\.get\('resultEndpoint'\)/);
+	assert.match(source, /fetch\(resultEndpoint, \{/);
+	assert.match(source, /method: 'POST'/);
+	assert.match(source, /keepalive: true/);
 });
 
 test('CSS viewport observation waits for the native resize to settle', async () => {
