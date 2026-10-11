@@ -20,12 +20,16 @@ import {
 	MEASUREMENT_CONTRACT_VERSION,
 	SCROLL_COMMIT_BOUNDARY
 } from './sql-result-grid-benchmark-contract.mjs';
+import { createSqlResultGridResultChannel } from './sql-result-grid-result-channel.mjs';
 
 const execFileAsync = promisify(execFile);
 
 test('WebDriver benchmark runner records platform evidence and screenshots', async () => {
 	const source = await import('node:fs/promises').then(fs =>
 		fs.readFile(new URL('./benchmark-sql-result-grid-webdriver.mjs', import.meta.url), 'utf8')
+	);
+	const resultChannelSource = await import('node:fs/promises').then(fs =>
+		fs.readFile(new URL('./sql-result-grid-result-channel.mjs', import.meta.url), 'utf8')
 	);
 	assert.match(source, /--app-binary/);
 	assert.match(source, /createEmbeddedWebdriverSession/);
@@ -34,7 +38,7 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /resultEndpoint/);
 	assert.match(source, /benchmark-result/);
 	assert.match(source, /resultChannel\?\.readResult/);
-	assert.match(source, /result payload exceeds 2 MiB/);
+	assert.match(resultChannelSource, /result payload exceeds 2 MiB/);
 	assert.match(source, /server\.listen\(0, '127\.0\.0\.1'/);
 	assert.doesNotMatch(source, /pathToFileURL/);
 	assert.match(source, /waitForNavigation/);
@@ -102,6 +106,52 @@ test('benchmark page posts completed results to the runner channel', async () =>
 	assert.match(source, /fetch\(resultEndpoint, \{/);
 	assert.match(source, /method: 'POST'/);
 	assert.doesNotMatch(source, /keepalive: true/);
+});
+
+test('result channel accepts, validates, and consumes one result per token', async () => {
+	const channel = createSqlResultGridResultChannel();
+	const server = createServer((request, response) => {
+		if (!channel.handle(request, response)) response.writeHead(404).end();
+	});
+	await new Promise((resolveListen, rejectListen) => {
+		server.once('error', rejectListen);
+		server.listen(0, '127.0.0.1', () => {
+			server.off('error', rejectListen);
+			resolveListen();
+		});
+	});
+	const address = server.address();
+	assert.ok(address && typeof address !== 'string');
+	const url = `http://127.0.0.1:${address.port}/benchmark-result`;
+	try {
+		const payload = { runToken: 'run-1', status: 'ok', renderer: 'native' };
+		const accepted = await fetch(url, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(payload)
+		});
+		assert.equal(accepted.status, 204);
+		assert.deepEqual(channel.readResult('run-1'), payload);
+		assert.equal(channel.readResult('run-1'), undefined);
+
+		const missingToken = await fetch(url, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ status: 'ok' })
+		});
+		assert.equal(missingToken.status, 400);
+
+		const oversized = await fetch(url, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ runToken: 'too-large', value: 'x'.repeat(2 * 1024 * 1024) })
+		});
+		assert.equal(oversized.status, 400);
+		assert.equal(channel.readResult('too-large'), undefined);
+	} finally {
+		server.closeAllConnections();
+		await new Promise(resolveClose => server.close(resolveClose));
+	}
 });
 
 test('CSS viewport observation waits for the native resize to settle', async () => {

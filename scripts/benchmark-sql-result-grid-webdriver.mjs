@@ -36,6 +36,7 @@ import {
 	inspectSqlResultGridRunMarker,
 	SQL_RESULT_GRID_RUN_MARKER_VERSION
 } from './sql-result-grid-run-marker.mjs';
+import { createSqlResultGridResultChannel } from './sql-result-grid-result-channel.mjs';
 import { validateObserverFreeSegmentTraceSnapshot } from './sql-result-grid-segment-trace.mjs';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -319,32 +320,10 @@ async function run() {
 
 async function serveBenchmarkPage(pagePath) {
 	const html = await readFile(pagePath);
-	const results = new Map();
+	const resultChannel = createSqlResultGridResultChannel();
 	const server = createServer((request, response) => {
 		const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
-		if (request.method === 'POST' && requestUrl.pathname === '/benchmark-result') {
-			const chunks = [];
-			let size = 0;
-			request.on('data', chunk => {
-				size += chunk.length;
-				if (size <= 2 * 1024 * 1024) chunks.push(chunk);
-			});
-			request.on('end', () => {
-				try {
-					if (size > 2 * 1024 * 1024) throw new Error('result payload exceeds 2 MiB');
-					const result = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-					if (typeof result?.runToken !== 'string' || result.runToken.length === 0) {
-						throw new Error('result payload is missing runToken');
-					}
-					if (results.size >= 128) results.delete(results.keys().next().value);
-					results.set(result.runToken, result);
-					response.writeHead(204);
-					response.end();
-				} catch (error) {
-					response.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
-					response.end(error instanceof Error ? error.message : String(error));
-				}
-			});
+		if (resultChannel.handle(request, response)) {
 			return;
 		}
 		if (request.method !== 'GET' || requestUrl.pathname !== '/benchmark.html') {
@@ -373,11 +352,7 @@ async function serveBenchmarkPage(pagePath) {
 	return {
 		url: `http://127.0.0.1:${address.port}/benchmark.html`,
 		resultUrl: `http://127.0.0.1:${address.port}/benchmark-result`,
-		readResult: runToken => {
-			const result = results.get(runToken);
-			if (result) results.delete(runToken);
-			return result;
-		},
+		readResult: resultChannel.readResult,
 		close: () => new Promise(resolveClose => server.close(() => resolveClose()))
 	};
 }
