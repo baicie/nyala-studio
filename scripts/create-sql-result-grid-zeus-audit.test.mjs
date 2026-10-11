@@ -12,15 +12,15 @@ const execFileAsync = promisify(execFile);
 const scriptPath = new URL('./create-sql-result-grid-zeus-audit.mjs', import.meta.url).pathname;
 const packageMetadata = {
 	name: '@zeus-web/data-grid',
-	version: '0.1.0-beta.22',
+	version: '0.1.0-beta.23',
 	license: 'MIT',
 	dependencies: {
 		'@zeus-js/output-react-wrapper': '0.1.1-beta.7',
 		'@zeus-js/output-vue-wrapper': '0.1.1-beta.7',
 		'@zeus-js/runtime-dom': '0.1.1-beta.7',
 		'@zeus-js/web-c-runtime': '0.1.1-beta.7',
-		'@zeus-web/virtual': '0.1.0-beta.22',
-		'@zeus-web/zeus-compat': '0.1.0-beta.22'
+		'@zeus-web/virtual': '0.1.0-beta.23',
+		'@zeus-web/zeus-compat': '0.1.0-beta.23'
 	},
 	peerDependencies: {
 		'@zeus-js/zeus': '0.1.1-beta.7',
@@ -29,8 +29,8 @@ const packageMetadata = {
 	}
 };
 const registryMetadata = {
-	'dist.integrity': 'sha512-XvfxnMQX3YS2PmqlRc4dlZKOw6aozE3iJoW0QiHIJ7ruf0i9NZWZAgWz9Ki//EukJag4K1LMAyA/50UNHdzr8A==',
-	'dist.unpackedSize': 342_700
+	'dist.integrity': 'sha512-A9JriCz/zTnB5J8NzyHcYq3p1wqsBQo5MKONhJyRnG4ChVeC2X1NzPrL2xdjxG5QovdS7dX1GwbwFXxc/bw3Mw==',
+	'dist.unpackedSize': 340_604
 };
 
 test('creates a revision-bound Zeus dependency and bundle audit', async () => {
@@ -64,7 +64,7 @@ test('writes blocked evidence when registry integrity changes', async () => {
 });
 
 test('writes blocked evidence when registry unpacked size changes', async () => {
-	const fixture = await createFixture({ ...registryMetadata, 'dist.unpackedSize': 344_317 });
+	const fixture = await createFixture({ ...registryMetadata, 'dist.unpackedSize': 342_221 });
 	try {
 		await assert.rejects(execFileAsync(process.execPath, createArgs(fixture)));
 		const report = JSON.parse(await readFile(fixture.outputPath, 'utf8'));
