@@ -101,7 +101,7 @@ test('benchmark page posts completed results to the runner channel', async () =>
 	assert.match(source, /const resultEndpoint = params\.get\('resultEndpoint'\)/);
 	assert.match(source, /fetch\(resultEndpoint, \{/);
 	assert.match(source, /method: 'POST'/);
-	assert.match(source, /keepalive: true/);
+	assert.doesNotMatch(source, /keepalive: true/);
 });
 
 test('CSS viewport observation waits for the native resize to settle', async () => {

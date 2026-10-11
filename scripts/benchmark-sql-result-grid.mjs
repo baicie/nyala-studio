@@ -992,8 +992,7 @@ function writeBenchmarkResult(result) {
 		fetch(resultEndpoint, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: serialized,
-			keepalive: true
+			body: serialized
 		}).catch(() => undefined);
 	}
 }

@@ -336,6 +336,7 @@ async function serveBenchmarkPage(pagePath) {
 					if (typeof result?.runToken !== 'string' || result.runToken.length === 0) {
 						throw new Error('result payload is missing runToken');
 					}
+					if (results.size >= 128) results.delete(results.keys().next().value);
 					results.set(result.runToken, result);
 					response.writeHead(204);
 					response.end();
