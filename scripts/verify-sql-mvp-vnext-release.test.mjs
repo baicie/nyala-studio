@@ -164,17 +164,17 @@ function createValidZ1Gate(sourceRevision) {
 			bundleSha256,
 			package: {
 				name: '@zeus-web/data-grid',
-				version: '0.1.0-beta.16',
+				version: '0.1.0-beta.19',
 				license: 'MIT',
-				integrity: 'sha512-+09r8q/YHa8d0jCheanCDBMWMj7gRt2jTyTP57aZPIJsmFfVHqp8umymSDPIX/UQ333GEc9tMMHPuL5mdL3nWw==',
-				unpackedSize: 341_878,
+				integrity: 'sha512-yPzXpwTGVZgB6ooD5KQ/f5CKg5pfqD/tqKCqUzm1hmJE31LDWlky7qkW/ihVEu/HslopJx7okp+jZDBt6x/fgg==',
+				unpackedSize: 341_454,
 				dependencies: {
 					'@zeus-js/output-react-wrapper': '0.1.1-beta.6',
 					'@zeus-js/output-vue-wrapper': '0.1.1-beta.6',
 					'@zeus-js/runtime-dom': '0.1.1-beta.6',
 					'@zeus-js/web-c-runtime': '0.1.1-beta.6',
-					'@zeus-web/virtual': '0.1.0-beta.16',
-					'@zeus-web/zeus-compat': '0.1.0-beta.16'
+					'@zeus-web/virtual': '0.1.0-beta.19',
+					'@zeus-web/zeus-compat': '0.1.0-beta.19'
 				},
 				peerDependencies: {
 					'@zeus-js/zeus': '0.1.1-beta.6',
