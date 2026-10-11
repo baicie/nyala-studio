@@ -95,6 +95,8 @@ jobs:
           node scripts/benchmark-sql-result-grid.mjs \
             --renderer all \
             --repeat 3 \
+            --diagnostic-profile true \
+            --floor-only true \
             --workbench-table-implementation real \
             --require-zeus true \
             --zeus-bundle "$AUDIT_DIR/data-grid-bundle.js" \

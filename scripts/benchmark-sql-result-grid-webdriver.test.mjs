@@ -68,6 +68,13 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	// v7 platform records must request the presentation floor without paying for
 	// renderer observers, because observer cost would bias scrollP95Ms.
 	assert.match(source, /floorOnly:\s*'true'/);
+	// The gate recomputes the summary from raw records and compares it with
+	// isDeepStrictEqual, so the producer must aggregate presentationFloorP95Ms
+	// with exactly the same shape or every platform run fails summary integrity.
+	assert.match(
+		source,
+		/presentationFloorP95Ms:\s*summarizeMetric\(\s*group\.map\(record => record\.diagnostics\?\.presentationFloor\?\.p95Ms\)/
+	);
 	assert.equal(SCROLL_COMMIT_BOUNDARY, 'post-presentation-opportunity');
 	assert.equal(EXECUTION_ORDER, 'renderer-balanced-rotation-v1');
 	assert.match(source, /measurementContractVersion:\s*MEASUREMENT_CONTRACT_VERSION/);

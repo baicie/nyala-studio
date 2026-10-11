@@ -736,6 +736,11 @@ function summarize(records) {
 				renderMs: summarizeMetric(group.map(record => record.renderMs)),
 				scrollP95Ms: summarizeMetric(group.map(record => record.scroll.p95Ms)),
 				scrollMaxMs: summarizeMetric(group.map(record => record.scroll.maxMs)),
+				// v7 admission reads the shared presentation floor from the summary,
+				// so the per-record empty-loop p95 must survive aggregation here too.
+				presentationFloorP95Ms: summarizeMetric(
+					group.map(record => record.diagnostics?.presentationFloor?.p95Ms).filter(value => Number.isFinite(value))
+				),
 				domNodes: summarizeMetric(group.map(record => record.domNodes)),
 				heapBytes: summarizeMetric(group.map(record => record.heapBytes).filter(value => value !== null)),
 				formatMs: summarizeMetric(group.map(record => record.formatMs)),
