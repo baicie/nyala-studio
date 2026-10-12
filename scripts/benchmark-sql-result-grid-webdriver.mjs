@@ -268,14 +268,20 @@ async function run() {
 				}
 			}
 			if (traceProfile && enriched.status === 'ok') {
-				enriched.segmentTrace = await runObserverFreeSegmentTraceNavigation(
-					driverUrl,
-					sessionId,
-					Boolean(appBinary),
-					benchmarkServer.url,
-					benchmarkServer,
-					{ renderer, executionOrdinal, workload, workbenchTableBundleSha256: provenance.workbenchTableBundleSha256 }
-				);
+				try {
+					enriched.segmentTrace = await runObserverFreeSegmentTraceNavigation(
+						driverUrl,
+						sessionId,
+						Boolean(appBinary),
+						benchmarkServer.url,
+						benchmarkServer,
+						{ renderer, executionOrdinal, workload, workbenchTableBundleSha256: provenance.workbenchTableBundleSha256 }
+					);
+				} catch (error) {
+					// Segment traces are diagnostic evidence. A broken trace channel must
+					// not discard the completed v7 performance record for this workload.
+					enriched.segmentTraceError = error instanceof Error ? error.message : String(error);
+				}
 			}
 			records.push(enriched);
 			process.stdout.write(
@@ -605,7 +611,7 @@ async function waitForResult(baseUrl, sessionId, embedded, expected, resultChann
 	while (Date.now() < deadline) {
 		const postedResult = resultChannel?.readResult(expected.runToken);
 		let text = postedResult;
-		if (text === undefined && !resultChannel) {
+		if (text === undefined && (embedded || !resultChannel)) {
 			try {
 				text = embedded
 					? await readBenchmarkResultViaDirectEval(baseUrl)

@@ -38,6 +38,8 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /resultEndpoint/);
 	assert.match(source, /benchmark-result/);
 	assert.match(source, /resultChannel\?\.readResult/);
+	assert.match(source, /segmentTraceError/);
+	assert.match(source, /text === undefined && \(embedded \|\| !resultChannel\)/);
 	assert.match(resultChannelSource, /result payload exceeds 2 MiB/);
 	assert.match(source, /server\.listen\(0, '127\.0\.0\.1'/);
 	assert.doesNotMatch(source, /pathToFileURL/);
