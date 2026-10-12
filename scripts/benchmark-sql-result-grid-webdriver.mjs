@@ -83,6 +83,10 @@ const scriptTimeoutMs = parseBoundedPositiveInteger(
 	'--script-timeout-ms',
 	300_000
 );
+// Result polling must stay responsive: a hung WebView must surface as a
+// timeout against the run deadline instead of blocking one full script budget
+// per poll iteration.
+const RESULT_POLL_EVAL_TIMEOUT_MS = 10_000;
 const traceProfile = String(cli['trace-profile'] ?? 'false') === 'true';
 const outputPath = resolve(cli.output ?? defaultOutput);
 const screenshotDir = resolve(cli['screenshot-dir'] ?? join(repositoryRoot, 'platform-screenshots'));
@@ -609,12 +613,14 @@ async function waitForResult(baseUrl, sessionId, embedded, expected, resultChann
 	const deadline = Date.now() + scriptTimeoutMs;
 	let lastMismatch;
 	while (Date.now() < deadline) {
+		const remainingMs = deadline - Date.now();
+		if (remainingMs <= 0) break;
 		const postedResult = resultChannel?.readResult(expected.runToken);
 		let text = postedResult;
 		if (text === undefined && (embedded || !resultChannel)) {
 			try {
 				text = embedded
-					? await readBenchmarkResultViaDirectEval(baseUrl)
+					? await readBenchmarkResultViaDirectEval(baseUrl, remainingMs)
 					: unwrapWebdriverValue(
 							await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
 								script: "return document.querySelector('#benchmark-result')?.textContent || '';",
@@ -623,7 +629,7 @@ async function waitForResult(baseUrl, sessionId, embedded, expected, resultChann
 						);
 			} catch (error) {
 				lastMismatch = error instanceof Error ? error.message : String(error);
-				await new Promise(resolve => setTimeout(resolve, 100));
+				await sleepWithinDeadline(deadline, 100);
 				continue;
 			}
 		}
@@ -633,7 +639,7 @@ async function waitForResult(baseUrl, sessionId, embedded, expected, resultChann
 				result = typeof text === 'string' ? JSON.parse(text) : text;
 			} catch (error) {
 				lastMismatch = error instanceof Error ? error.message : String(error);
-				await new Promise(resolve => setTimeout(resolve, 100));
+				await sleepWithinDeadline(deadline, 100);
 				continue;
 			}
 			if (
@@ -644,15 +650,21 @@ async function waitForResult(baseUrl, sessionId, embedded, expected, resultChann
 			}
 			lastMismatch = `Ignored stale or mismatched result for run ${expected.runToken}.`;
 		}
-		await new Promise(resolve => setTimeout(resolve, 100));
+		await sleepWithinDeadline(deadline, 100);
 	}
 	throw new Error(`Timed out waiting for benchmark result.${lastMismatch ? ` ${lastMismatch}` : ''}`);
 }
 
-async function readBenchmarkResultViaDirectEval(baseUrl) {
+async function readBenchmarkResultViaDirectEval(baseUrl, remainingMs) {
 	return evaluateViaDirectEval(baseUrl, "document.querySelector('#benchmark-result')?.textContent || ''", {
-		timeoutMs: scriptTimeoutMs
+		timeoutMs: Math.max(1, Math.min(remainingMs, RESULT_POLL_EVAL_TIMEOUT_MS))
 	});
+}
+
+function sleepWithinDeadline(deadline, delayMs) {
+	const remainingMs = deadline - Date.now();
+	if (remainingMs <= 0) return Promise.resolve();
+	return new Promise(resolve => setTimeout(resolve, Math.min(delayMs, remainingMs)));
 }
 
 async function saveScreenshot(baseUrl, sessionId, path, browserViewport, runToken) {

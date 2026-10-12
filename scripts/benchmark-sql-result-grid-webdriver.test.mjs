@@ -48,6 +48,12 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /script-timeout-ms/);
 	assert.match(source, /evaluateViaDirectEval/);
 	assert.match(source, /readBenchmarkResultViaDirectEval/);
+	// A hung WebView must not consume one full script budget per poll
+	// iteration, otherwise a single stuck run stalls the platform jobs for
+	// hours instead of failing against the run deadline.
+	assert.match(source, /RESULT_POLL_EVAL_TIMEOUT_MS/);
+	assert.match(source, /sleepWithinDeadline/);
+	assert.match(source, /timeoutMs: Math\.max\(1, Math\.min\(remainingMs, RESULT_POLL_EVAL_TIMEOUT_MS\)\)/);
 	assert.doesNotMatch(source, /executeSyncScript/);
 	assert.match(source, /Nyala SQL result grid benchmark/);
 	assert.match(source, /validateVisualProbe/);
