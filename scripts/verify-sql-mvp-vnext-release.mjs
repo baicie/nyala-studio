@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import {
 	createBalancedBenchmarkPlan,
@@ -26,6 +27,26 @@ const expectedSourceRevision =
 	execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot, encoding: 'utf8' }).trim();
 const expectedRepository = process.env.NYALA_EXPECTED_REPOSITORY;
 const expectedSourceRef = process.env.NYALA_EXPECTED_SOURCE_REF;
+const expectedZeusDataGridPackage = {
+	name: '@zeus-web/data-grid',
+	version: '0.1.0-beta.27',
+	license: 'MIT',
+	integrity: 'sha512-6TFE+KFvIwZRaVs04HnIxHlUmEHi7oWMnHT1GVGfcbNx77TowmIrOhto4h2cfLlW2fKOUmSbuI40gJpx/Glh9w==',
+	unpackedSize: 347_888,
+	dependencies: {
+		'@zeus-js/output-react-wrapper': '0.1.1-beta.8',
+		'@zeus-js/output-vue-wrapper': '0.1.1-beta.8',
+		'@zeus-js/runtime-dom': '0.1.1-beta.8',
+		'@zeus-js/web-c-runtime': '0.1.1-beta.8',
+		'@zeus-web/virtual': '0.1.0-beta.27',
+		'@zeus-web/zeus-compat': '0.1.0-beta.27'
+	},
+	peerDependencies: {
+		'@zeus-js/zeus': '0.1.1-beta.8',
+		react: '>=18 || >=19',
+		vue: '>=3'
+	}
+};
 const requiredCheckpointWCheckIds = new Set([
 	'capture-run-metadata',
 	'macos-native-identity',
@@ -407,12 +428,18 @@ function validateZ1Gate(gate, expectedRevision, options) {
 		reasons.push('Zeus dependency/bundle audit summary is invalid');
 	}
 	if (
-		dependency?.package?.name !== '@zeus-web/data-grid' ||
-		dependency?.package?.version !== '0.1.0-beta.27' ||
-		dependency?.package?.license !== 'MIT' ||
-		dependency?.package?.integrity !==
-			'sha512-6TFE+KFvIwZRaVs04HnIxHlUmEHi7oWMnHT1GVGfcbNx77TowmIrOhto4h2cfLlW2fKOUmSbuI40gJpx/Glh9w==' ||
-		dependency?.package?.unpackedSize !== 347_888
+		!isDeepStrictEqual(
+			{
+				name: dependency?.package?.name,
+				version: dependency?.package?.version,
+				license: dependency?.package?.license,
+				integrity: dependency?.package?.integrity,
+				unpackedSize: dependency?.package?.unpackedSize,
+				dependencies: dependency?.package?.dependencies,
+				peerDependencies: dependency?.package?.peerDependencies
+			},
+			expectedZeusDataGridPackage
+		)
 	) {
 		reasons.push('Zeus package audit summary is invalid');
 	}

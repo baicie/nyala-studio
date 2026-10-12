@@ -980,6 +980,35 @@ test('R0 verifier accepts a Z1 GO bound to raw inputs and a protected attestatio
 	assert.equal(report.decision, 'NO-GO');
 });
 
+for (const dependencyMutation of [
+	{
+		label: 'runtime dependency version',
+		mutate: packageMetadata => {
+			packageMetadata.dependencies['@zeus-js/runtime-dom'] = '0.1.1-beta.7';
+		}
+	},
+	{
+		label: 'peer dependency version',
+		mutate: packageMetadata => {
+			packageMetadata.peerDependencies['@zeus-js/zeus'] = '0.1.1-beta.7';
+		}
+	}
+]) {
+	test(`R0 verifier rejects a Z1 GO with a forged Zeus ${dependencyMutation.label}`, async () => {
+		const report = await runZ1ReleaseScenario({
+			mutate: ({ gate, attestation }) => {
+				dependencyMutation.mutate(gate.dependencyCheck.package);
+				// Keep the gate digest internally consistent so this exercises the
+				// package dependency contract rather than only attestation tamper detection.
+				attestation.inputDigests.gate = sha256(serializeJson(gate));
+			}
+		});
+		const check = report.checks.find(entry => entry.id === 'z1-go');
+		assert.equal(check?.passed, false);
+		assert.match(check?.reason ?? '', /Zeus package audit summary is invalid/);
+	});
+}
+
 test('R0 verifier rejects a Z1 GO that omits the v6 measurement and execution-order checks', async () => {
 	const report = await runZ1ReleaseScenario({
 		mutate: ({ gate }) => {
