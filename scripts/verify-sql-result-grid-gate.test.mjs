@@ -524,8 +524,8 @@ async function writeSyntheticBenchmark(root) {
 				name: '@zeus-web/data-grid',
 				version: '0.1.0-beta.26',
 				license: 'MIT',
-				integrity: 'sha512-A9JriCz/zTnB5J8NzyHcYq3p1wqsBQo5MKONhJyRnG4ChVeC2X1NzPrL2xdjxG5QovdS7dX1GwbwFXxc/bw3Mw==',
-				unpackedSize: 340_604,
+				integrity: 'sha512-3ajYpPTmQmWKLFUkOn3YWc77DLkAnAetk6MpoBit1ItB7La6vi5L1dLUgpod19xDY+OPR/7LMwwNXZY2UPZY7Q==',
+				unpackedSize: 346_072,
 				dependencies: {
 					'@zeus-js/output-react-wrapper': '0.1.1-beta.7',
 					'@zeus-js/output-vue-wrapper': '0.1.1-beta.7',

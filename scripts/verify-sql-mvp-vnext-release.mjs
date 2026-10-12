@@ -411,8 +411,8 @@ function validateZ1Gate(gate, expectedRevision, options) {
 		dependency?.package?.version !== '0.1.0-beta.26' ||
 		dependency?.package?.license !== 'MIT' ||
 		dependency?.package?.integrity !==
-			'sha512-A9JriCz/zTnB5J8NzyHcYq3p1wqsBQo5MKONhJyRnG4ChVeC2X1NzPrL2xdjxG5QovdS7dX1GwbwFXxc/bw3Mw==' ||
-		dependency?.package?.unpackedSize !== 340_604
+			'sha512-3ajYpPTmQmWKLFUkOn3YWc77DLkAnAetk6MpoBit1ItB7La6vi5L1dLUgpod19xDY+OPR/7LMwwNXZY2UPZY7Q==' ||
+		dependency?.package?.unpackedSize !== 346_072
 	) {
 		reasons.push('Zeus package audit summary is invalid');
 	}
