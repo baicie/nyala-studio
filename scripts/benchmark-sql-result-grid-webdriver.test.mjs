@@ -55,6 +55,10 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /sleepWithinDeadline/);
 	assert.match(source, /run-budget-ms/);
 	assert.match(source, /Platform run exceeded its/);
+	// Viewport observation is a trivial evaluation and must not consume the
+	// full script budget on every calibration attempt.
+	assert.match(source, /OBSERVE_EVAL_TIMEOUT_MS/);
+	assert.match(source, /\{ timeoutMs: OBSERVE_EVAL_TIMEOUT_MS \}/);
 	assert.match(source, /timeoutMs: Math\.max\(1, Math\.min\(remainingMs, RESULT_POLL_EVAL_TIMEOUT_MS\)\)/);
 	assert.doesNotMatch(source, /executeSyncScript/);
 	assert.match(source, /Nyala SQL result grid benchmark/);

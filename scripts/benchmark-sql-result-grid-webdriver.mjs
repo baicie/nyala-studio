@@ -88,6 +88,7 @@ const scriptTimeoutMs = parseBoundedPositiveInteger(
 // timeout against the run deadline instead of blocking one full script budget
 // per poll iteration.
 const RESULT_POLL_EVAL_TIMEOUT_MS = 10_000;
+const OBSERVE_EVAL_TIMEOUT_MS = 15_000;
 const runBudgetMs = parseBoundedPositiveInteger(cli['run-budget-ms'] ?? '1800000', '--run-budget-ms', 5_400_000);
 const traceProfile = String(cli['trace-profile'] ?? 'false') === 'true';
 const outputPath = resolve(cli.output ?? defaultOutput);
@@ -526,7 +527,10 @@ async function readCssViewport(baseUrl, sessionId, embedded) {
 		? await evaluateViaDirectEval(
 				baseUrl,
 				'({ width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio })',
-				{ timeoutMs: scriptTimeoutMs }
+				// Reading window.innerWidth is a trivial evaluation. Budgeting it at
+				// the full script timeout let a slow embedded eval stall every
+				// calibration attempt for two minutes each.
+				{ timeoutMs: OBSERVE_EVAL_TIMEOUT_MS }
 			)
 		: unwrapWebdriverValue(
 				await webdriverRequest(baseUrl, `/session/${sessionId}/execute/sync`, 'POST', {
