@@ -8,17 +8,17 @@ import { gzipSync } from 'node:zlib';
 
 const expectedPackage = {
 	name: '@zeus-web/data-grid',
-	version: '0.1.0-beta.23',
+	version: '0.1.0-beta.25',
 	license: 'MIT',
-	integrity: 'sha512-A9JriCz/zTnB5J8NzyHcYq3p1wqsBQo5MKONhJyRnG4ChVeC2X1NzPrL2xdjxG5QovdS7dX1GwbwFXxc/bw3Mw==',
-	unpackedSize: 340_604,
+	integrity: 'sha512-tqa3dJ5E3hvNyqo9Gb/DrnF8sGF/cWK6HWcEDTcw3gI6iNbPiKkCN+IsMxHetTc/A2llCEJ7irLQ1qQyP9rkPQ==',
+	unpackedSize: 348_089,
 	dependencies: {
 		'@zeus-js/output-react-wrapper': '0.1.1-beta.7',
 		'@zeus-js/output-vue-wrapper': '0.1.1-beta.7',
 		'@zeus-js/runtime-dom': '0.1.1-beta.7',
 		'@zeus-js/web-c-runtime': '0.1.1-beta.7',
-		'@zeus-web/virtual': '0.1.0-beta.23',
-		'@zeus-web/zeus-compat': '0.1.0-beta.23'
+		'@zeus-web/virtual': '0.1.0-beta.25',
+		'@zeus-web/zeus-compat': '0.1.0-beta.25'
 	},
 	peerDependencies: {
 		'@zeus-js/zeus': '0.1.1-beta.7',
