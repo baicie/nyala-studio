@@ -10,7 +10,7 @@ const expectedPackage = {
 	name: '@zeus-web/data-grid',
 	version: '0.1.0-beta.28',
 	license: 'MIT',
-	integrity: 'sha512-6TFE+KFvIwZRaVs04HnIxHlUmEHi7oWMnHT1GVGfcbNx77TowmIrOhto4h2cfLlW2fKOUmSbuI40gJpx/Glh9w==',
+	integrity: 'sha512-0LWsFTYNno0zIASkAHnbhhWvWy3LoWrsj113GPjuod5t7HoZFrosVXNVTT49TsA2zbQOPfm+QHUyhMMg1TjIow==',
 	unpackedSize: 347_888,
 	dependencies: {
 		'@zeus-js/output-react-wrapper': '0.1.1-beta.9',

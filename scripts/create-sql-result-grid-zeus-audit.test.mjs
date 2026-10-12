@@ -29,7 +29,7 @@ const packageMetadata = {
 	}
 };
 const registryMetadata = {
-	'dist.integrity': 'sha512-6TFE+KFvIwZRaVs04HnIxHlUmEHi7oWMnHT1GVGfcbNx77TowmIrOhto4h2cfLlW2fKOUmSbuI40gJpx/Glh9w==',
+	'dist.integrity': 'sha512-0LWsFTYNno0zIASkAHnbhhWvWy3LoWrsj113GPjuod5t7HoZFrosVXNVTT49TsA2zbQOPfm+QHUyhMMg1TjIow==',
 	'dist.unpackedSize': 347_888
 };
 
