@@ -24,6 +24,14 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 
 	const diagnostics = rendered.zeusDiagnostics ?? rendered.diagnostics;
 	const segments = [];
+	let dispatchedEventTime;
+	let dispatchedEventTimestamp;
+	const captureScrollEvent = event => {
+		if (dispatchedEventTime !== undefined) return;
+		dispatchedEventTime = performance.now();
+		dispatchedEventTimestamp = event.timeStamp;
+	};
+	rendered.scroll.addEventListener('scroll', captureScrollEvent, true);
 	const waitForFrame = () =>
 		new Promise(resolve => {
 			requestAnimationFrame(timestamp => {
@@ -48,6 +56,8 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 		const zeusOperation = rendered.zeusDiagnostics?.beginOperation(phase, diagnosticSampleIndex);
 		const workbenchOperation = rendered.diagnostics?.beginOperation(phase, diagnosticSampleIndex);
 		const inputStartTime = performance.now();
+		dispatchedEventTime = undefined;
+		dispatchedEventTimestamp = undefined;
 		rendered.scroll.scrollTop = targetOffset;
 		const inputEndTime = performance.now();
 		// Let the browser dispatch the native scroll event before sampling the next frame.
@@ -113,6 +123,8 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 			attempts: attempts + 1,
 			inputStartTime,
 			inputEndTime,
+			eventDispatchTime: dispatchedEventTime ?? null,
+			eventTimestamp: dispatchedEventTimestamp ?? null,
 			firstVisibleTime,
 			firstVisiblePhase,
 			nextPaintRafTime,
@@ -124,13 +136,17 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 	}
 
 	const maximumOffset = Math.max(0, rendered.scroll.scrollHeight - rendered.scroll.clientHeight);
-	if (maximumOffset <= 1) throw new Error('Observer-free segment trace has no scroll range.');
-	segments.push(await traceScroll(maximumOffset, null, 'preposition'));
-	for (let sampleIndex = 0; sampleIndex < targetRatios.length; sampleIndex += 1) {
-		const [numerator, denominator] = targetRatios[sampleIndex];
-		segments.push(await traceScroll((maximumOffset * numerator) / denominator, sampleIndex, 'sample'));
+	try {
+		if (maximumOffset <= 1) throw new Error('Observer-free segment trace has no scroll range.');
+		segments.push(await traceScroll(maximumOffset, null, 'preposition'));
+		for (let sampleIndex = 0; sampleIndex < targetRatios.length; sampleIndex += 1) {
+			const [numerator, denominator] = targetRatios[sampleIndex];
+			segments.push(await traceScroll((maximumOffset * numerator) / denominator, sampleIndex, 'sample'));
+		}
+		segments.push(await traceScroll(0, null, 'reset'));
+	} finally {
+		rendered.scroll.removeEventListener('scroll', captureScrollEvent, true);
 	}
-	segments.push(await traceScroll(0, null, 'reset'));
 
 	const diagnosticSnapshot = rendered.zeusDiagnostics?.snapshot() ?? rendered.diagnostics?.snapshot();
 	const commitById = new Map((diagnosticSnapshot?.commits ?? []).map(commit => [commit.transactionId, commit]));
@@ -155,7 +171,7 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 		instrumentation: 'observer-free-v1',
 		observerFree: true,
 		domObserverFree: true,
-		diagnosticsCallback: true,
+		diagnosticsCallback: Boolean(diagnostics),
 		measureNodeChurn: false,
 		maximumOffset,
 		segments,
@@ -175,7 +191,7 @@ export function validateObserverFreeSegmentTraceSnapshot(snapshot, options = {})
 	if (
 		snapshot.observerFree !== true ||
 		snapshot.domObserverFree !== true ||
-		snapshot.diagnosticsCallback !== true ||
+		typeof snapshot.diagnosticsCallback !== 'boolean' ||
 		snapshot.measureNodeChurn !== false
 	)
 		fail('observer-free flags are invalid.');
@@ -194,14 +210,18 @@ export function validateObserverFreeSegmentTraceSnapshot(snapshot, options = {})
 		for (const field of [
 			'inputStartTime',
 			'inputEndTime',
+			'eventDispatchTime',
+			'eventTimestamp',
 			'firstVisibleTime',
 			'nextPaintRafTime',
 			'nextPaintTaskTime'
 		]) {
+			if ((field === 'eventDispatchTime' || field === 'eventTimestamp') && segment[field] === null) continue;
 			if (!Number.isFinite(segment[field])) fail(`segment ${index} ${field} is invalid.`);
 		}
 		if (!(
 			segment.inputStartTime <= segment.inputEndTime &&
+			(segment.eventDispatchTime === null || segment.inputEndTime <= segment.eventDispatchTime) &&
 			segment.inputEndTime <= segment.nextPaintRafTime &&
 			segment.nextPaintRafTime <= segment.nextPaintTaskTime
 		))
@@ -214,16 +234,16 @@ export function validateObserverFreeSegmentTraceSnapshot(snapshot, options = {})
 			fail(`segment ${index} expected row is invalid.`);
 		if (!Number.isInteger(segment.rowDelta) || segment.rowDelta < 0 || segment.rowDelta > 2)
 			fail(`segment ${index} row delta is invalid.`);
-		if (
-			!Array.isArray(segment.commitTransactionIds) ||
-			(segment.commitTransactionIds.length === 0 && segment.phase === 'sample')
-		)
+		if (!Array.isArray(segment.commitTransactionIds)) fail(`segment ${index} commits are missing.`);
+		if (snapshot.diagnosticsCallback && segment.commitTransactionIds.length === 0 && segment.phase === 'sample')
 			fail(`segment ${index} commits are missing.`);
 		if (segment.commitTransactionIds.length === 0) continue;
 		if (segment.primaryCommitTransactionId !== segment.commitTransactionIds.at(-1))
 			fail(`segment ${index} primary commit is invalid.`);
 		const commit = commits.get(segment.primaryCommitTransactionId);
 		if (!commit) fail(`segment ${index} primary commit is missing.`);
+		if (segment.eventDispatchTime !== null && commit.handlerStartTime < segment.eventDispatchTime)
+			fail(`segment ${index} event/handler ordering is invalid.`);
 		if (!(
 			commit.handlerStartTime <= commit.handlerEndTime &&
 			commit.handlerEndTime <= commit.rangeStartTime &&

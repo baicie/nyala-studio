@@ -8,14 +8,15 @@ import {
 } from './sql-result-grid-segment-trace.mjs';
 
 function commit(transactionId) {
+	const handlerStartTime = transactionId * 10 + 2;
 	return {
 		transactionId,
-		handlerStartTime: transactionId,
-		handlerEndTime: transactionId + 1,
-		rangeStartTime: transactionId + 2,
-		rangeCalculatedTime: transactionId + 3,
-		commitStartTime: transactionId + 4,
-		commitEndTime: transactionId + 5
+		handlerStartTime,
+		handlerEndTime: handlerStartTime + 1,
+		rangeStartTime: handlerStartTime + 2,
+		rangeCalculatedTime: handlerStartTime + 3,
+		commitStartTime: handlerStartTime + 4,
+		commitEndTime: handlerStartTime + 5
 	};
 }
 
@@ -31,6 +32,8 @@ function segment(phase, sampleIndex, transactionId) {
 		attempts: 1,
 		inputStartTime: transactionId * 10,
 		inputEndTime: transactionId * 10 + 1,
+		eventDispatchTime: transactionId * 10 + 2,
+		eventTimestamp: transactionId * 10,
 		firstVisibleTime: transactionId * 10 + 3,
 		nextPaintRafTime: transactionId * 10 + 2,
 		nextPaintTaskTime: transactionId * 10 + 4,
@@ -71,4 +74,26 @@ test('observer-free trace validator rejects node-churn instrumentation', () => {
 		diagnostics: { commits: [] }
 	};
 	assert.throws(() => validateObserverFreeSegmentTraceSnapshot(snapshot), /observer-free flags/);
+});
+
+test('observer-free trace validator accepts renderers without diagnostics callbacks', () => {
+	const segments = [segment('preposition', null, 1), segment('sample', 0, 2), segment('reset', null, 3)].map(value => ({
+		...value,
+		commitTransactionIds: [],
+		primaryCommitTransactionId: null
+	}));
+	const snapshot = {
+		version: SQL_RESULT_GRID_SEGMENT_TRACE_VERSION,
+		timingClock: 'performance-now',
+		correlation: SQL_RESULT_GRID_SEGMENT_TRACE_CORRELATION,
+		instrumentation: SQL_RESULT_GRID_SEGMENT_TRACE_INSTRUMENTATION,
+		observerFree: true,
+		domObserverFree: true,
+		diagnosticsCallback: false,
+		measureNodeChurn: false,
+		maximumOffset: 1000,
+		segments,
+		diagnostics: { commits: [] }
+	};
+	assert.equal(validateObserverFreeSegmentTraceSnapshot(snapshot, { expectedSampleCount: 3 }), snapshot);
 });
