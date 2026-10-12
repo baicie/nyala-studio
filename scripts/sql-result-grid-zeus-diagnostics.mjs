@@ -32,6 +32,12 @@ export function createZeusDataGridDiagnosticCollector(options = {}) {
 			rangeStartTime: sample.rangeStartTime,
 			rangeCalculatedTime: sample.rangeCalculatedTime,
 			commitStartTime: sample.commitStartTime,
+			...(Number.isFinite(sample.signalPublishStartTime)
+				? { signalPublishStartTime: sample.signalPublishStartTime }
+				: {}),
+			...(Number.isFinite(sample.signalPublishEndTime)
+				? { signalPublishEndTime: sample.signalPublishEndTime }
+				: {}),
 			commitEndTime: sample.commitEndTime,
 			...(Number.isFinite(sample.diagnosticsEndTime) ? { diagnosticsEndTime: sample.diagnosticsEndTime } : {}),
 			layoutReadIntervals: Array.from(sample.layoutReadIntervals ?? [], interval => [interval[0], interval[1]]),
@@ -200,6 +206,17 @@ export function validateZeusDataGridDiagnosticSnapshot(snapshot, options) {
 			'commitEndTime'
 		]) {
 			requireFinite(sample[field], `commit ${index} ${field}`);
+		}
+		if (sample.signalPublishStartTime !== undefined || sample.signalPublishEndTime !== undefined) {
+			requireFinite(sample.signalPublishStartTime, `commit ${index} signalPublishStartTime`);
+			requireFinite(sample.signalPublishEndTime, `commit ${index} signalPublishEndTime`);
+			if (
+				sample.commitStartTime > sample.signalPublishStartTime ||
+				sample.signalPublishStartTime > sample.signalPublishEndTime ||
+				sample.signalPublishEndTime > sample.commitEndTime
+			) {
+				fail(`commit signal publish timing ${index} is invalid.`);
+			}
 		}
 		if (!(
 			sample.handlerStartTime <= sample.handlerEndTime &&

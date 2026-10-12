@@ -159,9 +159,11 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 			'rangeStartTime',
 			'rangeCalculatedTime',
 			'commitStartTime',
+			'signalPublishStartTime',
+			'signalPublishEndTime',
 			'commitEndTime'
 		]) {
-			segment[field] = commit[field];
+			if (commit[field] !== undefined) segment[field] = commit[field];
 		}
 	}
 	return {
@@ -249,7 +251,10 @@ export function validateObserverFreeSegmentTraceSnapshot(snapshot, options = {})
 			commit.handlerEndTime <= commit.rangeStartTime &&
 			commit.rangeStartTime <= commit.rangeCalculatedTime &&
 			commit.rangeCalculatedTime <= commit.commitStartTime &&
-			commit.commitStartTime <= commit.commitEndTime
+			commit.commitStartTime <= (commit.signalPublishStartTime ?? commit.commitStartTime) &&
+			(commit.signalPublishEndTime ?? commit.commitStartTime) <= commit.commitEndTime &&
+			(commit.signalPublishStartTime ?? commit.commitStartTime) <=
+				(commit.signalPublishEndTime ?? commit.commitStartTime)
 		))
 			fail(`segment ${index} renderer timing is invalid.`);
 		if (segment.primaryCommitTransactionId <= previousTransactionId) fail(`segment ${index} commits are out of order.`);
