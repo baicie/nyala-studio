@@ -60,6 +60,7 @@ if (cli.help === 'true') {
   --workflow-run-id <id> GitHub Actions run provenance
   --workflow-run-attempt <n> GitHub Actions attempt provenance
   --script-timeout-ms <n> WebDriver script budget (default: 120000)
+  --run-budget-ms <n> Whole-platform-run budget (default: 1800000)
   --trace-profile <true|false>  Record observer-free scroll timing segments
 `);
 	process.exit(0);
@@ -87,6 +88,7 @@ const scriptTimeoutMs = parseBoundedPositiveInteger(
 // timeout against the run deadline instead of blocking one full script budget
 // per poll iteration.
 const RESULT_POLL_EVAL_TIMEOUT_MS = 10_000;
+const runBudgetMs = parseBoundedPositiveInteger(cli['run-budget-ms'] ?? '1800000', '--run-budget-ms', 5_400_000);
 const traceProfile = String(cli['trace-profile'] ?? 'false') === 'true';
 const outputPath = resolve(cli.output ?? defaultOutput);
 const screenshotDir = resolve(cli['screenshot-dir'] ?? join(repositoryRoot, 'platform-screenshots'));
@@ -168,7 +170,17 @@ async function run() {
 		await setSessionTimeouts(driverUrl, sessionId, scriptTimeoutMs);
 		if (appBinary) identity = identifyEmbeddedWebview(session.capabilities, platform);
 		const benchmarkPlan = createBalancedBenchmarkPlan(selectedWorkloads, selectedRenderers, repeat);
+		const benchmarkStartedAt = Date.now();
 		for (const { workload, renderer, iteration, executionOrdinal } of benchmarkPlan) {
+			// Each round carries its own navigation, viewport calibration, segment
+			// trace, and result budgets. Without a whole-run budget a degraded
+			// WebView can stretch a platform job far past the point where the
+			// remaining rounds can still produce usable evidence.
+			if (Date.now() - benchmarkStartedAt > runBudgetMs) {
+				throw new Error(
+					`Platform run exceeded its ${Math.round(runBudgetMs / 1000)}s budget after ${records.length}/${benchmarkPlan.length} benchmark rounds.`
+				);
+			}
 			const runToken = randomUUID();
 			await resetPageForViewportCalibration(driverUrl, sessionId, Boolean(appBinary));
 			const query = {

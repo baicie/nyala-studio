@@ -53,6 +53,8 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	// hours instead of failing against the run deadline.
 	assert.match(source, /RESULT_POLL_EVAL_TIMEOUT_MS/);
 	assert.match(source, /sleepWithinDeadline/);
+	assert.match(source, /run-budget-ms/);
+	assert.match(source, /Platform run exceeded its/);
 	assert.match(source, /timeoutMs: Math\.max\(1, Math\.min\(remainingMs, RESULT_POLL_EVAL_TIMEOUT_MS\)\)/);
 	assert.doesNotMatch(source, /executeSyncScript/);
 	assert.match(source, /Nyala SQL result grid benchmark/);
