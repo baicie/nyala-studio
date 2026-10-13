@@ -170,7 +170,8 @@ export function isBenchmarkResultForRun(record, expected) {
 		record.workload?.wide === expected.workload.wide &&
 		record.workload?.viewportWidth === expected.workload.width &&
 		record.workload?.viewportHeight === expected.workload.height &&
-		(expected.workbenchTableImplementation !== 'real' ||
+		(record.status !== 'ok' ||
+			expected.workbenchTableImplementation !== 'real' ||
 			record.renderer !== 'workbench-table' ||
 			isValidWorkbenchTableRendererImplementation(record.rendererImplementation, expected.workbenchTableBundleSha256))
 	);

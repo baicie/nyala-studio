@@ -24,6 +24,14 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 
 	const diagnostics = rendered.zeusDiagnostics ?? rendered.diagnostics;
 	const segments = [];
+	const scrollElement = rendered.viewport ?? rendered.scroll;
+	if (
+		!scrollElement ||
+		typeof scrollElement.addEventListener !== 'function' ||
+		typeof scrollElement.removeEventListener !== 'function'
+	) {
+		throw new Error('Observer-free segment trace requires a scroll event target.');
+	}
 	let dispatchedEventTime;
 	let dispatchedEventTimestamp;
 	const captureScrollEvent = event => {
@@ -31,7 +39,7 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 		dispatchedEventTime = performance.now();
 		dispatchedEventTimestamp = event.timeStamp;
 	};
-	rendered.scroll.addEventListener('scroll', captureScrollEvent, true);
+	scrollElement.addEventListener('scroll', captureScrollEvent, true);
 	const waitForFrame = () =>
 		new Promise(resolve => {
 			requestAnimationFrame(timestamp => {
@@ -145,7 +153,7 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 		}
 		segments.push(await traceScroll(0, null, 'reset'));
 	} finally {
-		rendered.scroll.removeEventListener('scroll', captureScrollEvent, true);
+		scrollElement.removeEventListener('scroll', captureScrollEvent, true);
 	}
 
 	const diagnosticSnapshot = rendered.zeusDiagnostics?.snapshot() ?? rendered.diagnostics?.snapshot();

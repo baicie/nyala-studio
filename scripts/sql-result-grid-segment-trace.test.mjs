@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
 	SQL_RESULT_GRID_SEGMENT_TRACE_CORRELATION,
@@ -6,6 +7,14 @@ import {
 	SQL_RESULT_GRID_SEGMENT_TRACE_VERSION,
 	validateObserverFreeSegmentTraceSnapshot
 } from './sql-result-grid-segment-trace.mjs';
+
+test('observer-free trace listens on the renderer viewport when the scroll adapter is not a DOM node', async () => {
+	const source = await readFile(new URL('./sql-result-grid-segment-trace.mjs', import.meta.url), 'utf8');
+	assert.match(source, /const scrollElement = rendered\.viewport \?\? rendered\.scroll/);
+	assert.match(source, /scrollElement\.addEventListener\('scroll'/);
+	assert.match(source, /scrollElement\.removeEventListener\('scroll'/);
+	assert.doesNotMatch(source, /rendered\.scroll\.addEventListener\('scroll'/);
+});
 
 function commit(transactionId) {
 	const handlerStartTime = transactionId * 10 + 2;

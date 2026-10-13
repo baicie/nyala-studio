@@ -289,6 +289,13 @@ test('benchmark result identity rejects stale navigation results', () => {
 
 	assert.equal(isBenchmarkResultForRun(record, expected), true);
 	assert.equal(
+		isBenchmarkResultForRun(
+			{ ...record, status: 'error', renderer: 'workbench-table', reason: 'trace failed' },
+			{ ...expected, renderer: 'workbench-table', workbenchTableImplementation: 'real' }
+		),
+		true
+	);
+	assert.equal(
 		isBenchmarkResultForRun({ ...record, runToken: '22222222-2222-4222-8222-222222222222' }, expected),
 		false
 	);

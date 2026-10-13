@@ -683,6 +683,9 @@ async function waitForResult(baseUrl, sessionId, embedded, expected, resultChann
 				(result.status === 'ok' || result.status === 'error' || result.status === 'unavailable') &&
 				isBenchmarkResultForRun(result, expected)
 			) {
+				// A matching error is terminal for this run. Renderer provenance is
+				// required for successful evidence, but must not turn a page error
+				// into a 120-second stale-result timeout that hides the real cause.
 				return result;
 			}
 			lastMismatch = `Ignored stale or mismatched result for run ${expected.runToken}.`;
