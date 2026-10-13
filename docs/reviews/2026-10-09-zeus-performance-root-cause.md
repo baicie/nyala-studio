@@ -158,3 +158,9 @@ Nyala `mvp` 提交 `9ce87cfe` 把平台 workflow、审计构造器、Z1 gate 与
 与 beta.28 轮次相比，两个真实 WebView 的 10k 主门首次同时通过（macOS `22.5%`、Windows `30.2%`），Chromium 1k 回归也从 `17.2%` 降到 `7.0%`，Zeus 依赖审计从失败转为通过。仍然阻塞的是 1k 交互门：floor-adjusted 后 macOS 为 `12ms` vs 基线 `7ms`，Windows 为 `3.1ms` vs 基线 `0ms`，即 1000 行场景下每个滚动 commit 存在约 3-5ms 的固定额外开销，而不是随行数放大的成本。这与 10k 主门已经通过并不矛盾：1k 的共享呈现 floor 已经接近基线本身（Windows floor-adjusted 基线为 0），3-5ms 的固定差异在这种低负载下会被放大成 18-19% 的相对回归。
 
 因此 `Z1.3` 仍为 `NO-GO`、`Z2/R0` 保持阻塞。下一步应针对 1k 场景定位这 3-5ms 固定开销的来源（每 commit 的 signal 提交、snapshot diff、DOM 复用槽位更新与样式重算），而不是继续调整 10k 的呈现 floor 或阈值。
+
+### 1k 固定开销的分段定位
+
+用同一份 beta.29 bundle 在本地 Chromium 与两处真实 WebView 证据上做 observer-free 分段，Zeus 侧 1k-x-20 每个滚动 commit 的中位耗时为：`inputEndTime -> eventDispatchTime` 约 `16.0ms`（本地 Chromium `16.4ms`），`eventDispatchTime -> handlerStartTime` 为 `0ms`，range 计算 `0-1ms`，`signalPublishStartTime -> signalPublishEndTime` 中位 `2.0ms`、p95 `6.0ms`（Windows 中位 `3.5ms`、p95 `5.4ms`），`commitEndTime -> firstVisibleTime` 为 `0-1ms`。可见行索引与期望行完全一致（`rowDelta` 恒为 0），说明网格追踪正确，`rebuildModels()` 的脏标记短路也排除了每 commit 重建模型的可能。
+
+这与 10k 的结论一致：输入派发前的等待仍占约一帧且不由 Zeus 控制，Zeus 可控的部分是每次 commit 约 2-3ms 的固定 signal/DOM 提交。本地 Chromium 在 1k 下 Zeus 与 WorkbenchTable 的 p95 完全相同（均为 `17.4ms`），因此剩余的 1k 差距是 WebView 特有的固定提交成本，需要在这两个平台上进一步拆分 slot 更新与样式重算，而不是继续改 scheduler、snapshot 计算或阈值。本地 Chromium 的 `10k-x-50` 在本轮为 Zeus `35.4ms` vs 基线 `27.6ms`，与 CI 特征化一致，属于共享呈现 floor 附近的长尾噪声，两处真实 WebView 的 10k 主门才是本轮的有效判据。
