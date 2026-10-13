@@ -3,7 +3,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -77,6 +77,7 @@ import {
 	WORKBENCH_TABLE_DIAGNOSTICS_INSTRUMENTATION,
 	WORKBENCH_TABLE_DIAGNOSTICS_VERSION
 } from './sql-result-grid-workbench-table-diagnostics.mjs';
+import { removeTemporaryProfileRoot, stopBrowserProcess } from './sql-result-grid-temporary-profile.mjs';
 import {
 	runObserverFreeSegmentTrace,
 	validateObserverFreeSegmentTraceSnapshot,
@@ -342,7 +343,7 @@ try {
 	}
 } finally {
 	await browserRunner?.close();
-	await rm(temporaryRoot, { recursive: true, force: true });
+	await removeTemporaryProfileRoot(temporaryRoot);
 }
 
 function parseArgs(args) {
@@ -479,12 +480,12 @@ async function launchChromiumBenchmark(chromePath, temporaryRoot) {
 			client,
 			async close() {
 				client.close();
-				await stopBrowser(browserProcess);
+				await stopBrowserProcess(browserProcess);
 			}
 		};
 	} catch (error) {
 		client?.close();
-		await stopBrowser(browserProcess);
+		await stopBrowserProcess(browserProcess);
 		throw error;
 	}
 }
@@ -811,13 +812,6 @@ async function waitForJson(url, deadline) {
 		await delay(25);
 	}
 	throw new Error(`Timed out waiting for ${url}.`);
-}
-
-async function stopBrowser(browserProcess) {
-	if (browserProcess.exitCode !== null) return;
-	browserProcess.kill('SIGTERM');
-	await Promise.race([new Promise(resolveExit => browserProcess.once('exit', resolveExit)), delay(3_000)]);
-	if (browserProcess.exitCode === null) browserProcess.kill('SIGKILL');
 }
 
 function delay(milliseconds) {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { execFile } from 'node:child_process';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -35,11 +36,78 @@ import {
 	createSqlResultGridFloorHeadroomProfile,
 	createSqlResultGridWorkloadCpuRatioProfile
 } from './sql-result-grid-floor-headroom.mjs';
+import { removeTemporaryProfileRoot, stopBrowserProcess } from './sql-result-grid-temporary-profile.mjs';
 
 const execFileAsync = promisify(execFile);
 const benchmarkScript = new URL('./benchmark-sql-result-grid.mjs', import.meta.url);
 const floorHeadroomAnalyzerScript = new URL('./analyze-sql-result-grid-floor-headroom.mjs', import.meta.url);
 const checkedInReport = new URL('../docs/sql-mvp-phases/phase-z1-benchmark.json', import.meta.url);
+
+test('Chrome shutdown waits for process exit after SIGKILL before profile cleanup', async () => {
+	let resolveKillSignal;
+	const killSignal = new Promise(resolve => {
+		resolveKillSignal = resolve;
+	});
+	class DelayedExitProcess extends EventEmitter {
+		exitCode = null;
+		signalCode = null;
+		signals = [];
+
+		kill(signal) {
+			this.signals.push(signal);
+			if (signal === 'SIGKILL') resolveKillSignal();
+			return true;
+		}
+	}
+
+	const browserProcess = new DelayedExitProcess();
+	let stopped = false;
+	const stopPromise = stopBrowserProcess(browserProcess, { gracefulTimeoutMs: 5, forceTimeoutMs: 100 }).then(() => {
+		stopped = true;
+	});
+	await killSignal;
+	assert.equal(stopped, false, 'shutdown must not finish while the forced process is still alive');
+	browserProcess.signalCode = 'SIGKILL';
+	browserProcess.emit('exit', null, 'SIGKILL');
+	await stopPromise;
+	assert.equal(stopped, true);
+	assert.deepEqual(browserProcess.signals, ['SIGTERM', 'SIGKILL']);
+});
+
+test('temporary Chrome profile cleanup retries transient ENOTEMPTY failures', async () => {
+	let removeCalls = 0;
+	const waits = [];
+	await removeTemporaryProfileRoot('/tmp/nyala-chrome-profile', {
+		remove: async (path, options) => {
+			assert.equal(path, '/tmp/nyala-chrome-profile');
+			assert.deepEqual(options, { recursive: true, force: true });
+			removeCalls += 1;
+			if (removeCalls < 4) {
+				throw Object.assign(new Error('directory is not empty'), { code: 'ENOTEMPTY' });
+			}
+		},
+		retries: 20,
+		retryDelayMs: 100,
+		wait: async milliseconds => waits.push(milliseconds)
+	});
+	assert.equal(removeCalls, 4);
+	assert.deepEqual(waits, [100, 100, 100]);
+});
+
+test('temporary Chrome profile cleanup does not retry permanent filesystem failures', async () => {
+	let removeCalls = 0;
+	await assert.rejects(
+		removeTemporaryProfileRoot('/tmp/nyala-chrome-profile', {
+			remove: async () => {
+				removeCalls += 1;
+				throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+			},
+			wait: async () => assert.fail('permanent failures must not be retried')
+		}),
+		{ code: 'EACCES' }
+	);
+	assert.equal(removeCalls, 1);
+});
 
 test('balanced benchmark plan gives every renderer every position for repeat three', () => {
 	const plan = createBalancedBenchmarkPlan([{ id: 'alpha' }, { id: 'beta' }], ['native', 'workbench-table', 'zeus'], 3);
