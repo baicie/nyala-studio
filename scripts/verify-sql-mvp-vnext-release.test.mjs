@@ -107,7 +107,7 @@ function createValidZ1Gate(sourceRevision) {
 			oneKInteractionRegressionMax: 0.1,
 			tenKPrimaryImprovementMin: 0.2,
 			primaryMetric: 'scrollP95Ms',
-			gzipBudgetBytes: 30_000
+			gzipBudgetBytes: 31_000
 		},
 		benchmark: {
 			measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
@@ -158,26 +158,26 @@ function createValidZ1Gate(sourceRevision) {
 		],
 		dependencyCheck: {
 			passed: true,
-			budgetBytes: 30_000,
+			budgetBytes: 31_000,
 			bundleBytes: 100,
 			bundleGzipBytes: 90,
 			bundleSha256,
 			package: {
 				name: '@zeus-web/data-grid',
-				version: '0.1.0-beta.28',
+				version: '0.1.0-beta.29',
 				license: 'MIT',
-				integrity: 'sha512-6TFE+KFvIwZRaVs04HnIxHlUmEHi7oWMnHT1GVGfcbNx77TowmIrOhto4h2cfLlW2fKOUmSbuI40gJpx/Glh9w==',
-				unpackedSize: 347_888,
+				integrity: 'sha512-1InCZ6cyFJdhx3AskQYoubu0NzJBvqj8gL+PSxB+WSTV48G9zoXY/uSXQMM+ngsX1JSm92wXqMfjgXMPbYgKYw==',
+				unpackedSize: 347_893,
 				dependencies: {
-					'@zeus-js/output-react-wrapper': '0.1.1-beta.9',
-					'@zeus-js/output-vue-wrapper': '0.1.1-beta.9',
-					'@zeus-js/runtime-dom': '0.1.1-beta.9',
-					'@zeus-js/web-c-runtime': '0.1.1-beta.9',
-					'@zeus-web/virtual': '0.1.0-beta.28',
-					'@zeus-web/zeus-compat': '0.1.0-beta.28'
+					'@zeus-js/output-react-wrapper': '0.1.1-beta.10',
+					'@zeus-js/output-vue-wrapper': '0.1.1-beta.10',
+					'@zeus-js/runtime-dom': '0.1.1-beta.10',
+					'@zeus-js/web-c-runtime': '0.1.1-beta.10',
+					'@zeus-web/virtual': '0.1.0-beta.29',
+					'@zeus-web/zeus-compat': '0.1.0-beta.29'
 				},
 				peerDependencies: {
-					'@zeus-js/zeus': '0.1.1-beta.9',
+					'@zeus-js/zeus': '0.1.1-beta.10',
 					react: '>=18 || >=19',
 					vue: '>=3'
 				}

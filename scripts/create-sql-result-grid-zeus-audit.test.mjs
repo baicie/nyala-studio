@@ -12,25 +12,25 @@ const execFileAsync = promisify(execFile);
 const scriptPath = new URL('./create-sql-result-grid-zeus-audit.mjs', import.meta.url).pathname;
 const packageMetadata = {
 	name: '@zeus-web/data-grid',
-	version: '0.1.0-beta.28',
+	version: '0.1.0-beta.29',
 	license: 'MIT',
 	dependencies: {
-		'@zeus-js/output-react-wrapper': '0.1.1-beta.9',
-		'@zeus-js/output-vue-wrapper': '0.1.1-beta.9',
-		'@zeus-js/runtime-dom': '0.1.1-beta.9',
-		'@zeus-js/web-c-runtime': '0.1.1-beta.9',
-		'@zeus-web/virtual': '0.1.0-beta.28',
-		'@zeus-web/zeus-compat': '0.1.0-beta.28'
+		'@zeus-js/output-react-wrapper': '0.1.1-beta.10',
+		'@zeus-js/output-vue-wrapper': '0.1.1-beta.10',
+		'@zeus-js/runtime-dom': '0.1.1-beta.10',
+		'@zeus-js/web-c-runtime': '0.1.1-beta.10',
+		'@zeus-web/virtual': '0.1.0-beta.29',
+		'@zeus-web/zeus-compat': '0.1.0-beta.29'
 	},
 	peerDependencies: {
-		'@zeus-js/zeus': '0.1.1-beta.9',
+		'@zeus-js/zeus': '0.1.1-beta.10',
 		react: '>=18 || >=19',
 		vue: '>=3'
 	}
 };
 const registryMetadata = {
-	'dist.integrity': 'sha512-0LWsFTYNno0zIASkAHnbhhWvWy3LoWrsj113GPjuod5t7HoZFrosVXNVTT49TsA2zbQOPfm+QHUyhMMg1TjIow==',
-	'dist.unpackedSize': 347_888
+	'dist.integrity': 'sha512-1InCZ6cyFJdhx3AskQYoubu0NzJBvqj8gL+PSxB+WSTV48G9zoXY/uSXQMM+ngsX1JSm92wXqMfjgXMPbYgKYw==',
+	'dist.unpackedSize': 347_893
 };
 
 test('creates a revision-bound Zeus dependency and bundle audit', async () => {
