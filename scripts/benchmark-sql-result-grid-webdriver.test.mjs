@@ -104,7 +104,7 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /await resetPageForViewportCalibration\(driverUrl, sessionId, Boolean\(appBinary\)\)/);
 	assert.match(
 		source,
-		/await waitForNavigation\(driverUrl, sessionId, url\);\s*const viewportCalibration = await calibrateCssViewport/
+		/await waitForNavigation\(driverUrl, sessionId, url\);[\s\S]*?const viewportCalibration = await calibrateCssViewport/
 	);
 	assert.match(source, /deferStart: 'true'/);
 	assert.match(source, /await startDeferredBenchmark\(driverUrl, sessionId, Boolean\(appBinary\)\)/);

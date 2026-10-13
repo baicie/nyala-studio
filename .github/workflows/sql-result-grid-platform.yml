@@ -187,6 +187,7 @@ jobs:
             --app-binary "$GITHUB_WORKSPACE/target/debug/sql-studio-next" \
             --platform macos \
             --repeat "$BENCHMARK_REPEAT" \
+            --run-budget-ms 4200000 \
             --zeus-bundle "$RUNNER_TEMP/nyala-zeus-audit/data-grid-bundle.js" \
             --trace-profile true \
             --repository "$GITHUB_REPOSITORY" \
@@ -283,6 +284,7 @@ jobs:
             --app-binary "$env:GITHUB_WORKSPACE\target\debug\sql-studio-next.exe" `
             --platform windows `
             --repeat "$env:BENCHMARK_REPEAT" `
+            --run-budget-ms 4200000 `
             --zeus-bundle "$env:RUNNER_TEMP\nyala-zeus-audit\data-grid-bundle.js" `
             --trace-profile true `
             --repository "$env:GITHUB_REPOSITORY" `

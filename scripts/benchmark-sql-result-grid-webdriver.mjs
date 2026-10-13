@@ -212,15 +212,21 @@ async function run() {
 				query.screenshotRunMarker = Buffer.from(createSqlResultGridRunMarkerBytes(runToken)).toString('hex');
 			}
 			const url = `${benchmarkServer.url}?${new URLSearchParams(query)}`;
+			const stageStartedAt = Date.now();
+			let stage = 'navigate';
 			await webdriverRequest(driverUrl, `/session/${sessionId}/url`, 'POST', { url });
 			await waitForNavigation(driverUrl, sessionId, url);
+			const afterNavigateMs = Date.now() - stageStartedAt;
+			stage = 'calibrate';
 			const viewportCalibration = await calibrateCssViewport(driverUrl, sessionId, workload, Boolean(appBinary));
+			const afterCalibrateMs = Date.now() - stageStartedAt;
 			if (!viewportCalibration.viewportConverged) {
 				throw new Error(
 					`CSS viewport did not converge for ${workload.id}: observed ${viewportCalibration.observedCssViewport.width}x${viewportCalibration.observedCssViewport.height}`
 				);
 			}
 			await startDeferredBenchmark(driverUrl, sessionId, Boolean(appBinary));
+			stage = 'await-result';
 			const record = await waitForResult(
 				driverUrl,
 				sessionId,
@@ -262,6 +268,7 @@ async function run() {
 				enriched.reason = visualReady.reason;
 			}
 			if (iteration === 1 && enriched.status === 'ok') {
+				stage = 'screenshot';
 				const screenshotName = `${platform || browser}-${workload.id}-${renderer}-${runToken}.png`;
 				const screenshotPath = join(screenshotDir, screenshotName);
 				const screenshotProbe = {
@@ -289,6 +296,7 @@ async function run() {
 			}
 			if (traceProfile && enriched.status === 'ok') {
 				try {
+					stage = 'segment-trace';
 					enriched.segmentTrace = await runObserverFreeSegmentTraceNavigation(
 						driverUrl,
 						sessionId,
@@ -305,7 +313,7 @@ async function run() {
 			}
 			records.push(enriched);
 			process.stdout.write(
-				`${workload.id}/${renderer} #${iteration} [${executionOrdinal}/${benchmarkPlan.length}]: ${formatRecord(enriched)}\n`
+				`${workload.id}/${renderer} #${iteration} [${executionOrdinal}/${benchmarkPlan.length}] navigate=${afterNavigateMs}ms calibrate=${afterCalibrateMs}ms total=${Date.now() - stageStartedAt}ms stage=${stage}: ${formatRecord(enriched)}\n`
 			);
 		}
 	} catch (error) {
