@@ -53,20 +53,20 @@ const expectedWorkloads = new Map(
 const expectedRenderers = ['native', 'workbench-table', 'zeus'];
 const expectedZeusPackage = {
 	name: '@zeus-web/data-grid',
-	version: '0.1.0-beta.29',
+	version: '0.1.0-beta.30',
 	license: 'MIT',
-	integrity: 'sha512-1InCZ6cyFJdhx3AskQYoubu0NzJBvqj8gL+PSxB+WSTV48G9zoXY/uSXQMM+ngsX1JSm92wXqMfjgXMPbYgKYw==',
+	integrity: 'sha512-GDIbx/QKtGx2RqsLwcojeX2XOx+4J/auzeK/i4vG6vEaFO/y2WdIT59mALEDw7oJER9hP0eyiQNrg/v/xlpUmw==',
 	unpackedSize: 347_893,
 	dependencies: {
-		'@zeus-js/output-react-wrapper': '0.1.1-beta.10',
-		'@zeus-js/output-vue-wrapper': '0.1.1-beta.10',
-		'@zeus-js/runtime-dom': '0.1.1-beta.10',
-		'@zeus-js/web-c-runtime': '0.1.1-beta.10',
-		'@zeus-web/virtual': '0.1.0-beta.29',
-		'@zeus-web/zeus-compat': '0.1.0-beta.29'
+		'@zeus-js/output-react-wrapper': '0.1.1-beta.11',
+		'@zeus-js/output-vue-wrapper': '0.1.1-beta.11',
+		'@zeus-js/runtime-dom': '0.1.1-beta.11',
+		'@zeus-js/web-c-runtime': '0.1.1-beta.11',
+		'@zeus-web/virtual': '0.1.0-beta.30',
+		'@zeus-web/zeus-compat': '0.1.0-beta.30'
 	},
 	peerDependencies: {
-		'@zeus-js/zeus': '0.1.1-beta.10',
+		'@zeus-js/zeus': '0.1.1-beta.11',
 		react: '>=18 || >=19',
 		vue: '>=3'
 	}
@@ -396,7 +396,7 @@ function validateProvenanceFields(
 }
 
 async function evaluateZeusAudit(auditPath, expected) {
-	// The published beta.29 bundle gzips to 30005 bytes: the Zeus core beta.10
+	// The published beta.30 bundle gzips to 30005 bytes: the Zeus core beta.11
 	// signal fast path removed 19 bytes versus beta.28 (30024), and the audited
 	// wc bundle is allowed a small headroom over the previous round number. This
 	// budget only bounds shipped bytes; it is not a performance threshold.
