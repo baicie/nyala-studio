@@ -178,3 +178,22 @@ Nyala `mvp` 提交 `9ce87cfe` 把平台 workflow、审计构造器、Z1 gate 与
 Zeus 在 1k 场景固定多花约 3-5ms（三个平台一致），而在 10k 场景反而比 WorkbenchTable 快约 22-30%。原因不是数据量：`1k-x-20` 与 `10k-x-50` 的 Zeus 侧每 commit 工作量完全相同，两者的 `renderedRows` 都是 23、`domNodes` 都是 405（macOS 实测），可见行范围与 DOM 规模一致，差别只在行模型总量与共享呈现 floor 的高低。因此 1k 的固定提交成本相对低基线被放大成 18-19% 的相对回归，而 10k 中同一份固定成本被更大的行模型摊薄后表现为净改善。
 
 这条证据进一步排除了“Zeus 在 1k 重建行模型或 DOM churn”的假设，并把后续定位收敛到共享的每 commit 固定成本：`renderVersion` 触发后 23 个行槽位重算 style 绑定（每行含 `gridTemplateColumns`、`width` 与 `translateY`），runtime-dom 的 `patchStyle` 每次执行读取一次 `style.cssText` 做外部变更检测，再进入 23 × 单元格数量的属性绑定更新。在 WebView 上这段 CSSOM 反序列化与样式重算的开销高于本地 Chromium，这与本地 Chromium 1k 几乎无差距、而两个 WebView 各有 3-5ms 的观察一致。
+
+### 1k 门的真实差异是 run 间长尾，不是稳定开销
+
+进一步核对聚合口径后，需要修正上一节“固定 3-5ms 开销”的表述。Z1 的 `1k-x-20` 交互门比较的是**各 run 的 p95 的中位数**（`median-of-run-p95s`），而不是全部样本的中位数。本轮正式证据的两种口径差异如下：
+
+| 平台 | workload | renderer | median-of-run-medians | median-of-run-p95s（门使用） |
+| --- | --- | --- | ---: | ---: |
+| macOS WKWebView | `1k-x-20` | WorkbenchTable | `20.0ms` | `26.0ms`（25, 25, 26, 30, 31） |
+| macOS WKWebView | `1k-x-20` | Zeus | `19.0ms` | `31.0ms`（25, 31, 23, 33, 33） |
+| macOS WKWebView | `10k-x-50` | WorkbenchTable | `28.0ms` | `40.0ms`（40, 49, 37, 40, 40） |
+| macOS WKWebView | `10k-x-50` | Zeus | `21.0ms` | `31.0ms`（28, 31, 34, 29, 62） |
+| Windows WebView2 | `1k-x-20` | WorkbenchTable | `15.7ms` | `16.7ms`（17, 17, 17, 17, 17） |
+| Windows WebView2 | `1k-x-20` | Zeus | `15.6ms` | `19.8ms`（20, 22, 19, 19, 23） |
+| Windows WebView2 | `10k-x-50` | WorkbenchTable | `18.6ms` | `30.5ms`（28, 345, 420, 27, 31） |
+| Windows WebView2 | `10k-x-50` | Zeus | `16.0ms` | `21.3ms`（21, 20, 47, 21, 22） |
+
+关键事实：在 1k 场景下两种 renderer 的 run 内中位数几乎相同（macOS `20.0ms` vs `19.0ms`，Windows `15.7ms` vs `15.6ms`），Zeus 并不存在稳定的每 commit 额外开销。差异只出现在 p95 口径上，来源是 run 间方差：WorkbenchTable 的五次 run 高度一致（Windows 全部为 17），而 Zeus 有明显抖动（macOS 出现 23 与 33 两个极端值）。也就是说 1k 门失败反映的是 **Zeus 在少数滚动 commit 上出现长尾**，而不是整体变慢。
+
+这一区分改变了修复方向。要解释的是为什么 Zeus 的 p95 比中位数高得多——100 个样本中 Zeus 的 `signalPublish` 中位仅 `1-2ms`，但偶发出现 `4ms`、`6ms`、`7ms`，macOS 还有一次 `34ms` 的尖峰；而 WorkbenchTable 的 `inputMs` 中位为 `9ms`（macOS）/ `6.7ms`（Windows），Zeus 为 `0ms`，两者在 settle 阶段才拉开差距。这指向 WebView 侧的偶发长延迟（样式重算、GC 或呈现调度），而不是稳定的绑定开销。继续优化稳定路径（例如拆分布局常量与变化的 `transform`）不会降低 p95；下一步应针对长尾 commit 做取证，定位单次 `34ms` 尖峰落在哪个阶段。
