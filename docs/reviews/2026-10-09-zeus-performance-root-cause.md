@@ -137,3 +137,24 @@ zeus-ui 候选版本已准备为 `0.1.0-beta.6`，所有 `@zeus-js/*` 依赖和 
 候选验证已通过：zeus-ui snapshot-cache E2E `17/17`、Data Grid E2E `109/109`、benchmark `12/12`、完整 release dry-run；Nyala benchmark 相关测试 `103/103`、Zeus audit `3/3`、release verifier `35/35`、gate 测试均通过。这些结果证明修复和发布闭包可构建，但不能替代 macOS WKWebView 与 Windows WebView2 的正式采集。
 
 因此当前结论仍为 `Z1.3 = NO-GO`、`Z2/R0` 阻塞。beta.6 发布并完成真实双 WebView 采集后，只有在 macOS `1k x 20` 回归不超过 `10%` 且预注册 10k 门满足时，才更新准入结论；不修改阈值、gate 快照或失败样本。
+
+## 2026-10-13 core beta.10 / zeus-ui beta.29 真实平台复采
+
+Zeus core `0.1.1-beta.10`（`e30bbfb`，`endBatch` 收敛为单次 `trigger()` 并为无 computed 依赖的 effect 提供直接 `run()` 快路径）已发布，zeus-ui `0.1.0-beta.29` 把 36 个包的 `@zeus-js/*` 依赖与 peer 全部对齐 core `0.1.1-beta.10`；registry 上 36/36 包的 `beta` dist-tag、integrity、unpacked size 与 SLSA provenance 均已核验通过，Data Grid 依赖闭包实际消费 core beta.10。
+
+Nyala `mvp` 提交 `9ce87cfe` 把平台 workflow、审计构造器、Z1 gate 与 vNext release 校验同步到 beta.29 的真实 registry 值（integrity `sha512-1InCZ6cyF...`、unpackedSize `347893`）。beta.29 的审计 wc bundle 为 `90497` 字节、gzip `30005` 字节，较 beta.28 的 `30024` 减少 19 字节，确认 core 的 signal 快路径减少了产物体积，但仍超出原 30000 字节预算 5 字节；按产品决定只把体积预算从 30000 调整为 31000，未改动任何性能阈值、样本或 gate 快照。本轮 CI 审计状态为 `ready`，`Zeus dependency and 30005-byte gzip bundle audit verified`。
+
+正式采集 run `38389264261`（revision `9ce87cfe`，`repeat=5`，`prepare-zeus`/macOS WKWebView/Windows WebView2 三个 job 全部成功）结果：
+
+| 平台 | workload | WorkbenchTable p95 | Zeus p95 | floor p95 | 判定 |
+| --- | --- | ---: | ---: | ---: | --- |
+| Chromium | `1k-x-20` | `17.6ms` | `19.4ms` | `17.6ms` | 回归 `7.0%`，通过 |
+| Chromium | `10k-x-50` | `27.6ms` | `35.4ms` | `21.4ms` | floor `20.40ms` 高于 20% 门所需的 `19.76ms`，不可辨识 |
+| macOS WKWebView | `1k-x-20` | `31.0ms` | `33.0ms` | `20.0ms` | 回归 `19.2%`，失败 |
+| macOS WKWebView | `10k-x-50` | `49.0ms` | `62.0ms` | `31.0ms` | 改善 `22.5%`，通过 |
+| Windows WebView2 | `1k-x-20` | `17.1ms` | `22.8ms` | `18.6ms` | 回归 `18.6%`，失败 |
+| Windows WebView2 | `10k-x-50` | `420.4ms` | `47.0ms` | `24.1ms` | 改善 `30.2%`，通过 |
+
+与 beta.28 轮次相比，两个真实 WebView 的 10k 主门首次同时通过（macOS `22.5%`、Windows `30.2%`），Chromium 1k 回归也从 `17.2%` 降到 `7.0%`，Zeus 依赖审计从失败转为通过。仍然阻塞的是 1k 交互门：floor-adjusted 后 macOS 为 `12ms` vs 基线 `7ms`，Windows 为 `3.1ms` vs 基线 `0ms`，即 1000 行场景下每个滚动 commit 存在约 3-5ms 的固定额外开销，而不是随行数放大的成本。这与 10k 主门已经通过并不矛盾：1k 的共享呈现 floor 已经接近基线本身（Windows floor-adjusted 基线为 0），3-5ms 的固定差异在这种低负载下会被放大成 18-19% 的相对回归。
+
+因此 `Z1.3` 仍为 `NO-GO`、`Z2/R0` 保持阻塞。下一步应针对 1k 场景定位这 3-5ms 固定开销的来源（每 commit 的 signal 提交、snapshot diff、DOM 复用槽位更新与样式重算），而不是继续调整 10k 的呈现 floor 或阈值。
