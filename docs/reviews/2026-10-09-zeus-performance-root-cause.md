@@ -164,3 +164,17 @@ Nyala `mvp` 提交 `9ce87cfe` 把平台 workflow、审计构造器、Z1 gate 与
 用同一份 beta.29 bundle 在本地 Chromium 与两处真实 WebView 证据上做 observer-free 分段，Zeus 侧 1k-x-20 每个滚动 commit 的中位耗时为：`inputEndTime -> eventDispatchTime` 约 `16.0ms`（本地 Chromium `16.4ms`），`eventDispatchTime -> handlerStartTime` 为 `0ms`，range 计算 `0-1ms`，`signalPublishStartTime -> signalPublishEndTime` 中位 `2.0ms`、p95 `6.0ms`（Windows 中位 `3.5ms`、p95 `5.4ms`），`commitEndTime -> firstVisibleTime` 为 `0-1ms`。可见行索引与期望行完全一致（`rowDelta` 恒为 0），说明网格追踪正确，`rebuildModels()` 的脏标记短路也排除了每 commit 重建模型的可能。
 
 这与 10k 的结论一致：输入派发前的等待仍占约一帧且不由 Zeus 控制，Zeus 可控的部分是每次 commit 约 2-3ms 的固定 signal/DOM 提交。本地 Chromium 在 1k 下 Zeus 与 WorkbenchTable 的 p95 完全相同（均为 `17.4ms`），因此剩余的 1k 差距是 WebView 特有的固定提交成本，需要在这两个平台上进一步拆分 slot 更新与样式重算，而不是继续改 scheduler、snapshot 计算或阈值。本地 Chromium 的 `10k-x-50` 在本轮为 Zeus `35.4ms` vs 基线 `27.6ms`，与 CI 特征化一致，属于共享呈现 floor 附近的长尾噪声，两处真实 WebView 的 10k 主门才是本轮的有效判据。
+
+### 两个门衡量的方向相反
+
+本轮正式证据显示，`1k-x-20` 交互门与 `10k-x-50` 主门在 Zeus 侧衡量的是相反方向，不是同一指标的两面：
+
+| 平台 | 1k 中位数 WBT → Zeus | 1k 比值 | 10k 中位数 WBT → Zeus | 10k 比值 |
+| --- | ---: | ---: | ---: | ---: |
+| macOS WKWebView | `26.0ms` → `31.0ms` | `1.192` | `40.0ms` → `31.0ms` | `0.775` |
+| Windows WebView2 | `16.7ms` → `19.8ms` | `1.186` | `30.5ms` → `21.3ms` | `0.698` |
+| Chromium | `17.2ms` → `18.4ms` | `1.070` | `24.7ms` → `18.0ms` | `0.729` |
+
+Zeus 在 1k 场景固定多花约 3-5ms（三个平台一致），而在 10k 场景反而比 WorkbenchTable 快约 22-30%。原因不是数据量：`1k-x-20` 与 `10k-x-50` 的 Zeus 侧每 commit 工作量完全相同，两者的 `renderedRows` 都是 23、`domNodes` 都是 405（macOS 实测），可见行范围与 DOM 规模一致，差别只在行模型总量与共享呈现 floor 的高低。因此 1k 的固定提交成本相对低基线被放大成 18-19% 的相对回归，而 10k 中同一份固定成本被更大的行模型摊薄后表现为净改善。
+
+这条证据进一步排除了“Zeus 在 1k 重建行模型或 DOM churn”的假设，并把后续定位收敛到共享的每 commit 固定成本：`renderVersion` 触发后 23 个行槽位重算 style 绑定（每行含 `gridTemplateColumns`、`width` 与 `translateY`），runtime-dom 的 `patchStyle` 每次执行读取一次 `style.cssText` 做外部变更检测，再进入 23 × 单元格数量的属性绑定更新。在 WebView 上这段 CSSOM 反序列化与样式重算的开销高于本地 Chromium，这与本地 Chromium 1k 几乎无差距、而两个 WebView 各有 3-5ms 的观察一致。
