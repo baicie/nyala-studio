@@ -59,6 +59,10 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	// full script budget on every calibration attempt.
 	assert.match(source, /OBSERVE_EVAL_TIMEOUT_MS/);
 	assert.match(source, /\{ timeoutMs: OBSERVE_EVAL_TIMEOUT_MS \}/);
+	// A result posted to the channel must be given time to arrive before the
+	// runner falls back to a blocking embedded eval.
+	assert.match(source, /RESULT_CHANNEL_GRACE_MS/);
+	assert.match(source, /Date\.now\(\) < channelDeadline/);
 	assert.match(source, /timeoutMs: Math\.max\(1, Math\.min\(remainingMs, RESULT_POLL_EVAL_TIMEOUT_MS\)\)/);
 	assert.doesNotMatch(source, /executeSyncScript/);
 	assert.match(source, /Nyala SQL result grid benchmark/);

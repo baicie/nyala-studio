@@ -88,6 +88,9 @@ const scriptTimeoutMs = parseBoundedPositiveInteger(
 // timeout against the run deadline instead of blocking one full script budget
 // per poll iteration.
 const RESULT_POLL_EVAL_TIMEOUT_MS = 10_000;
+// How long a posted result may still be in flight before the runner is allowed
+// to fall back to reading it out of the WebView.
+const RESULT_CHANNEL_GRACE_MS = 15_000;
 const OBSERVE_EVAL_TIMEOUT_MS = 15_000;
 const runBudgetMs = parseBoundedPositiveInteger(cli['run-budget-ms'] ?? '1800000', '--run-budget-ms', 5_400_000);
 const traceProfile = String(cli['trace-profile'] ?? 'false') === 'true';
@@ -627,12 +630,22 @@ async function runObserverFreeSegmentTraceNavigation(
 
 async function waitForResult(baseUrl, sessionId, embedded, expected, resultChannel) {
 	const deadline = Date.now() + scriptTimeoutMs;
+	const channelDeadline = Date.now() + RESULT_CHANNEL_GRACE_MS;
 	let lastMismatch;
 	while (Date.now() < deadline) {
 		const remainingMs = deadline - Date.now();
 		if (remainingMs <= 0) break;
 		const postedResult = resultChannel?.readResult(expected.runToken);
 		let text = postedResult;
+		// The page POSTs its result to the local result channel. Falling back to
+		// an embedded direct eval the instant the channel is empty races the
+		// in-flight fetch and blocks the WebView main thread for the whole eval
+		// budget, which serialised the run into ~120s stalls. Give the channel a
+		// short grace window first and only fall back once it has been exhausted.
+		if (text === undefined && resultChannel && Date.now() < channelDeadline) {
+			await sleepWithinDeadline(deadline, 50);
+			continue;
+		}
 		if (text === undefined && (embedded || !resultChannel)) {
 			try {
 				text = embedded
