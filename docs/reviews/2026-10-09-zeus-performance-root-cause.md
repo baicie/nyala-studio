@@ -226,3 +226,12 @@ Zeus 在 1k 场景固定多花约 3-5ms（三个平台一致），而在 10k 场
 已排除的解释：行范围规模相同（各位置都是 16 个可见行、23 个渲染行、405 个 DOM 节点）；行高一致；`expectedRowIndex` 与 `visibleRowIndex` 完全一致（`rowDelta` 为 0，追踪正确）；range 计算为 `0ms`；`rebuildModels()` 有脏标记短路；1k 非 wide 场景 20 列全部可见，列窗口不变。
 
 结论是：Z1 的 1k 门失败由**每个 run 0 到 1 个的一次性长延迟**决定，而不是任何稳定的每 commit 开销。这与 WorkbenchTable 的对照一致——WorkbenchTable 在 Windows 上五次 run 的 p95 全部为 `17ms`，从未出现离群 run；而 Zeus 会出现。这指向 WebView 宿主环境中的一次性事件（样式重算、GC、呈现调度或进程调度），而不是 Zeus 的绑定或调度实现。下一轮取证应在两个 WebView 上以更高重复率捕获这些离群 run，并区分它们落在 `signalPublish` 内的哪一段；如果离群值始终无法在 Zeus 侧归因，就应把它作为宿主环境噪声记录，并重新评估用 5 次 run 的 p95 中位数作为 1k 判据的稳定性。
+
+正式 gate 要求恰好 5 次 run（`runs !== expectedRuns` 即失败），所以更高重复率只能走诊断路径。本地 Chromium 用同一份 beta.29 bundle 跑 12 次 `1k-x-20` segment trace 的结果与 WebView 同形：11 次完全干净（`signalPublish` 最大值 `1.7-4.0ms`），只有 run 4 出现一个 `5.3ms` 的离群样本，没有任何一次出现两位数数值。
+
+| 本地 run | 中位 | 最大 | `>=5ms` |
+| ---: | ---: | ---: | ---: |
+| 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12 | `1.3-2.4ms` | `1.7-4.0ms` | 0 |
+| 4 | `2.1ms` | `5.3ms` | 1 |
+
+离群率约 `1/12`，与 WebView 上 `1/5` 的观察同量级，但本地离群幅度（`5.3ms`）远小于 WebView（`34ms`）。这支持“离群事件发生在宿主环境、且 WebView 的呈现与调度路径使其幅度显著放大”的判断，同时也说明本地 Chromium 不是有效的取证回路——它无法复现 WebView 的量级。任何针对 1k 门的修复验证都必须回到 macOS WKWebView 与 Windows WebView2。
