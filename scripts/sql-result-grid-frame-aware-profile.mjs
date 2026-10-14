@@ -4,14 +4,19 @@ import {
 	SCROLL_COMMIT_BOUNDARY
 } from './sql-result-grid-benchmark-contract.mjs';
 
-export const SQL_RESULT_GRID_FRAME_AWARE_PROFILE_VERSION = 1;
+export const SQL_RESULT_GRID_FRAME_AWARE_PROFILE_VERSION = 2;
 
 export const SQL_RESULT_GRID_FRAME_AWARE_LIMITATIONS = Object.freeze([
 	'Frame-aware metrics are diagnostic only and cannot rewrite v6 or v7 admission evidence or flip the Z1 gate.',
 	'Renderer work and host frame excess are reported separately; neither substitutes for the registered scrollP95Ms admission metric.',
-	'The host interval is the platform median nextPaintTaskTime - nextPaintRafTime; a platform with a missing segment trace has no host interval.',
+	'Each renderer hostIntervalMs is its median nextPaintTaskTime - nextPaintRafTime on the diagnostic trace; missing traces provide no interval.',
 	'WorkbenchTable commit unions and Zeus commit spans come from different collectors, so their ratio is a shape indicator, not an admission metric.',
-	'Records without a committed scroll sample are excluded per renderer and reported as sample counts, never imputed.'
+	'Commit spans are elapsed wall time, including any synchronous style or layout work they trigger; they are not pure JavaScript CPU time. WorkbenchTable includes range calculation and row-width reads inside render, while Zeus starts its commit span after range calculation.',
+	'WebDriver segment traces come from a separate diagnostic navigation. Matching sampleIndex values identify target positions, not the same scroll execution; hostExcess combines primary totals with a trace median and cannot establish per-sample causality.',
+	'The rAF-to-task span includes the visibility probe, possible pending style/layout and rendering, and timer scheduling. It is not a renderer-independent host floor, so subtracting it does not isolate renderer-owned latency.',
+	'This profile compares Zeus with WorkbenchTable only; native has no collected commit interval and is not a measured renderer-work baseline.',
+	'The renderers can perform different DOM work, including Zeus column virtualization versus WorkbenchTable full-column rendering; commit ratios do not isolate core signal or compiler performance.',
+	'Missing scroll samples or trace commit intervals are reflected in the per-renderer sample counts, never imputed.'
 ]);
 
 export function createSqlResultGridFrameAwareProfile(report, options = {}) {
@@ -99,36 +104,27 @@ function collectCommitUnions(record, renderer) {
 		if (segment?.phase !== 'sample') {
 			continue;
 		}
-		const widthsForSegment = [];
+		const intervals = [];
 		for (const id of segment.commitTransactionIds ?? []) {
 			const commit = byId.get(id);
-			const width = renderer === 'zeus' ? zeusCommitWidthMs(commit) : workbenchTableCommitUnionMs(commit);
-			if (width !== null) {
-				widthsForSegment.push(width);
+			if (renderer === 'zeus') {
+				if (
+					Number.isFinite(commit?.commitStartTime) &&
+					Number.isFinite(commit?.commitEndTime) &&
+					commit.commitEndTime >= commit.commitStartTime
+				) {
+					intervals.push([commit.commitStartTime, commit.commitEndTime]);
+				}
+			} else if (Array.isArray(commit?.commitIntervals)) {
+				intervals.push(...commit.commitIntervals);
 			}
 		}
-		if (widthsForSegment.length > 0) {
-			widths.push(Math.max(...widthsForSegment));
+		if (intervals.length > 0) {
+			// Count all commits, merge overlaps, and exclude time between commits.
+			widths.push(unionMs(intervals));
 		}
 	}
 	return widths;
-}
-
-function zeusCommitWidthMs(commit) {
-	if (!commit) {
-		return null;
-	}
-	const start = commit.commitStartTime;
-	const end = commit.commitEndTime;
-	return Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : null;
-}
-
-function workbenchTableCommitUnionMs(commit) {
-	const intervals = commit?.commitIntervals;
-	if (!Array.isArray(intervals) || intervals.length === 0) {
-		return null;
-	}
-	return unionMs(intervals);
 }
 
 function collectHostIntervals(record) {

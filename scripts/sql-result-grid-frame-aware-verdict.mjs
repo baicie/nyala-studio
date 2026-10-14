@@ -1,23 +1,17 @@
-import {
-	createNonInferiorityVerdict,
-	SQL_RESULT_GRID_EVALUABLE_OUTCOME
-} from './sql-result-grid-floor-evaluable.mjs';
+import { createNonInferiorityVerdict, SQL_RESULT_GRID_EVALUABLE_OUTCOME } from './sql-result-grid-floor-evaluable.mjs';
 
 /**
- * v8 renderer-work thresholds. These are pre-registered values, not fitted to
- * the recorded runs: the renderer-work ratio between Zeus and the fastest
- * baseline is 2.2x-12.5x across every recorded set, so a 20% requirement is
- * the conservative end of that observed range and keeps the existing product
- * target unchanged. Changing them is a contract change, not a tuning knob.
+ * Proposed diagnostic renderer-work threshold. Retaining the numerical 20%
+ * target for a different metric does not pre-register a v8 admission contract.
+ * ADR 0005 remains Proposed, and collector comparability is not established.
  */
 export const SQL_RESULT_GRID_FRAME_AWARE_TEN_K_MINIMUM_IMPROVEMENT = 0.2;
 
 /**
- * v8 admission outcome for the frame-aware renderer-work gate. The measured
- * quantity is the per-sample renderer commit interval, which is the only part
- * of scroll latency that renderer code can change. Host frame scheduling is
- * reported alongside it and is never subtracted: the host interval and the
- * renderer interval are two measurements of different work, not a budget.
+ * Diagnostic outcome for the proposed frame-aware comparison. The measured
+ * quantity is the per-sample commit wall-time union with collector-specific
+ * boundaries; it is not pure CPU time or the whole renderer cost. Outcomes do
+ * not authorize admission. Host frame timing is reported separately.
  */
 export const SQL_RESULT_GRID_FRAME_AWARE_OUTCOME = Object.freeze({
 	unavailable: 'UNAVAILABLE',
@@ -58,7 +52,9 @@ export function createFrameAwareSuperiorityVerdict(input) {
 			reason: `${label}: renderer work is unavailable for Zeus or for every baseline renderer`
 		};
 	}
-	const best = baselines.reduce((left, right) => (right.rendererWork.medianMs < left.rendererWork.medianMs ? right : left));
+	const best = baselines.reduce((left, right) =>
+		right.rendererWork.medianMs < left.rendererWork.medianMs ? right : left
+	);
 	const baselineRendererWorkMs = best.rendererWork.medianMs;
 	const zeusRendererWorkMs = zeus.rendererWork.medianMs;
 	if (!(baselineRendererWorkMs > 0)) {

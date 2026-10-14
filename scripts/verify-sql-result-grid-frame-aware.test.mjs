@@ -127,6 +127,45 @@ test('frame-aware profile reports a renderer without a trace as unavailable', ()
 	assert.match(zeus.hostExcess.reason, /segment trace/i);
 });
 
+test('frame-aware profile counts every Zeus commit in a sample without counting idle gaps', () => {
+	const record = zeusRecord({ totals: [15] });
+	record.segmentTrace.segments[0].commitTransactionIds = [1, 2, 3];
+	record.segmentTrace.diagnostics.commits = [
+		{ transactionId: 1, commitStartTime: 100, commitEndTime: 104 },
+		{ transactionId: 2, commitStartTime: 102, commitEndTime: 106 },
+		{ transactionId: 3, commitStartTime: 110, commitEndTime: 113 },
+		// An unclaimed mount commit must not be attributed to this scroll sample.
+		{ transactionId: 4, source: 'mount', commitStartTime: 0, commitEndTime: 90 }
+	];
+	const profile = createSqlResultGridFrameAwareProfile({ ...BASE, records: [record] });
+	assert.equal(profile.workloads[0].renderers[0].rendererWork.count, 1);
+	assert.equal(profile.workloads[0].renderers[0].rendererWork.medianMs, 9);
+});
+
+test('frame-aware profile unions nested WorkbenchTable intervals across all sample commits', () => {
+	const record = workbenchTableRecord({ totals: [18] });
+	record.segmentTrace.segments[0].commitTransactionIds = [1, 2];
+	record.segmentTrace.diagnostics.commits = [
+		{
+			transactionId: 1,
+			commitIntervals: [
+				[100, 110],
+				[102, 106]
+			]
+		},
+		{
+			transactionId: 2,
+			commitIntervals: [
+				[108, 112],
+				[120, 123]
+			]
+		}
+	];
+	const profile = createSqlResultGridFrameAwareProfile({ ...BASE, records: [record] });
+	assert.equal(profile.workloads[0].renderers[0].rendererWork.count, 1);
+	assert.equal(profile.workloads[0].renderers[0].rendererWork.medianMs, 15);
+});
+
 test('frame-aware profile rejects evidence from another contract', () => {
 	assert.throws(
 		() => createSqlResultGridFrameAwareProfile({ ...BASE, measurementContractVersion: 6, records: [] }),
@@ -170,11 +209,7 @@ function renderer(rendererName, medianMs) {
 test('frame-aware verdict scores renderer work against the fastest baseline', () => {
 	const verdict = createFrameAwareSuperiorityVerdict({
 		label: 'win/10k-x-50',
-		renderers: [
-			renderer('zeus', 2.5),
-			renderer('workbench-table', 10),
-			renderer('native', 8)
-		],
+		renderers: [renderer('zeus', 2.5), renderer('workbench-table', 10), renderer('native', 8)],
 		requiredImprovement: SQL_RESULT_GRID_FRAME_AWARE_TEN_K_MINIMUM_IMPROVEMENT
 	});
 	// The fastest baseline is native at 8ms, not WorkbenchTable at 10ms.

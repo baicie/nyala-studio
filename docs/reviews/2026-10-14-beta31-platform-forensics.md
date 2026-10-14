@@ -2,6 +2,14 @@
 
 日期：2026-10-14。候选为 Zeus core `0.1.1-beta.12`、`@zeus-web/data-grid@0.1.0-beta.31`。
 
+补充复核：[采集器可比性审计](./2026-10-14-collector-comparability-audit.md)确认 primary 与
+segmentTrace 为独立导航，不能逐 sample 混用时间戳作因果分解。本文后半追加的因果归因及
+生产决策推断撤回，包括
+“尾部与常态 commit 相同”“macOS 残差全属宿主”“没有生产修复对象”等结论撤回；
+rAF→task 还包含可见性探针和可能待处理的浏览器样式/布局工作。正式 NO-GO 判定保留。
+相同行位移不等于同等 DOM 工作量，WBT 全列渲染与 Zeus 列虚拟化应单独计量；
+下文 toy Chromium A/B 仅说明该实验本身，不能据此排除两种目标 WebView 的生产优化方向。
+
 ## 当前结论
 
 五轮已完成的正式 Z1 gate 均为 **NO-GO**。Windows 10k 首轮及第四轮通过、第二轮
