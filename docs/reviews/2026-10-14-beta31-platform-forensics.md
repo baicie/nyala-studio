@@ -175,6 +175,12 @@ WBT / Zeus × 1k / 10k × 各 3 轮，beta30 与 beta31 各产出 12 条成功�
 | beta31 / core beta12 | 1k   | 38                  | 36                   | 20                     | 3                       |
 | beta31 / core beta12 | 10k  | 38                  | 36                   | 22                     | 3                       |
 
+beta31 同次操作中，1k Zeus 最慢样本总量 39ms、renderer interval union 9ms；10k Zeus
+最慢样本总量约 42ms、union 3ms、呈现等待约 41ms。union 中的异步提交发生在等待窗口内，
+二者存在重叠，不能再相加或把相减结果命名为纯宿主时间。这说明该本地 1k 尾部仍有
+提交增长，而 10k 该慢样本的主要墙钟跨度不在已记录的 JS 执行区间；浏览器异步
+style / layout / paint 也尚未单独测量。逐操作结果保存在 `same-operation-analysis.json`。
+
 这两组运行使用不同包 bundle，但不是随机配对 A/B；WBT 对照也随运行明显变化，不能据此
 宣称 beta12 比 beta11 更快或更慢。它们直接说明在该本地诊断中，较短的 Zeus 执行区间并未
 变成同等幅度的外层延迟收益。1k beta31 侧 WBT 捕获 61 个 sample-correlated commit，
@@ -191,8 +197,10 @@ CPU analysis。CPU analysis 由现有 `createSqlResultGridWorkloadCpuRatioProfil
 
 [第四轮 38523458804](https://github.com/baicie/nyala-studio/actions/runs/38523458804) 使用同一
 已提交 revision 和完整 balanced plan 重采，已产出两个平台完整记录，正式 gate 仍 NO-GO。
-[修复验证 38525197105](https://github.com/baicie/nyala-studio/actions/runs/38525197105) 正在对
-本轮取证修复进行完整双平台验证；不以最好的一轮覆盖失败记录。
+[修复验证 38525197105](https://github.com/baicie/nyala-studio/actions/runs/38525197105) 用于对
+本轮取证修复进行完整双平台验证，结果以该 run 的原始产物为准。取证修复的验收是双平台
+完整记录及两侧 sidecar 成功，不能把该验收与 Z1 性能放行混为一谈，也不以最好的一轮覆盖
+失败记录。
 
 进一步归因应沿用 admission 的 `commitScroll` 算法，在独立诊断运行中为同一次操作采集
 提交区间和等待 / 验证区间，关闭 node churn；先区分 CPU 长尾与呈现调度，再实验具体生产
