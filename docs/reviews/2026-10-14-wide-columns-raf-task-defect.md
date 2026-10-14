@@ -64,11 +64,34 @@
 ## 尚未确定的部分
 
 WebKit 上把「行宽撑满 + 绝对定位 grid」放大成 17ms 的具体机制，我还没有定位到。
-已排除绘制面积，行宽是剩下的主要嫌疑，但尚未在 WKWebView 中直接验证该假设
-（本轮尝试在 embedded WebView 中注入裸页探针时，`/wdio/eval` 返回空 payload，
-未取到数据）。
+已排除绘制面积。行宽假设也已在 WKWebView 中直接验证并排除，见下节。
 
 因此本文档记录的是**已确认存在的缺陷与其边界**，不是已确认的根因。
+
+## 行宽假设：已排除
+
+data-grid 给每一行都写了 `width: ${columnVirtualizer.getTotalSize()}px` 和完整的
+`gridTemplateColumns`。wide-columns 下总宽度远大于视口，因此怀疑 WebKit 对「每帧
+重新布局一个远宽于视口的 grid」代价更高。
+
+用真实 WKWebView（embedded WebDriver 路径）做 bundle 级 A/B，两个 bundle 来自同一
+source revision、仅替换 bundle：
+
+- baseline：保留每行 `width: <totalSize>px`
+- candidate：移除该 width
+
+先各跑 2 次，candidate 的 scrollP95 中位 38ms 对 baseline 58ms，看似改善 20ms。
+但 rafToTask 并未变化（17ms 对 18ms），且扩大样本后该差异消失：
+
+| | scrollP95 三次 | scrollP95 中位 | rafToTask 中位 | rafToTask p95 | committed |
+|---|---|---:|---:|---:|---|
+| baseline | 35.0, 35.0, 36.0 | 35.0ms | 15.00ms | 19.00ms | 60/60 |
+| candidate | 35.0, 35.0, 37.0 | 35.0ms | 14.00ms | 16.00ms | 60/60 |
+
+初始的 58ms 是单次离群值，不是行宽造成的。两侧 DOM 规模、最大滚动行程、
+committed 样本数完全一致，差异只在噪声范围内。
+
+结论：移除每行强制宽度**无收益**，已撤销，不发布。
 
 ## 影响
 
