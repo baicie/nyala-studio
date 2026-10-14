@@ -468,7 +468,7 @@ async function run() {
 			if (traceProfile && enriched.status === 'ok') {
 				try {
 					stage = 'segment-trace';
-					enriched.segmentTrace = await runObserverFreeSegmentTraceNavigation(
+					const traced = await runObserverFreeSegmentTraceNavigation(
 						driverUrl,
 						sessionId,
 						Boolean(appBinary),
@@ -476,6 +476,8 @@ async function run() {
 						benchmarkServer,
 						{ renderer, executionOrdinal, workload, workbenchTableBundleSha256: provenance.workbenchTableBundleSha256 }
 					);
+					enriched.segmentTrace = traced.segmentTrace;
+					if (traced.textChurn) enriched.textChurn = traced.textChurn;
 				} catch (error) {
 					// Segment traces are diagnostic evidence. A broken trace channel must
 					// not discard the completed v7 performance record for this workload.
@@ -869,7 +871,10 @@ async function runObserverFreeSegmentTraceNavigation(
 		throw new Error(`Observer-free segment trace failed for ${expected.workload.id}/${expected.renderer}: ${String(reason).split('\n')[0]}`);
 	}
 	validateObserverFreeSegmentTraceSnapshot(record.segmentTrace, { expectedSampleCount: 22 });
-	return record.segmentTrace;
+	// `textChurn` is diagnostic-only evidence collected during the same measured
+	// scroll. It travels with the trace so a caller can attribute host frame cost
+	// to renderer text rewrites instead of guessing from timing alone.
+	return { segmentTrace: record.segmentTrace, textChurn: record.textChurn };
 }
 
 async function waitForResult(baseUrl, sessionId, embedded, expected, resultChannel) {

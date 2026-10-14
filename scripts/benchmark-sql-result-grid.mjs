@@ -1484,6 +1484,12 @@ async function main() {
 		if (rendered.unavailable) throw new Error('Segment trace renderer is unavailable: ' + rendered.unavailable);
 		void root.offsetHeight;
 		await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
+		if (globalThis.__nyalaTextChurn) {
+			globalThis.__nyalaTextChurn.textWrites = 0;
+			globalThis.__nyalaTextChurn.addedNodes = 0;
+			globalThis.__nyalaTextChurn.removedNodes = 0;
+			globalThis.__nyalaTextChurn.mutations = 0;
+		}
 		const trace = await runObserverFreeSegmentTrace(rendered, {
 			maxFrames: ${SQL_RESULT_GRID_SEGMENT_TRACE_MAX_FRAMES},
 			targetRatios: SCROLL_TARGET_RATIOS,
@@ -1499,6 +1505,7 @@ async function main() {
 			status: 'ok',
 			segmentTrace: trace,
 			rendererImplementation: rendered.implementation,
+			textChurn: globalThis.__nyalaTextChurn ? { ...globalThis.__nyalaTextChurn } : undefined,
 			domNodes: measureDomNodes()
 		});
 	}
@@ -1553,6 +1560,27 @@ async function main() {
 	}
 	const startBenchmark = () => (segmentTrace ? runSegmentTrace() : jankTrace ? runJankTrace() : main()).catch(error => {
 		writeBenchmarkResult({ status: 'error', error: formatBenchmarkError(error) });
+	});
+	// Diagnostic-only text churn counter. A pooled virtual list can rebind every
+	// visible cell on each scroll commit, and each text-node write costs the
+	// engine a re-shape of the string. Counting characterData mutations separates
+	// "the renderer rebuilt content" from "the renderer reshaped identical
+	// content", which is not visible in rafToTask alone.
+	globalThis.__nyalaTextChurn = { textWrites: 0, addedNodes: 0, removedNodes: 0, mutations: 0 };
+	globalThis.__nyalaChurnObserver = new MutationObserver(records => {
+		const churn = globalThis.__nyalaTextChurn;
+		for (const record of records) {
+			churn.mutations += 1;
+			if (record.type === 'characterData') churn.textWrites += 1;
+			for (const node of record.addedNodes) if (node.nodeType === 3) churn.addedNodes += 1;
+			for (const node of record.removedNodes) if (node.nodeType === 3) churn.removedNodes += 1;
+		}
+	});
+	globalThis.__nyalaChurnObserver.observe(document.documentElement, {
+		childList: true,
+		subtree: true,
+		characterData: true,
+		characterDataOldValue: false
 	});
 	if (params.get('deferStart') === 'true') {
 		globalThis.addEventListener('nyala-benchmark-start', startBenchmark, { once: true });

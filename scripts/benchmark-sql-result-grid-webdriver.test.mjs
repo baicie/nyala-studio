@@ -39,6 +39,11 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /benchmark-result/);
 	assert.match(source, /resultChannel\?\.readResult/);
 	assert.match(source, /segmentTraceError/);
+	// Diagnostic text-churn evidence must survive the segment-trace navigation,
+	// otherwise the only way to attribute host frame cost to renderer text
+	// rewrites is a separate run whose timing cannot be compared.
+	assert.match(source, /textChurn/);
+	assert.match(source, /enriched\.textChurn = traced\.textChurn/);
 	assert.match(source, /matching error is terminal/);
 	assert.match(source, /isBenchmarkResultForRun\(result, expected\)/);
 	assert.match(source, /status !== 'ok'/);
