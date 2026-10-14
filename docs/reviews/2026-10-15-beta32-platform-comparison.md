@@ -160,6 +160,27 @@ Zeus 自身**的滚动延迟差距，也是下一轮应当针对的目标。
    本机曾测过 `text-overflow: clip`，但本机 rafToTask 漂移 6–19ms，该结论不成立，
    需要在交错采集下重测。
 
+### 该候选的验证结果：测量装置不成立
+
+用交错采集在本机重测「移除 `text-overflow: ellipsis`」时，得到一个稳定 5/5 的
+−1.8ms（wide-columns 18.2 → 16.4ms，−10%）。**该结果是噪声，不是收益。**
+
+原因：`scripts/benchmark-sql-result-grid.mjs:857` 的 benchmark 页面**自带内联 CSS**，
+其中已经为 `data-grid-cell` 声明了 `white-space: nowrap; overflow: hidden;
+text-overflow: ellipsis`。它从不加载 `@zeus-web/themes` 的 `components.css`；实测
+被测 bundle（`f363cf43…`）中 `text-overflow`、`white-space`、`overflow: hidden`
+的出现次数均为 0，bundle 不含任何 CSS。
+
+因此改 `packages/themes/src/components.css` 对被测页面毫无影响。我构建出的「候选」
+bundle 与 pinned bundle 的差异只是未压缩的标识符名（`e0e48d4d…` vs `f363cf43…`，
+90806 vs 90767 字节），像素比对显示除底部 run marker 条带外**完全一致**——即两个
+变体渲染相同。这直接证明了 −10% 来自 run 内噪声，与之前记录的「本机 rafToTask
+漂移 6–19ms」一致。
+
+这条候选无法用现有装置验证。若要继续追查 wide-columns 的文本整形成本，必须先让
+benchmark 加载真实的产品样式，或改为在页面内注入变体样式；否则任何 CSS 层面的
+候选都无法被这套门禁测到。
+
 ## 门判定
 
 两个 run 都判定 NO-GO，但失败理由不同，且都不是「Zeus 10k 未改善」：
