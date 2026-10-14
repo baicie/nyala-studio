@@ -4,9 +4,9 @@
 
 ## 当前结论
 
-前四轮已完成的正式 Z1 gate 均为 **NO-GO**。Windows 10k 首轮及第四轮通过、第二轮
+五轮已完成的正式 Z1 gate 均为 **NO-GO**。Windows 10k 首轮及第四轮通过、第二轮
 `NOT-EVALUABLE`、第三轮平台采集 blocked，不能宣称 Windows 已稳定达标。macOS 10k
-前三轮点估计均低于 20% 门槛，第四轮方向反转且正式 NOT-EVALUABLE。
+前三轮点估计均低于 20% 门槛，第四轮方向反转且正式 NOT-EVALUABLE，第五轮改善 9.8% 仍失败。
 这只能说明本批次正式判定未通过，不能证明总体改善幅度必然不足 20%。1k 门也并非已被解释为纯宿主噪声：它在不同复采中有通过和失败，正式失败继续保留。
 
 本次审计纠正此前报告的三类错误：正式基线与 floor 聚合口径混用；把独立侧采的中位耗时用于
@@ -22,8 +22,9 @@
 | [38510371921](https://github.com/baicie/nyala-studio/actions/runs/38510371921) | `49770c0d0ccd5797ad547a7e90079e5e8f0b198b` | ready，60 条，零重试 | ready，60 条，零重试 | NO-GO     |
 | [38512191285](https://github.com/baicie/nyala-studio/actions/runs/38512191285) | `34ffe34b28e288984bf84ea987d594944a704c84` | ready，60 条，零重试 | blocked，保留 20 条  | NO-GO     |
 | [38523458804](https://github.com/baicie/nyala-studio/actions/runs/38523458804) | `34ffe34b28e288984bf84ea987d594944a704c84` | ready，60 条，零重试 | ready，60 条，零重试 | NO-GO     |
+| [38525197105](https://github.com/baicie/nyala-studio/actions/runs/38525197105) | `88c794aa425e379cc29c8a1de35ff1724a2ec0b0` | ready，60 条，零重试 | ready，60 条，零重试 | NO-GO     |
 
-前四轮均使用 contract 7、`post-presentation-opportunity`、`renderer-balanced-rotation-v1`。
+五轮均使用 contract 7、`post-presentation-opportunity`、`renderer-balanced-rotation-v1`。
 Zeus bundle SHA256 均为 `9ef85faaa4b99248846e7e771bfb84b093a9607fef504cdefd81703450c01c8c`，
 WorkbenchTable bundle 均为 `919adb7830e3f1c585fb04676d1b98395c4daf84f10b438b514ed8204b52c1af`。
 各 run 的平台、Chromium 与依赖审计身份一致；平台原始记录和聚合副本一致。这些是相同候选的
@@ -193,18 +194,79 @@ CPU analysis。CPU analysis 由现有 `createSqlResultGridWorkloadCpuRatioProfil
 未回写原始 evidence。量化计时、两个 collector 的不同插桩开销及单机时相均限制推断。
 这不是 revision-bound CI admission，也不能代替性能门。
 
+## 修复后的双平台验证
+
+run `38525197105` 两个平台各 60 条正式记录、60 条独立分段侧采，零重试、零侧采错误。
+每个平台 WBT 的 20 条侧采全部成功，取证修复已通过真实平台验证。所有 record、summary、
+screenshot、run identity、provenance 检查通过；性能 gate 仍 NO-GO。
+
+| 平台 / 负载 | N / W / Z 中位      | shared floor | 正式基线 | 回归或改善 | 判定 |
+| ----------- | ------------------- | ------------ | -------- | ---------- | ---- |
+| macOS 1k    | 31 / 26 / 33        | 20           | WBT 26   | 回归 26.9% | 失败 |
+| macOS 10k   | 89 / 41 / 37        | 19           | WBT 41   | 改善 9.8%  | 失败 |
+| Windows 1k  | 42.2 / 16.6 / 18.5  | 16.8         | WBT 16.6 | 回归 11.4% | 失败 |
+| Windows 10k | 671.1 / 27.3 / 23.5 | 17.0         | WBT 27.3 | 改善 13.9% | 失败 |
+
+修复后首次能比较两边侧采的真实 interval 模型。每个 group 来自 5 条独立侧采、100 个
+`phase=sample` operation；每个 operation 对它声称的全部 commit 取 handler / range /
+commit / layout 的墙钟区间并集，普通中位 / nearest-rank p95，单位 ms：
+
+| 平台 / 负载 | WBT union 中位 / p95 | Zeus union 中位 / p95 |
+| ----------- | -------------------- | --------------------- |
+| Windows 1k  | 5.6 / 6.7            | 2.5 / 3.9             |
+| Windows 10k | 10.4 / 13.6          | 2.6 / 3.7             |
+| macOS 1k    | 8.5 / 25.0           | 2.0 / 5.0             |
+| macOS 10k   | 25.0 / 36.0          | 2.5 / 5.0             |
+
+这些诊断区间里 Zeus 较短，但两个 collector 的插桩开销不同，100 个 operation 也不是
+100 个独立 run。它们不是线程 CPU 时间，不是用户速度改善比例，仍不能分解另一导航的
+正式 p95。数据保留在 `.artifacts/run38525197105/sidecar-interval-summary.json`。
+
+## 20 对交错 A/B：未复现稳定的版本 flush 回归
+
+预先检验假设：“beta31 对相同 1k 窗口转换引入可重复的额外发布 / flush 工作”。
+在本地真实 WKWebView 固定 seed `20261014`，将 10 对 AB、10 对 BA 打乱，先保存 plan 再采集。
+A = beta30 / core beta11，B = beta31 / core beta12；每 arm 启动同一 binary 的新进程，
+只测 Zeus / 1k，repeat=1、原 20 个位移样本、`max-round-attempts=1`，
+`floorOnly=false`、`measureNodeChurn=false`，失败不重试、不删除。
+
+- plan SHA256：`4ffc811e0432d5eb22a26576556021d05d89e9248ec795a7355820731d7cbb92`。
+- binary SHA256：`f98a9e02a08280a32ce52220b4613bbeac89bae67fc9b4b119a2f4d98f060ea6`。
+- A bundle：`d147f871a54f16c575d15db730588d8a77790249c60fa68c34c9d56e731fd106`。
+- B bundle：`9ef85faaa4b99248846e7e771bfb84b093a9607fef504cdefd81703450c01c8c`。
+
+20/20 对完整，40/40 arm ready、40 条 record / 800 次位移、全部 exit 0、零失败、零重试、
+输入 hash 未变化。以 beta31 减 beta30 为配对差，单位 ms：
+
+| 预定诊断量                   | beta30 中位 / mean | beta31 中位 / mean | 配对差中位 / mean |
+| ---------------------------- | ------------------ | ------------------ | ----------------- |
+| sample18 renderer union      | 1.0 / 1.35         | 1.0 / 1.35         | 0.0 / 约 0.0      |
+| sample18 publish union       | 1.0 / 1.30         | 1.0 / 1.35         | 0.0 / +0.05       |
+| 每 record 的 20 次 union p95 | 2.0 / 2.0          | 2.0 / 2.0          | 0.0 / 0.0         |
+
+sample18 renderer union 差为 3 正、14 相等、3 负；publish 差为 4 正、13 相等、3 负。
+仅为消除浮点减法噪声，以 1ns 判断相等，不改变记录或分位值。两版 sample18 union /
+publish 的 p95 和最大值均为 2ms，原来的 9ms 尾部未复现。本批不支持“beta31 新增了
+可重复 flush 回归”的假设，但没有置信区间，不能证明罕见尾部不存在或两个版本线程 CPU
+等价或两个版本完全等价；这批区间主要集中在 1–2ms，尚不能据此辨别更小的差异。
+此次仅测单 renderer / 1k，未覆盖先前多 renderer / 多负载连续运行的条件，也不能
+推出 beta12 的因果速度提升。
+
+plan、输入 hash、所有命令 / 原始 record / stdout / stderr / app log、逐操作关联与分析
+保存在 `.artifacts/local-native-beta30-beta31-paired-20/`；`paired-analysis.json` 保留全部
+40 个 arm，没有事后选择快轮次。它是本地诊断，不是 revision-bound CI admission。
+
 ## 下一步与边界
 
 [第四轮 38523458804](https://github.com/baicie/nyala-studio/actions/runs/38523458804) 使用同一
 已提交 revision 和完整 balanced plan 重采，已产出两个平台完整记录，正式 gate 仍 NO-GO。
-[修复验证 38525197105](https://github.com/baicie/nyala-studio/actions/runs/38525197105) 用于对
-本轮取证修复进行完整双平台验证，结果以该 run 的原始产物为准。取证修复的验收是双平台
-完整记录及两侧 sidecar 成功，不能把该验收与 Z1 性能放行混为一谈，也不以最好的一轮覆盖
-失败记录。
+[修复验证 38525197105](https://github.com/baicie/nyala-studio/actions/runs/38525197105) 已完成
+完整双平台取证验收。两侧 sidecar 成功与 Z1 性能放行是不同结论，不以最好的一轮覆盖失败记录。
 
-进一步归因应沿用 admission 的 `commitScroll` 算法，在独立诊断运行中为同一次操作采集
-提交区间和等待 / 验证区间，关闭 node churn；先区分 CPU 长尾与呈现调度，再实验具体生产
-优化。正式运行仍使用原模式，诊断数据不能改写历史 gate。
+本轮已完成同次操作诊断和 20 对交错 A/B。若继续定位罕见尾部，应在原有混合 renderer /
+多负载场景中增加针对 publish 区间的绑定调用计数或 profiler 栈，先区分额外执行、GC /
+调度中断，再实验具体生产优化。现有数据尚不能选定某个绑定或资源路径作为修复对象。
+正式运行仍使用原模式，诊断数据不能改写历史 gate。
 
 本次没有修改性能阈值、门禁比例、采样数量、平衡顺序或历史证据；未引入 Nyala 生产 Zeus
 依赖，Z1 未转为 GO，Z2 不启动。测量契约设计讨论须明确区分指标与产品目标，不能把改判据
