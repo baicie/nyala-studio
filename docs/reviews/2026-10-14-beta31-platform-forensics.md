@@ -447,6 +447,32 @@ Z1 测的是第 2 类输入（`commitScroll` 直接赋值 `scrollTop`）。因�
 一致、且改动可控的候选；形态 1 才等价于基线，但属于重写。必须明确区分这两个目标，
 不能用形态 2 的收益去宣称已追平基线的滚动模型，也不能把形态 1 的代价隐藏在"性能修复"里。
 
+### 形态 2 的实现约束：无法拦截外部的原生 scrollTop 赋值
+
+形态 2 在 data-grid 侧还有一个具体障碍。`commitScroll` 与 `scrollToOffset` 走的都是
+`viewport.scrollTop = ...`（harness 的 `commitScroll` 直接对 `[data-slot=
+"data-grid-viewport"]` 赋值；data-grid 内部是 `setScrollOffset`）。这是对原生 DOM 属性的
+赋值，data-grid 无法从自己的代码路径里拦截外部写入——除非在 viewport 实例上用
+`Object.defineProperty` 把 `scrollTop` 重定义为 accessor，并在 setter 里补一次同步
+`updateRange()`。该做法可行但属于补丁式拦截：它对元素实例生效、对通过其他引用取得的同一
+元素同样生效（own property 优先），但会改变 `scrollTop` 的读写语义（getter 必须返回真实
+值，且要注意与浏览器内部滚动位置的同步），也会与 `scrollToOffset` 现有实现重复，需要统一
+到一个入口。
+
+更重要的是范围界定。`AGENTS.md` 明确 Zeus 仍是**非生产**依赖：Z1 是 audit/benchmark
+轨道，`@zeus-web/data-grid` 只有在 Z1 的 dependency、bundle、performance 与 two-WebView
+Go 全通过后才可成为精确锁定的生产依赖；当前 Z1 为 NO-GO，不存在生产 Zeus 依赖或 renderer
+集成，Z2 不得启动。因此形态 2 的收益只作用于基准口径（程序化赋值），而 Nyala 的 SQL
+结果网格当前仍走 native renderer。在 Z1 转 GO 之前，把 data-grid 的滚动模型改造成
+「程序化赋值同步提交」既无生产消费者，也会让基准分数更贴近基线的实现细节而非真实交互
+延迟。
+
+结论：形态 2 属于**门禁口径优化**，不是产品性能改进。它能解释 Zeus 与 WorkbenchTable
+的 `inputMs` 差距来源，但在当前阶段用它去把 Z1 推向 GO 会把测量对齐和产品改进混为一谈。
+真正的产品级等价（形态 1）需要重写滚动子系统，属于独立的架构工作，应在 Z1 转 GO、
+Zeus 进入生产集成之后再评估。此处记录该结论，是为了避免后续把形态 2 的实现包装成
+"修复了 10k 滚动延迟"。
+
 ## 20 对交错 A/B：未复现稳定的版本 flush 回归
 
 预先检验假设：“beta31 对相同 1k 窗口转换引入可重复的额外发布 / flush 工作”。
