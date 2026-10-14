@@ -126,7 +126,28 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /runToken/);
 	assert.doesNotMatch(source, /window\/rect[^\n]*\.catch/);
 	assert.match(source, /sha256: createHash\('sha256'\)/);
-	assert.match(source, /screenshots\.push\(\{/);
+	assert.match(source, /screenshots\.push\(\.\.\.attemptScreenshots\)/);
+	// A host that misses a presentation opportunity inside the per-sample budget
+	// must not discard the other 59 records. The scheduled slot is re-run with
+	// the same execution ordinal until it yields a usable record, and every
+	// retry stays visible in the evidence so readers can see how much retrying a
+	// platform needed.
+	assert.match(source, /maxRoundAttempts/);
+	assert.match(source, /--max-round-attempts/);
+	assert.match(source, /enriched\.status !== 'ok' && attempt < maxRoundAttempts/);
+	assert.match(source, /retriedRounds\.push\(\{/);
+	assert.match(source, /roundAttempts: attempt/);
+	assert.match(source, /retriedRounds/);
+	// A retried slot must not leave the discarded attempt's screenshot behind:
+	// the gate requires exactly 12 manifest entries and each one must match the
+	// run token of the record that was actually kept.
+	assert.match(source, /discardedScreenshotFiles/);
+	assert.match(source, /removeStaleAttemptScreenshots/);
+	assert.match(source, /delete enriched\.screenshot/);
+	assert.match(source, /discarded: attemptFailures/);
+	// Retries spend the same budget as first attempts, so the platform run
+	// budget has to be re-checked inside the retry loop.
+	assert.match(source, /budget while retrying/);
 });
 
 test('benchmark page posts completed results to the runner channel', async () => {

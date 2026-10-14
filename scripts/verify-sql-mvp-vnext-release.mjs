@@ -29,20 +29,20 @@ const expectedRepository = process.env.NYALA_EXPECTED_REPOSITORY;
 const expectedSourceRef = process.env.NYALA_EXPECTED_SOURCE_REF;
 const expectedZeusDataGridPackage = {
 	name: '@zeus-web/data-grid',
-	version: '0.1.0-beta.30',
+	version: '0.1.0-beta.31',
 	license: 'MIT',
-	integrity: 'sha512-GDIbx/QKtGx2RqsLwcojeX2XOx+4J/auzeK/i4vG6vEaFO/y2WdIT59mALEDw7oJER9hP0eyiQNrg/v/xlpUmw==',
+	integrity: 'sha512-hX+bmuWYm3LEfAzpRDpdLT0EZSQkBKGTOT2Qj91QPfaY7F+8narSO5ZbMki9b219vHU68NopUyBxMPvSrfVwWg==',
 	unpackedSize: 347_893,
 	dependencies: {
-		'@zeus-js/output-react-wrapper': '0.1.1-beta.11',
-		'@zeus-js/output-vue-wrapper': '0.1.1-beta.11',
-		'@zeus-js/runtime-dom': '0.1.1-beta.11',
-		'@zeus-js/web-c-runtime': '0.1.1-beta.11',
-		'@zeus-web/virtual': '0.1.0-beta.30',
-		'@zeus-web/zeus-compat': '0.1.0-beta.30'
+		'@zeus-js/output-react-wrapper': '0.1.1-beta.12',
+		'@zeus-js/output-vue-wrapper': '0.1.1-beta.12',
+		'@zeus-js/runtime-dom': '0.1.1-beta.12',
+		'@zeus-js/web-c-runtime': '0.1.1-beta.12',
+		'@zeus-web/virtual': '0.1.0-beta.31',
+		'@zeus-web/zeus-compat': '0.1.0-beta.31'
 	},
 	peerDependencies: {
-		'@zeus-js/zeus': '0.1.1-beta.11',
+		'@zeus-js/zeus': '0.1.1-beta.12',
 		react: '>=18 || >=19',
 		vue: '>=3'
 	}

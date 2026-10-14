@@ -93,6 +93,20 @@ const RESULT_POLL_EVAL_TIMEOUT_MS = 10_000;
 const RESULT_CHANNEL_GRACE_MS = 15_000;
 const OBSERVE_EVAL_TIMEOUT_MS = 15_000;
 const runBudgetMs = parseBoundedPositiveInteger(cli['run-budget-ms'] ?? '1800000', '--run-budget-ms', 5_400_000);
+// A round can fail for reasons that are not renderer behaviour: the host can
+// miss a presentation opportunity inside the fixed per-sample budget, or a
+// degraded WebView can drop a navigation. Those failures are real but they are
+// not measurements of the renderer, and the v7 contract still requires five
+// successful records per workload/renderer. Re-running the same scheduled slot
+// keeps the balanced execution plan intact while giving an intermittent host
+// hiccup a second chance. Only a round that succeeds replaces its failed
+// predecessor; every attempt stays in `recordRetries` so the evidence file
+// shows exactly how much retrying a platform needed.
+const maxRoundAttempts = parseBoundedPositiveInteger(
+	cli['max-round-attempts'] ?? '3',
+	'--max-round-attempts',
+	10
+);
 const traceProfile = String(cli['trace-profile'] ?? 'false') === 'true';
 const outputPath = resolve(cli.output ?? defaultOutput);
 const screenshotDir = resolve(cli['screenshot-dir'] ?? join(repositoryRoot, 'platform-screenshots'));
@@ -121,6 +135,10 @@ await run();
 async function run() {
 	const records = [];
 	const screenshots = [];
+	// Slots that needed more than one attempt to produce a usable record. This
+	// is provenance for the retry policy: a platform that needed retries is
+	// still evidence, but the count has to be visible to whoever reads it.
+	const retriedRounds = [];
 	let sessionId;
 	let temporaryRoot;
 	let appHost;
@@ -185,7 +203,104 @@ async function run() {
 					`Platform run exceeded its ${Math.round(runBudgetMs / 1000)}s budget after ${records.length}/${benchmarkPlan.length} benchmark rounds.`
 				);
 			}
+			// Re-run the same scheduled slot until it produces a usable record.
+			// The execution ordinal, renderer rotation and sample budgets stay
+			// exactly as planned; only the attempt behind that slot changes.
+			let attempt = 0;
+			let enriched;
+			let timings;
+			let attemptScreenshots = [];
+			const discardedScreenshotFiles = [];
+			const attemptFailures = [];
+			for (;;) {
+				attempt += 1;
+				// A retry is another full navigation plus the whole scroll sample
+				// budget, so it has to be charged against the platform run budget
+				// exactly like a first attempt. Without this a degraded WebView could
+				// spend hours on retries long after the run should have stopped.
+				if (Date.now() - benchmarkStartedAt > runBudgetMs) {
+					throw new Error(
+						`Platform run exceeded its ${Math.round(runBudgetMs / 1000)}s budget while retrying ${workload.id}/${renderer} #${iteration} (attempt ${attempt}).`
+					);
+				}
+				try {
+					const outcome = await runBenchmarkRound();
+					enriched = outcome.record;
+					timings = outcome.timings;
+					attemptScreenshots = outcome.screenshots;
+				} catch (error) {
+					discardedScreenshotFiles.push(...attemptScreenshots.map(entry => entry.file));
+					attemptScreenshots = [];
+					attemptFailures.push(error instanceof Error ? error.message : String(error));
+					if (attempt >= maxRoundAttempts) throw error;
+					process.stderr.write(
+						`${label}: retrying ${workload.id}/${renderer} #${iteration} (attempt ${attempt + 1}/${maxRoundAttempts}) after ${error instanceof Error ? error.message : String(error)}\n`
+					);
+					continue;
+				}
+				// A record that reports its own error (for example a sample that
+				// never reached a presentation opportunity) is the same kind of
+				// host failure as a thrown navigation error, so it also earns a
+				// fresh attempt instead of poisoning the whole platform run.
+				if (enriched.status !== 'ok' && attempt < maxRoundAttempts) {
+					discardedScreenshotFiles.push(...attemptScreenshots.map(entry => entry.file));
+					attemptScreenshots = [];
+					attemptFailures.push(`${enriched.status}: ${enriched.reason ?? 'unknown reason'}`);
+					process.stderr.write(
+						`${label}: retrying ${workload.id}/${renderer} #${iteration} (attempt ${attempt + 1}/${maxRoundAttempts}) after ${enriched.status}: ${enriched.reason ?? 'unknown reason'}\n`
+					);
+					continue;
+				}
+				// The slot exhausted its attempts. Keep the failing record so the
+				// platform stays fail-closed with 5 records per workload/renderer,
+				// and record why the last attempt did not pass.
+				if (enriched.status !== 'ok') {
+					attemptFailures.push(`${enriched.status}: ${enriched.reason ?? 'unknown reason'}`);
+				}
+				break;
+			}
+			if (attempt > 1) {
+				retriedRounds.push({
+					workloadId: workload.id,
+					renderer,
+					iteration,
+					executionOrdinal,
+					attempts: attempt,
+					discarded: attemptFailures
+				});
+				enriched = { ...enriched, roundAttempts: attempt };
+			}
+			// Only the attempt that produced the retained record may contribute
+			// screenshots, and a retried slot's stale PNGs must not reach the
+			// artifact directory the gate reads.
+			if (enriched.status !== 'ok') {
+				discardedScreenshotFiles.push(...attemptScreenshots.map(entry => entry.file));
+				attemptScreenshots = [];
+				// The manifest entry is gone, so the record must not keep pointing at
+				// a screenshot the gate can no longer resolve.
+				delete enriched.screenshot;
+				delete enriched.screenshotProbe;
+			}
+			if (attempt > 1 || enriched.status !== 'ok') await removeStaleAttemptScreenshots();
+			screenshots.push(...attemptScreenshots);
+			records.push(enriched);
+			process.stdout.write(
+				`${workload.id}/${renderer} #${iteration} [${executionOrdinal}/${benchmarkPlan.length}] navigate=${timings.navigateMs}ms calibrate=${timings.calibrateMs}ms total=${timings.roundMs}ms stage=${timings.stage}: ${formatRecord(enriched)}\n`
+			);
+
+			async function removeStaleAttemptScreenshots() {
+				for (const file of discardedScreenshotFiles) {
+					// Best effort: a leftover PNG from a discarded attempt would be
+					// uploaded as an untracked artifact, but failing to remove it must
+					// not discard an otherwise valid measurement.
+					await rm(join(screenshotDir, file), { force: true }).catch(() => undefined);
+				}
+			}
+		}
+
+		async function runBenchmarkRound() {
 			const runToken = randomUUID();
+			const attemptScreenshots = [];
 			await resetPageForViewportCalibration(driverUrl, sessionId, Boolean(appBinary));
 			const query = {
 				run: runToken,
@@ -276,7 +391,10 @@ async function run() {
 					runToken,
 					viewport: record.browserViewport
 				};
-				screenshots.push({
+				// The manifest entry belongs to this attempt only. A failed attempt
+				// must not leave a screenshot behind, because the manifest has to
+				// describe exactly the run tokens that ended up in the final records.
+				attemptScreenshots.push({
 					file: screenshotName,
 					workloadId: workload.id,
 					renderer,
@@ -311,10 +429,11 @@ async function run() {
 					enriched.segmentTraceError = error instanceof Error ? error.message : String(error);
 				}
 			}
-			records.push(enriched);
-			process.stdout.write(
-				`${workload.id}/${renderer} #${iteration} [${executionOrdinal}/${benchmarkPlan.length}] navigate=${afterNavigateMs}ms calibrate=${afterCalibrateMs}ms total=${Date.now() - stageStartedAt}ms stage=${stage}: ${formatRecord(enriched)}\n`
-			);
+			return {
+				record: enriched,
+				timings: { navigateMs: afterNavigateMs, calibrateMs: afterCalibrateMs, roundMs: Date.now() - stageStartedAt, stage },
+				screenshots: attemptScreenshots
+			};
 		}
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
@@ -327,7 +446,8 @@ async function run() {
 			identity,
 			provenance,
 			records,
-			screenshots
+			screenshots,
+			retriedRounds
 		});
 		process.exitCode = 1;
 		return;
@@ -354,7 +474,8 @@ async function run() {
 		identity,
 		provenance,
 		records,
-		screenshots
+		screenshots,
+		retriedRounds
 	});
 	if (!allSuccessful) process.exitCode = 1;
 }
@@ -736,7 +857,7 @@ function formatDimension(value) {
 	return Number.isFinite(value) ? String(Math.round(value * 100) / 100) : 'invalid';
 }
 
-async function writeEvidence({ status, runs, reason, label, identity, provenance, records, screenshots }) {
+async function writeEvidence({ status, runs, reason, label, identity, provenance, records, screenshots, retriedRounds = [] }) {
 	const report = {
 		version: 2,
 		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
@@ -751,7 +872,8 @@ async function writeEvidence({ status, runs, reason, label, identity, provenance
 		provenance,
 		summary: summarize(records),
 		records,
-		screenshots
+		screenshots,
+		retriedRounds
 	};
 	await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 	process.stdout.write(`Wrote ${outputPath}\n`);
