@@ -143,15 +143,22 @@ Zeus 自身**的滚动延迟差距，也是下一轮应当针对的目标。
    WBT 渲染 14 行。Zeus 多渲染 64% 的行与单元格，而两者 DOM 节点总数相近，说明 WBT
    在同等节点预算下复用了更多。`grid-virtualizer.ts:100-115` 的 fixed 容量为
    `ceil(viewport/rowHeight) + overscan*2 + 1`，overscan 默认 4。
-2. **每行携带完整列模板**。`data-grid.tsx:2741` 给每一行都设置
-   `gridTemplateColumns: getGridTemplateColumns()`，该字符串包含全部列（10k-x-50 为
-   50 条轨道），而每次 commit 实际只渲染 13 个可见列。CSS Grid 需要为每行解析完整
-   显式轨道列表，代价约为「可见行数 x 总轨道数」。
+2. **文本整形成本被 Zeus 放大**。同为 80 字符 cell、60 字符表头，wide 相对 10k-x-50
+   的 rafToTask 增量在 Zeus 上是 +11ms（15.0 → 26.0），在 WBT 上只有 +3.4ms
+   （4.6 → 8.0）。native 反而是 wide 更快（6.6 vs 16.2），因为它只渲染 1000 行而
+   10k-x-50 渲染 10000 行。因此同一段长文本在 Zeus 路径上的代价是 WBT 的约三倍。
 
-需要注意这两项都无法解释 wide 与 10k 的差异方向（10k 轨道更多却更快），因此文本
-整形仍是最可能的因素：Zeus 在 wide 与短文本之间的 rafToTask 差约 11ms，而 WBT
-同项差约 3.4ms，且 native 在 wide 上反而比 10k 更快。文本长度只在 Zeus 上放大成本，
-指向 Zeus 的 cell 绑定或布局路径，而非数据量本身。
+   曾怀疑每行携带完整列模板（`data-grid.tsx:2741` 的
+   `gridTemplateColumns: getGridTemplateColumns()`），但该字符串来自
+   `columnSnapshotCache`（`data-grid.tsx:1173-1179`），只拼接 `snapshot.items` 的尺寸，
+   即当前渲染范围（实测 `lastColumnIndex: 12`，13 个条目），并非全部 50 条轨道。
+   该假设不成立，已排除。
+
+   两侧 cell 的 CSS 差异是候选点：Zeus cell 为 `display: flex` 加
+   `text-overflow: ellipsis`，WBT cell 为普通块级 `white-space: nowrap` +
+   `overflow: hidden` 且无 ellipsis。ellipsis 需要完整整形后测量再截断，理论上更贵。
+   本机曾测过 `text-overflow: clip`，但本机 rafToTask 漂移 6–19ms，该结论不成立，
+   需要在交错采集下重测。
 
 ## 门判定
 
