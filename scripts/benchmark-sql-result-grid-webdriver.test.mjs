@@ -684,3 +684,19 @@ test('native platform workflow bundles the auto-registering Zeus entry', async (
 	assert.match(source, /overwrite: true/);
 	assert.doesNotMatch(source, /if-no-files-found: warn/);
 });
+
+test('platform workflow can measure a control data-grid version without scoring the gate', async () => {
+	const source = await import('node:fs/promises').then(fs =>
+		fs.readFile(new URL('../.github/workflows/sql-result-grid-platform.yml', import.meta.url), 'utf8')
+	);
+	// A paired comparison needs both bundles measured by the same collector, so the
+	// pinned version has to be overridable. The gate scores exactly one version, so
+	// an override must not be able to produce an admission decision.
+	assert.match(source, /zeus_package_version:/);
+	assert.match(source, /inputs\.zeus_package_version \|\| '0\.1\.0-beta\.32'/);
+	assert.equal(
+		source.match(/inputs\.zeus_package_version == ''/g)?.length,
+		2,
+		'both the merge and the gate must be skipped for a version override'
+	);
+});

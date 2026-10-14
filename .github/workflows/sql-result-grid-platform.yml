@@ -23,6 +23,10 @@ on:
         required: false
         default: 'false'
         type: string
+      zeus_package_version:
+        description: 'data-grid version to measure. Defaults to the version this workflow pins. Overrides collect control evidence and are never gated.'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -72,8 +76,9 @@ jobs:
         shell: bash
         run: |
           printf '{"name":"nyala-zeus-audit","private":true}\n' > "$AUDIT_DIR/package.json"
-          pnpm add --dir "$AUDIT_DIR" --save-exact @zeus-web/data-grid@0.1.0-beta.32 esbuild@0.28.1
-          pnpm view @zeus-web/data-grid@0.1.0-beta.32 \
+          version="${{ inputs.zeus_package_version || '0.1.0-beta.32' }}"
+          pnpm add --dir "$AUDIT_DIR" --save-exact "@zeus-web/data-grid@$version" esbuild@0.28.1
+          pnpm view "@zeus-web/data-grid@$version" \
             name version license dist.integrity dist.unpackedSize dependencies peerDependencies \
             --json > "$AUDIT_DIR/registry.json"
           entry="$AUDIT_DIR/node_modules/@zeus-web/data-grid/dist/wc/auto.js"
@@ -346,7 +351,7 @@ jobs:
           merge-multiple: false
 
       - name: Merge evidence
-        if: ${{ inputs.instrument_baseline != 'true' }}
+        if: ${{ inputs.instrument_baseline != 'true' && inputs.zeus_package_version == '' }}
         run: |
           node scripts/merge-sql-result-grid-platform-evidence.mjs \
             --macos "$RUNNER_TEMP/sql-result-grid-evidence/sql-result-grid-macos-webkit/platform-evidence.json" \
@@ -356,8 +361,10 @@ jobs:
       # An instrumented-baseline run carries observer overhead inside
       # scrollP95Ms, so its records cannot be scored for v7 admission. Skipping
       # the gate keeps a fail-closed NO-GO from being mistaken for a real result.
+      # A version override collects control evidence for a paired comparison.
+      # The gate scores one pinned version, so it is skipped for overrides.
       - name: Run fail-closed Z1 gate
-        if: ${{ inputs.instrument_baseline != 'true' }}
+        if: ${{ inputs.instrument_baseline != 'true' && inputs.zeus_package_version == '' }}
         env:
           NYALA_EXPECTED_REPOSITORY: ${{ github.repository }}
           NYALA_EXPECTED_SOURCE_REVISION: ${{ github.sha }}
