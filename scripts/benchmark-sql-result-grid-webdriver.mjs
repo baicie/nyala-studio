@@ -224,7 +224,7 @@ async function run() {
 					);
 				}
 				try {
-					const outcome = await runBenchmarkRound();
+					const outcome = await runBenchmarkRound({ workload, renderer, iteration, executionOrdinal });
 					enriched = outcome.record;
 					timings = outcome.timings;
 					attemptScreenshots = outcome.screenshots;
@@ -298,7 +298,11 @@ async function run() {
 			}
 		}
 
-		async function runBenchmarkRound() {
+		// The scheduled slot is passed in explicitly rather than captured from the
+		// loop: a nested function declaration would not see the loop bindings, and
+		// a silently undefined renderer would look like a flaky host instead of a
+		// bug in this runner.
+		async function runBenchmarkRound({ workload, renderer, iteration, executionOrdinal }) {
 			const runToken = randomUUID();
 			const attemptScreenshots = [];
 			await resetPageForViewportCalibration(driverUrl, sessionId, Boolean(appBinary));

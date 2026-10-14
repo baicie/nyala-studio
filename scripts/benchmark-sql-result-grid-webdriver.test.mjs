@@ -148,6 +148,17 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	// Retries spend the same budget as first attempts, so the platform run
 	// budget has to be re-checked inside the retry loop.
 	assert.match(source, /budget while retrying/);
+	// The extracted round helper must receive the scheduled slot explicitly. A
+	// nested declaration cannot see the loop bindings, and an undefined renderer
+	// reads like a flaky host instead of a runner bug.
+	assert.match(
+		source,
+		/runBenchmarkRound\(\{ workload, renderer, iteration, executionOrdinal \}\)/
+	);
+	assert.match(
+		source,
+		/async function runBenchmarkRound\(\{ workload, renderer, iteration, executionOrdinal \}\)/
+	);
 });
 
 test('benchmark page posts completed results to the runner channel', async () => {
