@@ -27,6 +27,10 @@ on:
         description: 'data-grid version to measure. Defaults to the version this workflow pins. Overrides collect control evidence and are never gated.'
         required: false
         type: string
+      zeus_variant:
+        description: 'Interleaved data-grid versions as id=version,id=version. Each version plus the pinned version is measured inside one WebView session so host drift hits them all. Diagnostic paired evidence, never gated.'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -88,6 +92,29 @@ jobs:
             --bundle --format=iife --platform=browser --minify --legal-comments=none \
             --outfile="$AUDIT_DIR/data-grid-bundle.js"
 
+          # Interleaved collection: bundle every requested variant next to the
+          # pinned one so a single platform job can alternate between them inside
+          # one WebView session. Two runs hours apart cannot support a 10%/20%
+          # threshold when hosted runners drift by tens of percent.
+          if [ -n "${{ inputs.zeus_variant }}" ]; then
+            old_ifs=$IFS
+            IFS=';'
+            for pair in ${{ inputs.zeus_variant }}; do
+              id="${pair%%=*}"
+              version="${pair#*=}"
+              [ -n "$id" ] || continue
+              dir="$AUDIT_DIR/variant-$id"
+              mkdir -p "$dir"
+              printf '{"name":"nyala-zeus-audit-%s","private":true}\n' "$id" > "$dir/package.json"
+              pnpm add --dir "$dir" --save-exact "@zeus-web/data-grid@$version" esbuild@0.28.1
+              "$dir/node_modules/.bin/esbuild" "$dir/node_modules/@zeus-web/data-grid/dist/wc/auto.js" \
+                --bundle --format=iife --platform=browser --minify --legal-comments=none \
+                --outfile="$AUDIT_DIR/variant-$id.js"
+              npm view "@zeus-web/data-grid@$version" version --json > "$AUDIT_DIR/variant-$id.registry.json"
+            done
+            IFS=$old_ifs
+          fi
+
       - name: Create structured dependency audit
         run: |
           node scripts/create-sql-result-grid-zeus-audit.mjs \
@@ -126,6 +153,8 @@ jobs:
           name: sql-result-grid-zeus-audit
           path: |
             ${{ runner.temp }}/nyala-zeus-audit/data-grid-bundle.js
+            ${{ runner.temp }}/nyala-zeus-audit/variant-*.js
+            ${{ runner.temp }}/nyala-zeus-audit/variant-*.registry.json
             ${{ runner.temp }}/nyala-zeus-audit/zeus-audit.json
             ${{ runner.temp }}/nyala-zeus-audit/phase-z1-benchmark.json
           if-no-files-found: error
@@ -195,12 +224,23 @@ jobs:
         env:
           BENCHMARK_REPEAT: ${{ inputs.repeat || '5' }}
         run: |
+          VARIANT_ARGS=""
+          if [ -n "${{ inputs.zeus_variant }}" ]; then
+            OLD_IFS=$IFS
+            IFS=';'
+            VARIANT_ARGS="--zeus-variant pinned=$RUNNER_TEMP/nyala-zeus-audit/data-grid-bundle.js"
+            for pair in ${{ inputs.zeus_variant }}; do
+              VARIANT_ARGS="$VARIANT_ARGS,$pair=$RUNNER_TEMP/nyala-zeus-audit/variant-$pair.js"
+            done
+            IFS=$OLD_IFS
+          fi
           node scripts/benchmark-sql-result-grid-webdriver.mjs \
             --app-binary "$GITHUB_WORKSPACE/target/debug/sql-studio-next" \
             --platform macos \
             --repeat "$BENCHMARK_REPEAT" \
             --run-budget-ms 4200000 \
             --zeus-bundle "$RUNNER_TEMP/nyala-zeus-audit/data-grid-bundle.js" \
+            $VARIANT_ARGS \
             --trace-profile true \
             --instrument-baseline "${{ inputs.instrument_baseline || 'false' }}" \
             --repository "$GITHUB_REPOSITORY" \
@@ -293,12 +333,21 @@ jobs:
         env:
           BENCHMARK_REPEAT: ${{ inputs.repeat || '5' }}
         run: |
+          $variantArgs = @()
+          if ('${{ inputs.zeus_variant }}' -ne '') {
+            $variantArgs = @("--zeus-variant", "pinned=$env:RUNNER_TEMP\nyala-zeus-audit\data-grid-bundle.js")
+            foreach ($pair in ('${{ inputs.zeus_variant }}' -split ';')) {
+              if (-not $pair) { continue }
+              $variantArgs += "$pair=$env:RUNNER_TEMP\nyala-zeus-audit\variant-$pair.js"
+            }
+          }
           node scripts/benchmark-sql-result-grid-webdriver.mjs `
             --app-binary "$env:GITHUB_WORKSPACE\target\debug\sql-studio-next.exe" `
             --platform windows `
             --repeat "$env:BENCHMARK_REPEAT" `
             --run-budget-ms 4200000 `
             --zeus-bundle "$env:RUNNER_TEMP\nyala-zeus-audit\data-grid-bundle.js" `
+            @variantArgs `
             --trace-profile true `
             --instrument-baseline "${{ inputs.instrument_baseline || 'false' }}" `
             --repository "$env:GITHUB_REPOSITORY" `
@@ -353,7 +402,7 @@ jobs:
           merge-multiple: false
 
       - name: Merge evidence
-        if: ${{ inputs.instrument_baseline != 'true' && inputs.zeus_package_version == '' }}
+        if: ${{ inputs.instrument_baseline != 'true' && inputs.zeus_package_version == '' && inputs.zeus_variant == '' }}
         run: |
           node scripts/merge-sql-result-grid-platform-evidence.mjs \
             --macos "$RUNNER_TEMP/sql-result-grid-evidence/sql-result-grid-macos-webkit/platform-evidence.json" \
@@ -366,7 +415,7 @@ jobs:
       # A version override collects control evidence for a paired comparison.
       # The gate scores one pinned version, so it is skipped for overrides.
       - name: Run fail-closed Z1 gate
-        if: ${{ inputs.instrument_baseline != 'true' && inputs.zeus_package_version == '' }}
+        if: ${{ inputs.instrument_baseline != 'true' && inputs.zeus_package_version == '' && inputs.zeus_variant == '' }}
         env:
           NYALA_EXPECTED_REPOSITORY: ${{ github.repository }}
           NYALA_EXPECTED_SOURCE_REVISION: ${{ github.sha }}

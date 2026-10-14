@@ -162,9 +162,12 @@ export function isBenchmarkResultForRun(record, expected) {
 		record.renderer === expected.renderer &&
 		record.measurementContractVersion === MEASUREMENT_CONTRACT_VERSION &&
 		record.scrollCommitBoundary === SCROLL_COMMIT_BOUNDARY &&
-		record.executionOrder === EXECUTION_ORDER &&
+		record.executionOrder === (expected.executionOrder ?? EXECUTION_ORDER) &&
 		record.executionOrder === expected.executionOrder &&
 		record.executionOrdinal === expected.executionOrdinal &&
+		(expected.zeusVariant === undefined ||
+			record.zeusVariant === expected.zeusVariant ||
+			(record.zeusVariant === undefined && expected.zeusVariant === null)) &&
 		record.workload?.rows === expected.workload.rows &&
 		record.workload?.columns === expected.workload.columns &&
 		record.workload?.wide === expected.workload.wide &&

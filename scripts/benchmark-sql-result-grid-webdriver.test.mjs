@@ -161,8 +161,11 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	// The extracted round helper must receive the scheduled slot explicitly. A
 	// nested declaration cannot see the loop bindings, and an undefined renderer
 	// reads like a flaky host instead of a runner bug.
-	assert.match(source, /runBenchmarkRound\(\{ workload, renderer, iteration, executionOrdinal \}\)/);
-	assert.match(source, /async function runBenchmarkRound\(\{ workload, renderer, iteration, executionOrdinal \}\)/);
+	assert.match(source, /runBenchmarkRound\(\{ workload, renderer, iteration, executionOrdinal, variant \}\)/);
+	assert.match(
+		source,
+		/async function runBenchmarkRound\(\{ workload, renderer, iteration, executionOrdinal, variant \}\)/
+	);
 });
 
 test('benchmark page posts completed results to the runner channel', async () => {
@@ -592,10 +595,7 @@ test('repeated navigation timeouts recycle the WebDriver session', async () => {
 		// The stalled session must be deleted and a fresh one opened, otherwise
 		// every remaining attempt would be spent on a WebView that no longer
 		// answers.
-		assert.ok(
-			issuedSessions >= 2,
-			`expected a new session, saw ${issuedSessions}`
-		);
+		assert.ok(issuedSessions >= 2, `expected a new session, saw ${issuedSessions}`);
 		assert.ok(deletedSessions >= 1, `expected the stalled session to be deleted, saw ${deletedSessions}`);
 	} finally {
 		server.closeAllConnections();
@@ -669,16 +669,8 @@ test('native platform workflow bundles the auto-registering Zeus entry', async (
 	// The blocked-evidence fallback must declare the same measurement contract
 	// the benchmark code emits, otherwise a failed run produces evidence the gate
 	// rejects for a contract mismatch instead of reporting the real failure.
-	assert.equal(
-		source.match(
-			new RegExp(`measurementContractVersion:${MEASUREMENT_CONTRACT_VERSION}`, 'g')
-		)?.length,
-		2
-	);
-	assert.doesNotMatch(
-		source,
-		new RegExp(`measurementContractVersion:(?!${MEASUREMENT_CONTRACT_VERSION}\\b)\\d+`)
-	);
+	assert.equal(source.match(new RegExp(`measurementContractVersion:${MEASUREMENT_CONTRACT_VERSION}`, 'g'))?.length, 2);
+	assert.doesNotMatch(source, new RegExp(`measurementContractVersion:(?!${MEASUREMENT_CONTRACT_VERSION}\\b)\\d+`));
 	assert.equal(source.match(/scrollCommitBoundary:'post-presentation-opportunity'/g)?.length, 2);
 	assert.equal(source.match(/executionOrder:'renderer-balanced-rotation-v1'/g)?.length, 2);
 	assert.match(source, /overwrite: true/);
@@ -694,9 +686,23 @@ test('platform workflow can measure a control data-grid version without scoring 
 	// an override must not be able to produce an admission decision.
 	assert.match(source, /zeus_package_version:/);
 	assert.match(source, /inputs\.zeus_package_version \|\| '0\.1\.0-beta\.32'/);
-	assert.equal(
-		source.match(/inputs\.zeus_package_version == ''/g)?.length,
-		2,
-		'both the merge and the gate must be skipped for a version override'
+	// Merge and gate each carry the guard once, so the version-override condition
+	// appears exactly twice in the workflow.
+	assert.equal(source.match(/inputs\.zeus_package_version == ''/g)?.length, 2);
+});
+
+test('platform workflow can interleave bundle variants inside one WebView session', async () => {
+	const source = await import('node:fs/promises').then(fs =>
+		fs.readFile(new URL('../.github/workflows/sql-result-grid-platform.yml', import.meta.url), 'utf8')
 	);
+	assert.match(source, /zeus_variant:/);
+	// Each platform job needs the interleaved bundle, and the pinned version has to
+	// join the pairing. Otherwise the reported variant delta mixes the
+	// pinned-to-variant difference with the between-variant difference.
+	assert.match(source, /pinned=\$RUNNER_TEMP\/nyala-zeus-audit\/data-grid-bundle\.js/);
+	assert.match(source, /pinned=\$env:RUNNER_TEMP\\nyala-zeus-audit\\data-grid-bundle\.js/);
+	// Interleaved evidence is paired comparison evidence only. It must never reach
+	// the single-version admission gate.
+	const gateGuards = source.match(/inputs\.zeus_package_version == '' && inputs\.zeus_variant == ''/g) ?? [];
+	assert.equal(gateGuards.length, 2, 'both the merge and the gate must be skipped for an interleaved run');
 });

@@ -38,6 +38,10 @@ import {
 } from './sql-result-grid-run-marker.mjs';
 import { createSqlResultGridResultChannel } from './sql-result-grid-result-channel.mjs';
 import { validateObserverFreeSegmentTraceSnapshot } from './sql-result-grid-segment-trace.mjs';
+import {
+	createInterleavedVariantBenchmarkPlan,
+	INTERLEAVED_EXECUTION_ORDER
+} from './sql-result-grid-interleaved-plan.mjs';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const defaultOutput = join(repositoryRoot, 'platform-evidence.json');
@@ -126,6 +130,12 @@ const instrumentBaseline = String(cli['instrument-baseline'] ?? 'false') === 'tr
 const outputPath = resolve(cli.output ?? defaultOutput);
 const screenshotDir = resolve(cli['screenshot-dir'] ?? join(repositoryRoot, 'platform-screenshots'));
 const zeusBundle = cli['zeus-bundle'] ?? '/tmp/nyala-zeus-audit/data-grid-bundle.js';
+// 交错采集模式：--zeus-variant <id>=<path>[,<id>=<path>] 让同一次 WebView 会话在同一段
+// 宿主状态下交替测量多个 Zeus bundle 变体。这是对抗 GitHub-hosted runner 之间数十
+// 个百分点宿主漂移的唯一可靠手段，因为漂移会同时作用于两个变体。
+const zeusVariants = parseZeusVariants(cli['zeus-variant']);
+const interleaved = zeusVariants.length > 0;
+const effectiveExecutionOrder = interleaved ? INTERLEAVED_EXECUTION_ORDER : EXECUTION_ORDER;
 const label = cli.label ?? (platform === 'windows' || browser === 'edge' ? 'Windows WebView2' : 'macOS WebKit');
 const workloads = [
 	{ id: '1k-x-20', rows: 1_000, columns: 20, width: 1440, height: 420, wide: false },
@@ -184,22 +194,47 @@ async function run() {
 		if (selectedRenderers.includes('zeus')) {
 			provenance = { ...provenance, zeusBundleSha256: await sha256File(zeusBundle) };
 		}
+		if (interleaved) {
+			provenance = {
+				...provenance,
+				interleavedVariants: await Promise.all(
+					zeusVariants.map(async variant => ({
+						id: variant.id,
+						bundlePath: variant.bundlePath,
+						bundleSha256: await sha256File(variant.bundlePath)
+					}))
+				)
+			};
+		}
 		temporaryRoot = await mkdtemp(join(process.env.RUNNER_TEMP ?? '/tmp', 'nyala-sql-webdriver-'));
-		const pagePath = join(temporaryRoot, 'benchmark.html');
-		const emitArgs = [
-			join(repositoryRoot, 'scripts/benchmark-sql-result-grid.mjs'),
-			'--emit-page',
-			pagePath,
-			'--renderer',
-			selectedRenderers.join(','),
-			'--workbench-table-implementation',
-			'real',
-			'--zeus-bundle',
-			zeusBundle
-		];
-		if (selectedRenderers.includes('zeus')) emitArgs.push('--require-zeus', 'true');
-		execFileSync(process.execPath, emitArgs, { stdio: 'inherit' });
-		benchmarkServer = await serveBenchmarkPage(pagePath);
+		// 每个变体需要一份独立页面：benchmark 页面把 bundle 内联进 HTML，所以同一
+		// WebView 会话里切换变体只能靠切换文档。
+		const pages = new Map();
+		const emitPage = async (name, bundle) => {
+			const pagePath = join(temporaryRoot, `${name}.html`);
+			const emitArgs = [
+				join(repositoryRoot, 'scripts/benchmark-sql-result-grid.mjs'),
+				'--emit-page',
+				pagePath,
+				'--renderer',
+				selectedRenderers.join(','),
+				'--workbench-table-implementation',
+				'real',
+				'--zeus-bundle',
+				bundle
+			];
+			if (selectedRenderers.includes('zeus')) emitArgs.push('--require-zeus', 'true');
+			execFileSync(process.execPath, emitArgs, { stdio: 'inherit' });
+			pages.set(name, pagePath);
+		};
+		if (interleaved) {
+			for (const variant of zeusVariants) {
+				await emitPage(sanitizePageName(variant.id), variant.bundlePath);
+			}
+		} else {
+			await emitPage('benchmark', zeusBundle);
+		}
+		benchmarkServer = await serveBenchmarkPages(pages);
 
 		if (appBinary) {
 			appHost = await launchTauriEmbeddedWebdriver({
@@ -216,9 +251,11 @@ async function run() {
 		liveSession.sessionId = session.sessionId;
 		await setSessionTimeouts(driverUrl, liveSession.sessionId, scriptTimeoutMs);
 		if (appBinary) identity = identifyEmbeddedWebview(session.capabilities, platform);
-		const benchmarkPlan = createBalancedBenchmarkPlan(selectedWorkloads, selectedRenderers, repeat);
+		const benchmarkPlan = interleaved
+			? createInterleavedVariantBenchmarkPlan(zeusVariants, selectedWorkloads, selectedRenderers, repeat)
+			: createBalancedBenchmarkPlan(selectedWorkloads, selectedRenderers, repeat);
 		const benchmarkStartedAt = Date.now();
-		for (const { workload, renderer, iteration, executionOrdinal } of benchmarkPlan) {
+		for (const { workload, renderer, iteration, executionOrdinal, variant } of benchmarkPlan) {
 			// Each round carries its own navigation, viewport calibration, segment
 			// trace, and result budgets. Without a whole-run budget a degraded
 			// WebView can stretch a platform job far past the point where the
@@ -250,7 +287,7 @@ async function run() {
 					);
 				}
 				try {
-					const outcome = await runBenchmarkRound({ workload, renderer, iteration, executionOrdinal });
+					const outcome = await runBenchmarkRound({ workload, renderer, iteration, executionOrdinal, variant });
 					enriched = outcome.record;
 					timings = outcome.timings;
 					attemptScreenshots = outcome.screenshots;
@@ -266,7 +303,11 @@ async function run() {
 					// the same session mean the WebView stopped servicing requests,
 					// which re-navigating cannot fix. Start a fresh WebView before the
 					// remaining attempts are spent on a dead one.
-					if (isNavigationFailure(error) && attempt >= 2 && !(await recycleSessionAfterNavigationFailures(liveSession))) {
+					if (
+						isNavigationFailure(error) &&
+						attempt >= 2 &&
+						!(await recycleSessionAfterNavigationFailures(liveSession))
+					) {
 						if (attempt > 1) recordRoundRetryHistory(attempt);
 						throw error;
 					}
@@ -343,14 +384,14 @@ async function run() {
 		// loop: a nested function declaration would not see the loop bindings, and
 		// a silently undefined renderer would look like a flaky host instead of a
 		// bug in this runner.
-		async function runBenchmarkRound({ workload, renderer, iteration, executionOrdinal }) {
+		async function runBenchmarkRound({ workload, renderer, iteration, executionOrdinal, variant }) {
 			const runToken = randomUUID();
 			const attemptScreenshots = [];
 			await resetPageForViewportCalibration(driverUrl, sessionId, Boolean(appBinary));
 			const query = {
 				run: runToken,
 				renderer,
-				executionOrder: EXECUTION_ORDER,
+				executionOrder: effectiveExecutionOrder,
 				executionOrdinal: String(executionOrdinal),
 				rows: String(workload.rows),
 				columns: String(workload.columns),
@@ -368,12 +409,17 @@ async function run() {
 				diagnosticProfile: 'true',
 				floorOnly: String(!instrumentBaseline)
 			};
+			// 交错模式下，页面按变体选择；同一会话内换变体必须换文档。
+			const pageName = interleaved
+				? sanitizePageName(renderer === 'zeus' ? variant.id : zeusVariants[0].id)
+				: 'benchmark';
+			if (interleaved && renderer === 'zeus') query.zeusVariant = variant.id;
 			query.resultEndpoint = benchmarkServer.resultUrl;
 			if (traceProfile) query.traceProfile = 'true';
 			if (iteration === 1) {
 				query.screenshotRunMarker = Buffer.from(createSqlResultGridRunMarkerBytes(runToken)).toString('hex');
 			}
-			const url = `${benchmarkServer.url}?${new URLSearchParams(query)}`;
+			const url = `${benchmarkServer.pageUrl(pageName)}?${new URLSearchParams(query)}`;
 			const stageStartedAt = Date.now();
 			let stage = 'navigate';
 			await webdriverRequest(
@@ -402,8 +448,9 @@ async function run() {
 				{
 					runToken,
 					renderer,
-					executionOrder: EXECUTION_ORDER,
+					executionOrder: effectiveExecutionOrder,
 					executionOrdinal,
+					zeusVariant: variant ? variant.id : null,
 					workload,
 					workbenchTableImplementation: 'real',
 					workbenchTableBundleSha256: provenance.workbenchTableBundleSha256
@@ -472,9 +519,16 @@ async function run() {
 						driverUrl,
 						sessionId,
 						Boolean(appBinary),
-						benchmarkServer.url,
+						interleaved ? benchmarkServer.pageUrl(pageName) : benchmarkServer.url,
 						benchmarkServer,
-						{ renderer, executionOrdinal, workload, workbenchTableBundleSha256: provenance.workbenchTableBundleSha256 }
+						{
+							renderer,
+							executionOrder: effectiveExecutionOrder,
+							executionOrdinal,
+							zeusVariant: variant ? variant.id : null,
+							workload,
+							workbenchTableBundleSha256: provenance.workbenchTableBundleSha256
+						}
 					);
 					enriched.segmentTrace = traced.segmentTrace;
 					if (traced.textChurn) enriched.textChurn = traced.textChurn;
@@ -540,15 +594,22 @@ async function run() {
 	if (!allSuccessful) process.exitCode = 1;
 }
 
-async function serveBenchmarkPage(pagePath) {
-	const html = await readFile(pagePath);
+async function serveBenchmarkPages(pagePaths) {
+	const pages = new Map();
+	for (const [name, pagePath] of pagePaths) {
+		pages.set(name, await readFile(pagePath));
+	}
 	const resultChannel = createSqlResultGridResultChannel();
 	const server = createServer((request, response) => {
 		const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
 		if (resultChannel.handle(request, response)) {
 			return;
 		}
-		if (request.method !== 'GET' || requestUrl.pathname !== '/benchmark.html') {
+		const pageName = requestUrl.pathname.startsWith('/page/')
+			? decodeURIComponent(requestUrl.pathname.slice('/page/'.length))
+			: 'benchmark';
+		const html = pages.get(pageName);
+		if (request.method !== 'GET' || !html) {
 			response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
 			response.end('Not found');
 			return;
@@ -573,10 +634,38 @@ async function serveBenchmarkPage(pagePath) {
 	}
 	return {
 		url: `http://127.0.0.1:${address.port}/benchmark.html`,
+		pageUrl: name => `http://127.0.0.1:${address.port}/page/${encodeURIComponent(name)}`,
 		resultUrl: `http://127.0.0.1:${address.port}/benchmark-result`,
 		readResult: resultChannel.readResult,
 		close: () => new Promise(resolveClose => server.close(() => resolveClose()))
 	};
+}
+
+function parseZeusVariants(value) {
+	if (!value) return [];
+	const variants = String(value)
+		.split(',')
+		.map(entry => entry.trim())
+		.filter(Boolean)
+		.map(entry => {
+			const separator = entry.indexOf('=');
+			if (separator <= 0) {
+				throw new Error(`--zeus-variant expects <id>=<path>, got ${entry}`);
+			}
+			return { id: entry.slice(0, separator).trim(), bundlePath: entry.slice(separator + 1).trim() };
+		});
+	for (const variant of variants) {
+		if (!variant.id || !variant.bundlePath) {
+			throw new Error(`--zeus-variant entry is incomplete: ${variant.id}=${variant.bundlePath}`);
+		}
+	}
+	return variants;
+}
+
+function sanitizePageName(name) {
+	const safe = String(name).replace(/[^a-zA-Z0-9._-]+/g, '-');
+	if (!safe) throw new Error(`Zeus variant id does not produce a usable page name: ${name}`);
+	return safe;
 }
 
 function parseArgs(args) {
@@ -828,7 +917,7 @@ async function runObserverFreeSegmentTraceNavigation(
 	const query = new URLSearchParams({
 		run: traceRunToken,
 		renderer: expected.renderer,
-		executionOrder: EXECUTION_ORDER,
+		executionOrder: expected.executionOrder ?? EXECUTION_ORDER,
 		executionOrdinal: String(expected.executionOrdinal),
 		segmentTrace: 'true',
 		diagnosticProfile: 'true',
@@ -840,6 +929,7 @@ async function runObserverFreeSegmentTraceNavigation(
 		height: String(expected.workload.height)
 	});
 	query.set('resultEndpoint', resultChannel.resultUrl);
+	if (expected.zeusVariant) query.set('zeusVariant', expected.zeusVariant);
 	const url = `${benchmarkBaseUrl}?${query}`;
 	await webdriverRequest(baseUrl, `/session/${sessionId}/url`, 'POST', { url });
 	await waitForNavigation(baseUrl, sessionId, url);
@@ -850,8 +940,9 @@ async function runObserverFreeSegmentTraceNavigation(
 		{
 			runToken: traceRunToken,
 			renderer: expected.renderer,
-			executionOrder: EXECUTION_ORDER,
+			executionOrder: expected.executionOrder ?? EXECUTION_ORDER,
 			executionOrdinal: expected.executionOrdinal,
+			zeusVariant: expected.zeusVariant ?? null,
 			workload: expected.workload,
 			workbenchTableImplementation: 'real',
 			workbenchTableBundleSha256: expected.workbenchTableBundleSha256
@@ -868,7 +959,9 @@ async function runObserverFreeSegmentTraceNavigation(
 			(record.status === 'ok'
 				? 'the run reported ok but carried no segmentTrace.'
 				: `the run reported status "${record.status}" and carried no segmentTrace.`);
-		throw new Error(`Observer-free segment trace failed for ${expected.workload.id}/${expected.renderer}: ${String(reason).split('\n')[0]}`);
+		throw new Error(
+			`Observer-free segment trace failed for ${expected.workload.id}/${expected.renderer}: ${String(reason).split('\n')[0]}`
+		);
 	}
 	validateObserverFreeSegmentTraceSnapshot(record.segmentTrace, { expectedSampleCount: 22 });
 	// `textChurn` is diagnostic-only evidence collected during the same measured
@@ -992,7 +1085,7 @@ async function writeEvidence({
 		version: 2,
 		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
 		scrollCommitBoundary: SCROLL_COMMIT_BOUNDARY,
-		executionOrder: EXECUTION_ORDER,
+		executionOrder: interleaved ? INTERLEAVED_EXECUTION_ORDER : EXECUTION_ORDER,
 		generatedAt: new Date().toISOString(),
 		label,
 		status,
@@ -1004,12 +1097,33 @@ async function writeEvidence({
 		// scrollP95Ms carries observer overhead and its presentation floor is not
 		// sampled cleanly. Such evidence may answer diagnostic questions about
 		// commit work, but it must never be scored for v7 admission.
-		admissionGrade: !instrumentBaseline,
-		...(instrumentBaseline
+		admissionGrade: !instrumentBaseline && !interleaved,
+		...(interleaved
+			? {
+					interleavedVariants: zeusVariants.map(variant => variant.id),
+					variantBundleSha256: Object.fromEntries(
+						zeusVariants.map(variant => [
+							variant.id,
+							provenance?.interleavedVariants?.find?.(entry => entry.id === variant.id)?.bundleSha256
+						])
+					)
+				}
+			: {}),
+		...(instrumentBaseline || interleaved
 			? {
 					limitations: [
-						'This run instrumented the baseline renderer, so scrollP95Ms carries observer overhead and the presentation floor was not sampled without instrumentation.',
-						'It is diagnostic evidence about renderer commit work and must not be scored for v7 admission.'
+						...(instrumentBaseline
+							? [
+									'This run instrumented the baseline renderer, so scrollP95Ms carries observer overhead and the presentation floor was not sampled without instrumentation.',
+									'It is diagnostic evidence about renderer commit work and must not be scored for v7 admission.'
+								]
+							: []),
+						...(interleaved
+							? [
+									'This run interleaved multiple Zeus bundle variants inside one WebView session, so the Zeus renderer is measured once per variant per workload instead of once per workload.',
+									'It is paired variant evidence and must not be scored for single-version v7 admission.'
+								]
+							: [])
 					]
 				}
 			: {}),
@@ -1046,7 +1160,7 @@ function summarize(records) {
 	const groups = new Map();
 	for (const record of records) {
 		if (record.status !== 'ok') continue;
-		const key = `${record.workloadId}/${record.renderer}`;
+		const key = summaryKey(record);
 		const group = groups.get(key) ?? [];
 		group.push(record);
 		groups.set(key, group);
@@ -1072,6 +1186,18 @@ function summarize(records) {
 			}
 		])
 	);
+}
+
+/**
+ * An interleaved run measures the same workload/renderer once per bundle variant,
+ * so collapsing them into one summary key would average the very difference the
+ * run exists to measure. Variant records therefore get their own summary key.
+ * Single-version runs are unaffected and keep the plain `workload/renderer` key
+ * the gate and the audit tooling already read.
+ */
+function summaryKey(record) {
+	const base = `${record.workloadId}/${record.renderer}`;
+	return record.zeusVariant ? `${base}@${record.zeusVariant}` : base;
 }
 
 function validateVisualProbe(record, workload) {

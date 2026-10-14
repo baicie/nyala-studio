@@ -975,6 +975,9 @@ function writeBenchmarkResult(result) {
 	const payload = {
 		runToken,
 		renderer,
+		// 交错采集时，同一 workload/renderer 会在同一会话内用不同 Zeus bundle 变体
+		// 各测一次。变体身份必须随记录一起上报，否则两组数字无法配对。
+		...(params.get('zeusVariant') ? { zeusVariant: params.get('zeusVariant') } : {}),
 		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
 			scrollCommitBoundary: SCROLL_COMMIT_BOUNDARY,
 			executionOrder,

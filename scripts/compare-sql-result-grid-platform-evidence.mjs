@@ -12,11 +12,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-const IDENTITY_KEYS = [
-	'measurementContractVersion',
-	'scrollCommitBoundary',
-	'executionOrder'
-];
+const IDENTITY_KEYS = ['measurementContractVersion', 'scrollCommitBoundary', 'executionOrder'];
 
 // Metrics that only exist on the raw records, not in the summary object. Without
 // these the Zeus-side commit and raf-to-task costs are invisible, which is the
@@ -82,7 +78,9 @@ function compare(baselineFile, candidateFile) {
 		}
 	}
 	if (base.platformName !== cand.platformName) {
-		identityMismatches.push(`platformName: ${JSON.stringify(base.platformName)} -> ${JSON.stringify(cand.platformName)}`);
+		identityMismatches.push(
+			`platformName: ${JSON.stringify(base.platformName)} -> ${JSON.stringify(cand.platformName)}`
+		);
 	}
 
 	const baseBundle = base.provenance?.zeusBundleSha256 ?? null;
@@ -196,8 +194,7 @@ function controlRendererCaveats(rows) {
 	const caveats = [];
 	const byWorkload = new Map();
 	for (const row of rows) {
-		const renderer = row.key.slice(row.key.lastIndexOf('/') + 1);
-		const workload = row.key.slice(0, row.key.lastIndexOf('/'));
+		const { workload, renderer } = splitSummaryKey(row.key);
 		if (renderer === 'zeus') continue;
 		const change = row.metrics?.scrollP95Ms?.changePercent;
 		if (!Number.isFinite(change)) continue;
@@ -206,8 +203,9 @@ function controlRendererCaveats(rows) {
 		byWorkload.set(workload, bucket);
 	}
 	for (const row of rows) {
-		if (!row.key.endsWith('/zeus')) continue;
-		const workload = row.key.slice(0, row.key.lastIndexOf('/'));
+		const parsed = splitSummaryKey(row.key);
+		if (parsed.renderer !== 'zeus') continue;
+		const { workload } = parsed;
 		const zeusChange = row.metrics?.scrollP95Ms?.changePercent;
 		if (!Number.isFinite(zeusChange)) continue;
 		const controls = byWorkload.get(workload) ?? [];
@@ -225,6 +223,19 @@ function controlRendererCaveats(rows) {
 	return caveats;
 }
 
+/** Splits `workload/renderer` or the interleaved `workload/renderer@variant`. */
+function splitSummaryKey(key) {
+	const slash = key.lastIndexOf('/');
+	const workload = key.slice(0, slash);
+	const tail = key.slice(slash + 1);
+	const at = tail.lastIndexOf('@');
+	return {
+		workload,
+		renderer: at === -1 ? tail : tail.slice(0, at),
+		variant: at === -1 ? null : tail.slice(at + 1)
+	};
+}
+
 function median(values) {
 	const sorted = values.filter(value => Number.isFinite(value)).sort((left, right) => left - right);
 	if (sorted.length === 0) return null;
@@ -233,7 +244,11 @@ function median(values) {
 }
 
 function summaryKey(record) {
-	return `${record.workloadId}/${record.renderer}`;
+	// An interleaved run measures one workload/renderer per bundle variant, so the
+	// summary key carries the variant. Without it the two variants would collapse
+	// into one bucket and the comparison would compare a variant against itself.
+	const base = `${record.workloadId}/${record.renderer}`;
+	return record.zeusVariant ? `${base}@${record.zeusVariant}` : base;
 }
 
 function segmentMedian(record, select) {
@@ -257,10 +272,7 @@ function collectRecordMetrics(records) {
 		if (record.status !== 'ok') continue;
 		const key = summaryKey(record);
 		const bucket = groups.get(key) ?? { rafToTask: [], commit: [], textWrites: [] };
-		const rafToTask = segmentMedian(
-			record,
-			segment => segment.nextPaintTaskTime - segment.nextPaintRafTime
-		);
+		const rafToTask = segmentMedian(record, segment => segment.nextPaintTaskTime - segment.nextPaintRafTime);
 		if (rafToTask !== null) bucket.rafToTask.push(rafToTask);
 		const commit = segmentMedian(record, segment => segment.commitEndTime - segment.commitStartTime);
 		if (commit !== null) bucket.commit.push(commit);
@@ -299,7 +311,10 @@ function renderText(report) {
 	lines.push('');
 	for (const row of report.rows) {
 		const metrics = Object.entries(row.metrics ?? {})
-			.map(([metric, value]) => `${metric} ${value.baselineMedian}->${value.candidateMedian} (${value.changePercent ?? 'n/a'}%)`)
+			.map(
+				([metric, value]) =>
+					`${metric} ${value.baselineMedian}->${value.candidateMedian} (${value.changePercent ?? 'n/a'}%)`
+			)
 			.join('  ');
 		lines.push(`${row.key}: ${metrics || '(no comparable metric)'}${row.reason ? ` [${row.reason}]` : ''}`);
 	}
