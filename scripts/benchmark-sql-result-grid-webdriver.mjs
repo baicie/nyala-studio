@@ -100,13 +100,9 @@ const runBudgetMs = parseBoundedPositiveInteger(cli['run-budget-ms'] ?? '1800000
 // successful records per workload/renderer. Re-running the same scheduled slot
 // keeps the balanced execution plan intact while giving an intermittent host
 // hiccup a second chance. Only a round that succeeds replaces its failed
-// predecessor; every attempt stays in `recordRetries` so the evidence file
+// predecessor; every attempt stays in `retriedRounds` so the evidence file
 // shows exactly how much retrying a platform needed.
-const maxRoundAttempts = parseBoundedPositiveInteger(
-	cli['max-round-attempts'] ?? '3',
-	'--max-round-attempts',
-	10
-);
+const maxRoundAttempts = parseBoundedPositiveInteger(cli['max-round-attempts'] ?? '3', '--max-round-attempts', 10);
 const traceProfile = String(cli['trace-profile'] ?? 'false') === 'true';
 const outputPath = resolve(cli.output ?? defaultOutput);
 const screenshotDir = resolve(cli['screenshot-dir'] ?? join(repositoryRoot, 'platform-screenshots'));
@@ -135,9 +131,9 @@ await run();
 async function run() {
 	const records = [];
 	const screenshots = [];
-	// Slots that needed more than one attempt to produce a usable record. This
-	// is provenance for the retry policy: a platform that needed retries is
-	// still evidence, but the count has to be visible to whoever reads it.
+	// Keep failures for slots that retried, including those whose next attempt
+	// was prevented by the run budget. Readers must see the actual attempt count
+	// even when the slot never produced a usable record.
 	const retriedRounds = [];
 	let sessionId;
 	let temporaryRoot;
@@ -219,6 +215,7 @@ async function run() {
 				// exactly like a first attempt. Without this a degraded WebView could
 				// spend hours on retries long after the run should have stopped.
 				if (Date.now() - benchmarkStartedAt > runBudgetMs) {
+					if (attemptFailures.length > 0) recordRoundRetryHistory(attempt - 1);
 					throw new Error(
 						`Platform run exceeded its ${Math.round(runBudgetMs / 1000)}s budget while retrying ${workload.id}/${renderer} #${iteration} (attempt ${attempt}).`
 					);
@@ -232,7 +229,10 @@ async function run() {
 					discardedScreenshotFiles.push(...attemptScreenshots.map(entry => entry.file));
 					attemptScreenshots = [];
 					attemptFailures.push(error instanceof Error ? error.message : String(error));
-					if (attempt >= maxRoundAttempts) throw error;
+					if (attempt >= maxRoundAttempts) {
+						if (attempt > 1) recordRoundRetryHistory(attempt);
+						throw error;
+					}
 					process.stderr.write(
 						`${label}: retrying ${workload.id}/${renderer} #${iteration} (attempt ${attempt + 1}/${maxRoundAttempts}) after ${error instanceof Error ? error.message : String(error)}\n`
 					);
@@ -260,14 +260,7 @@ async function run() {
 				break;
 			}
 			if (attempt > 1) {
-				retriedRounds.push({
-					workloadId: workload.id,
-					renderer,
-					iteration,
-					executionOrdinal,
-					attempts: attempt,
-					discarded: attemptFailures
-				});
+				recordRoundRetryHistory(attempt);
 				enriched = { ...enriched, roundAttempts: attempt };
 			}
 			// Only the attempt that produced the retained record may contribute
@@ -287,6 +280,17 @@ async function run() {
 			process.stdout.write(
 				`${workload.id}/${renderer} #${iteration} [${executionOrdinal}/${benchmarkPlan.length}] navigate=${timings.navigateMs}ms calibrate=${timings.calibrateMs}ms total=${timings.roundMs}ms stage=${timings.stage}: ${formatRecord(enriched)}\n`
 			);
+
+			function recordRoundRetryHistory(attempts) {
+				retriedRounds.push({
+					workloadId: workload.id,
+					renderer,
+					iteration,
+					executionOrdinal,
+					attempts,
+					discarded: attemptFailures
+				});
+			}
 
 			async function removeStaleAttemptScreenshots() {
 				for (const file of discardedScreenshotFiles) {
@@ -435,7 +439,12 @@ async function run() {
 			}
 			return {
 				record: enriched,
-				timings: { navigateMs: afterNavigateMs, calibrateMs: afterCalibrateMs, roundMs: Date.now() - stageStartedAt, stage },
+				timings: {
+					navigateMs: afterNavigateMs,
+					calibrateMs: afterCalibrateMs,
+					roundMs: Date.now() - stageStartedAt,
+					stage
+				},
 				screenshots: attemptScreenshots
 			};
 		}
@@ -755,7 +764,8 @@ async function runObserverFreeSegmentTraceNavigation(
 		resultChannel
 	);
 	if (record.status !== 'ok' || !record.segmentTrace) {
-		throw new Error(`Observer-free segment trace failed for ${expected.workload.id}/${expected.renderer}.`);
+		const reason = String(record.error ?? record.reason ?? 'Missing segment trace.').split('\n')[0];
+		throw new Error(`Observer-free segment trace failed for ${expected.workload.id}/${expected.renderer}: ${reason}`);
 	}
 	validateObserverFreeSegmentTraceSnapshot(record.segmentTrace, { expectedSampleCount: 22 });
 	return record.segmentTrace;
@@ -861,7 +871,17 @@ function formatDimension(value) {
 	return Number.isFinite(value) ? String(Math.round(value * 100) / 100) : 'invalid';
 }
 
-async function writeEvidence({ status, runs, reason, label, identity, provenance, records, screenshots, retriedRounds = [] }) {
+async function writeEvidence({
+	status,
+	runs,
+	reason,
+	label,
+	identity,
+	provenance,
+	records,
+	screenshots,
+	retriedRounds = []
+}) {
 	const report = {
 		version: 2,
 		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
