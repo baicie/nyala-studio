@@ -93,6 +93,35 @@ committed 样本数完全一致，差异只在噪声范围内。
 
 结论：移除每行强制宽度**无收益**，已撤销，不发布。
 
+## 附带发现：WorkbenchTable 的 dispatchLag 不可测，且我此前把它算成了负数
+
+在核对 wide-columns 数据时发现 WorkbenchTable 的 `eventDispatchTime` 是 `null`，
+导致本地统计脚本算出 dispatchLag 为 **−727ms** 这样荒谬的值。
+
+原因在源码里可以确认，不是测量噪声：
+
+- `AbstractScrollableElement` 把滚动位置交给内部的 `Scrollable` 对象
+  （`src/vs/base/browser/ui/scrollbar/scrollableElement.ts`）。
+- `Scrollable.setScrollPositionNow()` 只调用 `_setState()`，后者 fire 自己的
+  `_onScroll` emitter，**从不给任何 DOM 节点赋 `scrollTop`**
+  （`src/vs/base/common/scrollable.ts`）。
+- 因此 `.monaco-scrollable-element` 上永远不会触发原生 `scroll` 事件，
+  segment trace 的 `eventDispatchTime` 恒为 `null`。
+
+这有两个后果：
+
+1. **dispatchLag 在两个 renderer 之间不可比。** Zeus 走原生滚动，有真实的
+   dispatchLag；WorkbenchTable 没有这个阶段。任何跨 renderer 的 dispatchLag
+   对比都是无意义的。已在 frame-aware profile 的 limitations 中显式声明这一点。
+2. **我此前「dispatchLag 在所有 renderer 上一致」的说法需要修正。** native 渲染器
+   同样是原生滚动、同样有 dispatchLag，所以「dispatchLag 与框架无关」这一结论对
+   Zeus 与 native 仍然成立（两者的裸页对照实验已直接证明）。但它不能推广到
+   WorkbenchTable——后者根本没有这个阶段。我此前把三者并列比较是不严谨的。
+
+已加 limitation 声明并附测试（12/12 通过）。segment trace 的校验器本来就允许
+`eventDispatchTime` 为 `null`，所以门禁不会因此误判；但任何消费该字段的分析脚本
+都必须显式处理 null，而不是让它参与算术。
+
 ## 影响
 
 这是本次调查中第一个**落在 Zeus 可修改范围内**的真实性能缺陷。此前对 10k 路径的

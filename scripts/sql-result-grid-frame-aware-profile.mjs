@@ -16,7 +16,8 @@ export const SQL_RESULT_GRID_FRAME_AWARE_LIMITATIONS = Object.freeze([
 	'The rAF-to-task span includes the visibility probe, possible pending style/layout and rendering, and timer scheduling. It is not a renderer-independent host floor, so subtracting it does not isolate renderer-owned latency.',
 	'This profile compares Zeus with WorkbenchTable only; native has no collected commit interval and is not a measured renderer-work baseline.',
 	'The renderers can perform different DOM work, including Zeus column virtualization versus WorkbenchTable full-column rendering; commit ratios do not isolate core signal or compiler performance.',
-	'Missing scroll samples or trace commit intervals are reflected in the per-renderer sample counts, never imputed.'
+	'Missing scroll samples or trace commit intervals are reflected in the per-renderer sample counts, never imputed.',
+	'eventDispatchTime is null for every WorkbenchTable segment because AbstractScrollableElement drives an internal Scrollable that never assigns DOM scrollTop, so no native scroll event fires. dispatchLag is therefore not comparable across renderers and must not be reported for WorkbenchTable.'
 ]);
 
 export function createSqlResultGridFrameAwareProfile(report, options = {}) {
