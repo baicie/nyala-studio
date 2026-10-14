@@ -661,7 +661,19 @@ test('native platform workflow bundles the auto-registering Zeus entry', async (
 	assert.match(source, /phase-z1-benchmark\.json/);
 	assert.match(source, /--workbench-table-implementation real/);
 	assert.match(source, /NYALA_ZEUS_AUDIT_EVIDENCE/);
-	assert.equal(source.match(/measurementContractVersion:6/g)?.length, 2);
+	// The blocked-evidence fallback must declare the same measurement contract
+	// the benchmark code emits, otherwise a failed run produces evidence the gate
+	// rejects for a contract mismatch instead of reporting the real failure.
+	assert.equal(
+		source.match(
+			new RegExp(`measurementContractVersion:${MEASUREMENT_CONTRACT_VERSION}`, 'g')
+		)?.length,
+		2
+	);
+	assert.doesNotMatch(
+		source,
+		new RegExp(`measurementContractVersion:(?!${MEASUREMENT_CONTRACT_VERSION}\\b)\\d+`)
+	);
 	assert.equal(source.match(/scrollCommitBoundary:'post-presentation-opportunity'/g)?.length, 2);
 	assert.equal(source.match(/executionOrder:'renderer-balanced-rotation-v1'/g)?.length, 2);
 	assert.match(source, /overwrite: true/);
