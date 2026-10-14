@@ -193,6 +193,33 @@ export function validateObserverFreeSegmentTraceSnapshot(snapshot, options = {})
 	function fail(message) {
 		throw new Error(`Observer-free segment trace ${message}`);
 	}
+	function validWorkbenchTiming(commit) {
+		if (
+			!Number.isFinite(commit.handlerStartTime) ||
+			!Number.isFinite(commit.handlerEndTime) ||
+			commit.handlerStartTime > commit.handlerEndTime
+		)
+			return false;
+		for (const field of ['rangeIntervals', 'commitIntervals', 'layoutReadIntervals']) {
+			const intervals = commit[field];
+			if (!Array.isArray(intervals) || (field !== 'layoutReadIntervals' && intervals.length === 0)) return false;
+			for (const interval of intervals) {
+				if (
+					!Array.isArray(interval) ||
+					interval.length !== 2 ||
+					!Number.isFinite(interval[0]) ||
+					!Number.isFinite(interval[1]) ||
+					interval[0] > interval[1] ||
+					interval[0] < commit.handlerStartTime ||
+					interval[1] > commit.handlerEndTime
+				)
+					return false;
+			}
+		}
+		return commit.layoutReadIntervals.every(interval =>
+			commit.commitIntervals.some(window => interval[0] >= window[0] && interval[1] <= window[1])
+		);
+	}
 	if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) fail('snapshot is missing.');
 	if (snapshot.version !== SQL_RESULT_GRID_SEGMENT_TRACE_VERSION) fail('version is invalid.');
 	if (snapshot.timingClock !== 'performance-now') fail('timing clock is invalid.');
@@ -254,16 +281,21 @@ export function validateObserverFreeSegmentTraceSnapshot(snapshot, options = {})
 		if (!commit) fail(`segment ${index} primary commit is missing.`);
 		if (segment.eventDispatchTime !== null && commit.handlerStartTime < segment.eventDispatchTime)
 			fail(`segment ${index} event/handler ordering is invalid.`);
-		if (!(
-			commit.handlerStartTime <= commit.handlerEndTime &&
-			commit.handlerEndTime <= commit.rangeStartTime &&
-			commit.rangeStartTime <= commit.rangeCalculatedTime &&
-			commit.rangeCalculatedTime <= commit.commitStartTime &&
-			commit.commitStartTime <= (commit.signalPublishStartTime ?? commit.commitStartTime) &&
-			(commit.signalPublishEndTime ?? commit.commitStartTime) <= commit.commitEndTime &&
-			(commit.signalPublishStartTime ?? commit.commitStartTime) <=
-				(commit.signalPublishEndTime ?? commit.commitStartTime)
-		))
+		// ListView range/render work is nested inside its synchronous handler.
+		// Keep its interval model separate from Zeus's sequential timing stages.
+		const workbenchTiming = snapshot.diagnostics?.instrumentation === 'listview-prototype-wrapper-v1';
+		if (
+			!(workbenchTiming
+				? validWorkbenchTiming(commit)
+				: commit.handlerStartTime <= commit.handlerEndTime &&
+					commit.handlerEndTime <= commit.rangeStartTime &&
+					commit.rangeStartTime <= commit.rangeCalculatedTime &&
+					commit.rangeCalculatedTime <= commit.commitStartTime &&
+					commit.commitStartTime <= (commit.signalPublishStartTime ?? commit.commitStartTime) &&
+					(commit.signalPublishEndTime ?? commit.commitStartTime) <= commit.commitEndTime &&
+					(commit.signalPublishStartTime ?? commit.commitStartTime) <=
+						(commit.signalPublishEndTime ?? commit.commitStartTime))
+		)
 			fail(`segment ${index} renderer timing is invalid.`);
 		if (segment.primaryCommitTransactionId <= previousTransactionId) fail(`segment ${index} commits are out of order.`);
 		previousTransactionId = segment.primaryCommitTransactionId;

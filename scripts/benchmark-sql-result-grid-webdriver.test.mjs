@@ -151,14 +151,8 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	// The extracted round helper must receive the scheduled slot explicitly. A
 	// nested declaration cannot see the loop bindings, and an undefined renderer
 	// reads like a flaky host instead of a runner bug.
-	assert.match(
-		source,
-		/runBenchmarkRound\(\{ workload, renderer, iteration, executionOrdinal \}\)/
-	);
-	assert.match(
-		source,
-		/async function runBenchmarkRound\(\{ workload, renderer, iteration, executionOrdinal \}\)/
-	);
+	assert.match(source, /runBenchmarkRound\(\{ workload, renderer, iteration, executionOrdinal \}\)/);
+	assert.match(source, /async function runBenchmarkRound\(\{ workload, renderer, iteration, executionOrdinal \}\)/);
 });
 
 test('benchmark page posts completed results to the runner channel', async () => {
@@ -455,6 +449,76 @@ test('embedded launch failure writes a blocked manifest', async () => {
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+for (const { name, expectedAttempts, navigationDelayMs, runBudgetMs } of [
+	{ name: 'exhausted navigation retries', expectedAttempts: 3, navigationDelayMs: 0, runBudgetMs: 1800000 },
+	{ name: 'budget-exhausted navigation retries', expectedAttempts: 1, navigationDelayMs: 400, runBudgetMs: 200 }
+])
+	test(`${name} remain in the blocked evidence`, async () => {
+		const root = await mkdtemp(join(tmpdir(), 'nyala-webdriver-retries-test-'));
+		let navigationAttempts = 0;
+		const server = createServer((request, response) => {
+			response.setHeader('content-type', 'application/json');
+			if (request.method === 'POST' && request.url === '/session') {
+				response.end(JSON.stringify({ value: { sessionId: 'stalled-session' } }));
+			} else if (request.method === 'POST' && request.url === '/session/stalled-session/url') {
+				navigationAttempts += 1;
+				setTimeout(
+					() =>
+						response.writeHead(500).end(JSON.stringify({ value: { error: 'timeout', message: 'navigation stalled' } })),
+					navigationDelayMs
+				);
+			} else {
+				response.end(JSON.stringify({ value: null }));
+			}
+		});
+		await new Promise(resolveListen => server.listen(0, '127.0.0.1', resolveListen));
+		try {
+			const output = join(root, 'evidence.json');
+			await assert.rejects(
+				execFileAsync(process.execPath, [
+					'scripts/benchmark-sql-result-grid-webdriver.mjs',
+					'--browser',
+					'safari',
+					'--driver-url',
+					`http://127.0.0.1:${server.address().port}`,
+					'--renderer',
+					'native',
+					'--workload',
+					'narrow-panel',
+					'--repeat',
+					'1',
+					'--max-round-attempts',
+					'3',
+					'--run-budget-ms',
+					String(runBudgetMs),
+					'--output',
+					output,
+					'--screenshot-dir',
+					join(root, 'screenshots')
+				])
+			);
+			const report = JSON.parse(await readFile(output, 'utf8'));
+			assert.equal(navigationAttempts, expectedAttempts);
+			assert.equal(report.status, 'blocked');
+			assert.equal(report.runs, 0);
+			assert.deepEqual(report.records, []);
+			assert.equal(report.retriedRounds.length, 1);
+			const retry = report.retriedRounds[0];
+			assert.equal(retry.workloadId, 'narrow-panel');
+			assert.equal(retry.renderer, 'native');
+			assert.equal(retry.iteration, 1);
+			assert.equal(retry.executionOrdinal, 1);
+			assert.equal(retry.attempts, expectedAttempts);
+			assert.equal(retry.discarded.length, expectedAttempts);
+			for (const reason of retry.discarded) assert.match(reason, /navigation stalled/);
+			if (navigationDelayMs > runBudgetMs) assert.match(report.reason, /budget while retrying/);
+		} finally {
+			server.closeAllConnections();
+			await new Promise(resolveClose => server.close(resolveClose));
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 
 test('Chromium benchmark emits a reusable page without outer document scrollbars', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'nyala-benchmark-page-test-'));
