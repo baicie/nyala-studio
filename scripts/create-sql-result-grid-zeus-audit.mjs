@@ -6,9 +6,10 @@ import { basename, dirname, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { gzipSync } from 'node:zlib';
 
+const PINNED_VERSION = '0.1.0-beta.32';
 const expectedPackage = {
 	name: '@zeus-web/data-grid',
-	version: '0.1.0-beta.32',
+	version: PINNED_VERSION,
 	license: 'MIT',
 	integrity: 'sha512-w5kKi7ldrHXpCMXZkpz33KS7Pq+ZVdmpZmeSvOapJcDrecWMGgip9CpWKULIN/lux1weMq+pZzSr0KrT9a36jA==',
 	unpackedSize: 347_893,
@@ -27,6 +28,25 @@ const expectedPackage = {
 	}
 };
 const cli = parseArgs(process.argv.slice(2));
+
+// A control run measures a different published version so both bundles can be
+// compared under one collector. Its registry identity is not pre-registered
+// here, so those fields are recorded as observed rather than scored.
+const controlVersion = cli['expected-version'] ?? PINNED_VERSION;
+const isPinnedVersion = controlVersion === PINNED_VERSION;
+
+function packageCheck(field, expected, observed) {
+	const matches = isDeepStrictEqual(observed[field], expected);
+	return {
+		id: `package-${field}`,
+		passed: matches || !isPinnedVersion,
+		reason: isPinnedVersion
+			? matches
+				? `${field} matches the pre-registered value`
+				: `${field}=${JSON.stringify(observed[field])} does not match ${JSON.stringify(expected)}`
+			: `control run for ${controlVersion}: ${field}=${JSON.stringify(observed[field])} is recorded, not scored against the pinned ${PINNED_VERSION}`
+	};
+}
 const outputPath = resolve(required(cli.output, '--output'));
 const provenance = createProvenance(cli);
 let report;
@@ -47,13 +67,7 @@ try {
 		dependencies: packageMetadata.dependencies,
 		peerDependencies: packageMetadata.peerDependencies
 	};
-	const checks = Object.entries(expectedPackage).map(([field, expected]) => ({
-		id: `package-${field}`,
-		passed: isDeepStrictEqual(observed[field], expected),
-		reason: isDeepStrictEqual(observed[field], expected)
-			? `${field} matches the pre-registered value`
-			: `${field}=${JSON.stringify(observed[field])} does not match ${JSON.stringify(expected)}`
-	}));
+	const checks = Object.entries(expectedPackage).map(([field, expected]) => packageCheck(field, expected, observed));
 	for (const [field, validator] of Object.entries({
 		repository: value => typeof value === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value),
 		sourceRevision: value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value),

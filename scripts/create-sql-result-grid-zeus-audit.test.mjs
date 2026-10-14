@@ -75,6 +75,19 @@ test('writes blocked evidence when registry unpacked size changes', async () => 
 	}
 });
 
+test('records a control version without scoring it against the pinned identity', async () => {
+	const fixture = await createFixture({ ...registryMetadata, 'dist.integrity': 'sha512-control' });
+	try {
+		await execFileAsync(process.execPath, [...createArgs(fixture), '--expected-version', '0.1.0-beta.31']);
+		const report = JSON.parse(await readFile(fixture.outputPath, 'utf8'));
+		assert.equal(report.status, 'ready');
+		assert.match(report.checks.find((check) => check.id === 'package-integrity').reason, /control run for 0\.1\.0-beta\.31/);
+		assert.equal(report.checks.find((check) => check.id === 'package-integrity').passed, true);
+	} finally {
+		await rm(fixture.root, { recursive: true, force: true });
+	}
+});
+
 async function createFixture(registry = registryMetadata) {
 	const root = await mkdtemp(join(tmpdir(), 'nyala-zeus-audit-test-'));
 	const packagePath = join(root, 'package.json');
