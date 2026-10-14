@@ -336,6 +336,56 @@ dispatch→firstVisible` 的残差中位 9.0ms、p95 25.0ms（Windows 同项残�
 策略而非绑定写入路径；macOS 的残差则主要落在 Zeus 测量范围之外的宿主调度上。在有任何
 针对派发相位的实验之前修改生产绑定写入路径没有证据支撑。
 
+### WBT 为何能在赋值当期完成工作：它的滚动不经过 DOM scroll 事件
+
+上面说「让提交在 scrollTop 赋值当期同步完成」，需要先核实基线到底做了什么，否则等于给
+自己设一个不存在的靶子。WBT 用的是真实 bundle
+（`vs.platform.list.browser.WorkbenchTable`，`runtimeProof =
+exact-prototype-and-monaco-dom-v1`，`exactPrototype/diagnosticsInstalled` 均为真），不是
+characterization，因此这条路径的源码就是基线的真实实现。
+
+`ListView` 的滚动入口最终落到 `src/vs/base/common/scrollable.ts`：
+
+```ts
+public setScrollPositionNow(update: INewScrollPosition): void {
+  const newState = this._state.withScrollPosition(update);
+  if (this._smoothScrolling) { this._smoothScrolling.dispose(); this._smoothScrolling = null; }
+  this._setState(newState, false);
+}
+
+private _setState(newState: ScrollState, inSmoothScrolling: boolean): void {
+  const oldState = this._state;
+  if (oldState.equals(newState)) { return; }
+  this._state = newState;
+  this._onScroll.fire(this._state.createScrollEvent(oldState, inSmoothScrolling));
+}
+```
+
+关键在 `_setState` 的最后一行：`Scrollable` 用自己的 `Event` 把滚动**同步派发**给
+`ListView.onScroll`，`ListView.onScroll` 随即调用 `this.render(...)`（`listView.ts:1346`）。
+整条链路没有任何一次「等浏览器派发 DOM scroll 事件」。`ScrollableElement` 构造时把
+`scheduleAtNextAnimationFrame` 注入 `Scrollable`，但 `setScrollPositionNow` 走的是上面的
+同步 `_setState`，不经过该调度器。
+
+这正好解释了实测的两个数字：`WorkbenchTable.inputMs` 中位 12.30ms（macOS 22.00ms）是
+同步 `_onScroll → render` 的真实耗时；它与 Zeus 的 0.00–1.00ms 之差不是 Zeus 慢，而是
+两者根本不在同一条时序上——基线在赋值当期的同一调用栈里就把新行渲染完，而 Zeus 必须等
+浏览器把 scroll 事件派发回来（实测 gap 中位 Windows 14.90ms / macOS 16.00ms，恰好一个
+帧周期）才能开始那 2–3ms 的提交。
+
+因此此前「Zeus 的 `inputMs` 接近 0 是可疑的、也许它偷偷把工作推迟了」的疑虑可以排除：
+采集侧的 `inputMs` 就是 `scrollTop=` 赋值到返回的墙钟，Zeus 在这期间确实无事可做，因为
+它的行渲染挂在 scroll 事件上，而 scroll 事件按规范只能在派发时到达。
+
+这条结论也界定了 Zeus 侧修复的唯一可能形态。要消掉那一个帧的差，data-grid 必须在
+`scrollTop` 赋值当期自己知道新偏移并同步提交，而不是等待 scroll 事件——也就是采用与
+`Scrollable` 同类的「内部滚动状态 + 同步事件」模型，或在赋值处显式调用一次同步的
+`updateRange()`。现有 `scrollToOffset()` 走的是 `setScrollOffset(viewport, offset)` 后
+立即 `updateRange()`，正是这个形态；但原生滚动（用户手势或 `commitScroll` 的直接赋值）
+仍只依赖 scroll 事件，二者没有打通。这是 data-grid 的架构改动，不是 Zeus 绑定写入路径的
+优化，需要独立评估其与原生滚动语义、滚动惯性、focus 保持的交互，不能在没有实验数据前
+直接落地。
+
 ## 20 对交错 A/B：未复现稳定的版本 flush 回归
 
 预先检验假设：“beta31 对相同 1k 窗口转换引入可重复的额外发布 / flush 工作”。
