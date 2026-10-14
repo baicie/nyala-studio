@@ -248,3 +248,21 @@ dom=406，几何有效。并补了回归测试，要求产品块位于几何规�
 
 这也是本记录里唯一一次「宿主侧装置 bug 伪装成产品性能问题」的真实案例：先看
 「所有 renderer 同时失败」这一信号，才能排除被测代码。
+
+### 修复后第二次产品 CSS run：注入 bug 已消除，但原生 runner 上滚动不再提交
+
+run 38636251441 的证据文件确认产品 CSS 确实带 SHA 进入了页面（`0ac6d781…`，
+`mode: product`），几何错误消失。但两个平台的记录全部变成
+`Scroll sample 3 did not commit: expected row 881, observed -1`——滚动到位后虚拟行
+没有渲染出来。本机 Chromium 下同一份 CSS 三个 renderer 都能跑完并给出正常的
+scroll p95，因此这不是 CSS 内容本身的问题，而是原生 WKWebView / WebView2 与合成
+页面几何之间的差异。
+
+结论要分开说：
+
+- **已解决**：产品 CSS 注入装置本身可用、可复现、有 provenance、有回归测试。
+- **未解决**：合成 benchmark 页面在原生 runner 上无法忠实承载真实产品布局，因此
+  「真实 CSS + 原生 WebView」这组证据目前还不能作为归因依据。CSS 层面的候选目前
+  只能在本机 Chromium 上筛查，不能进官方门禁。
+
+这一步没有产生任何可计分的性能结论，Z1 门仍为 NO-GO。
