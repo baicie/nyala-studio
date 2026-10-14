@@ -297,18 +297,44 @@ Zeus 有 5/100 个样本跨帧（不含那个 28 帧离群），WorkbenchTable �
 p95 在最好一轮是 19.1ms（run `38523458804` Windows 10k，改善 26.0%）。也就是说 Zeus
 已经有过整轮达标的记录，缺口是尾部稳定性，而不是常态速度。
 
-但现有证据不能指出该修哪一段，也不能断言这 5% 只是「提交未变但错过呈现截止」。原因是
-两个时钟的边界不同：`scroll.samples[].totalMs` 是 harness 从 `scrollTop=` 赋值起算到
-可见行校验通过的墙钟，包含 harness 自己的呈现机会等待；而 `segmentTrace` 的
-`dispatch → firstVisible` 是 Zeus 采集器内部从事件派发到首次可见的区间，中位仅 2.0–3.0ms。
-前者 15–42ms、后者 2–3ms，二者不是同一区间的两次测量，不能互相代入，也不能用 trace
-的 2.6ms 去解释 scroll 样本的 31ms。在跨帧样本上 `commit` 是否变长，现有正式记录尚不能
-逐样本对齐回答——trace 与 scroll 样本没有共享的样本键。
+### 同一次操作的三段墙钟分解（trace 与 scroll 样本可按样本键对齐）
 
-要定位尾部，需要补齐这一环：为同一次操作同时保留 scroll 样本键与 trace 阶段时间戳，
-在混合 renderer、多负载场景下配对采集跨帧与未跨帧样本，区分「提交本身变慢到错过 vsync」
-与「提交未变但呈现机会被错过或被 GC／调度中断推迟」。在此之前修改生产绑定写入路径没有
-证据支撑。
+上一版曾写「trace 与 scroll 样本没有共享的样本键」，这是错的，现更正。`segmentTrace`
+的 `phase=sample` 段本身带 `sampleIndex` 与 `targetOffset`，与 `scroll.samples[]` 一一对应，
+两个 run × 两个平台 × 两个负载共 8 组、每组 100 个样本全部成功按 `(sampleIndex,
+targetOffset)` 对齐。对齐后可以把每次操作的 `totalMs` 拆成三段连续墙钟：
+
+| 平台 / 负载 | 输入结束→事件派发 | 事件派发→首次可见 | commit 区间 | gap 占 total 中位 |
+| ----------- | -----------------: | -----------------: | ----------: | ---------------: |
+| Windows 1k  | 14.90             | 2.60               | 2.50       | 94.4%            |
+| Windows 10k | 14.90             | 2.70               | 2.55       | 95.8%            |
+| macOS 1k    | 16.00             | 2.00               | 2.00       | 66.0%            |
+| macOS 10k   | 16.00             | 3.00               | 2.00       | 55.2%            |
+
+（run `38525197105` 中位数；`38523458804` 的 gap 同样是 Windows 14.90 / macOS 16.00。）
+
+这段 gap 才是 Zeus 延迟的真正主体：`scrollTop=` 赋值返回后，要等约一个完整帧（Windows
+14.9ms、macOS 16.0ms）浏览器才把 scroll 事件派发给元素，事件到达后 Zeus 只用 2–3ms 完成
+signal 发布与 commit。commit 区间落在 `dispatch → firstVisible` 内部，
+`firstVisiblePhase` 在全部 800 个样本上都是 `raf`，即首次可见由 rAF 兑现。Windows 上
+94–96% 的 `totalMs` 就是这一段 gap；macOS 上比例降到 55–66%，说明 macOS 的尾部另有来源。
+
+跨帧样本与常态样本的 `commit` 没有差别：run `38525197105` Windows 10k 中，94 个单帧样本
+的 commit 中位 2.55ms、6 个跨帧样本的 commit 中位同为 2.55ms，gap 中位分别为 14.90 与
+14.95ms。run `38523458804` Windows 10k、两个平台 1k 组、以及 macOS `38523458804` 的
+10k 组也都是同样结论。也就是说尾部不是某段绑定写入变慢造成的，而是「等下一个 scroll
+事件派发窗口」这件事本身偶发地多等了一个节拍。
+
+macOS 需要单独看：`38525197105` 的 macOS 10k 有 60/100 个样本跨帧，且 `total − gap −
+dispatch→firstVisible` 的残差中位 9.0ms、p95 25.0ms（Windows 同项残差中位 −2.15ms）。
+这段残差不属于 Zeus 采集器覆盖的区间，也不是 commit；两个平台的残差符号相反，指向宿主
+在派发之后、首帧可见之前的额外调度或合成开销不同，而不是 Zeus 提交路径变慢。
+
+据此，10k 尾部有两个分平台的成因，Zeus 侧可作用的那一个已经被数据排除：Zeus 的 commit
+在尾部和常态下同样快。要继续改善 Windows 10k 的尾部，需要改变「scroll 事件派发相位」
+本身（例如在 scrollTop 赋值当期同步提交，使提交不必等下一次派发），这属于 data-grid 宿主
+策略而非绑定写入路径；macOS 的残差则主要落在 Zeus 测量范围之外的宿主调度上。在有任何
+针对派发相位的实验之前修改生产绑定写入路径没有证据支撑。
 
 ## 20 对交错 A/B：未复现稳定的版本 flush 回归
 
