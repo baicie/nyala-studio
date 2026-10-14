@@ -63,6 +63,40 @@ Zeus 10k 滚动延迟中，框架自身只占 2–3ms。其余全部是宿主与
 
 复跑：`/tmp/dispatch-probe/`（`node run.mjs && node verdict.mjs`）。
 
+## rafToTask 对照实验：确认它与绘制面积无关
+
+`rafToTask` 是 WKWebView 上剩余最大的一块成本（16–18ms，WebView2 仅 5.6–5.8ms）。
+如果它随绘制面积变化，那么加深列虚拟化就是一个真实杠杆。
+
+在裸页上保持 10k 滚动行程不变，只改变池化 DOM 中实际绘制的单元格数量：
+
+| 绘制单元格数 | 配置 | 到绘制中位 | p95 |
+|---:|---|---:|---:|
+| 1150 | 23 行 × 50 列（当前配置） | 16.60ms | 18.40ms |
+| 460 | 23 行 × 20 列 | 16.60ms | 18.40ms |
+| 230 | 23 行 × 10 列 | 16.60ms | 18.20ms |
+| 120 | 12 行 × 10 列 | 16.60ms | 18.50ms |
+| 1 | 1 行 × 1 列 | 16.70ms | 18.60ms |
+
+把绘制面积从 1150 个单元格降到 1 个，中位数没有变化（16.6ms）。作为对照，
+同一页面在完全不滚动时 rAF→task 的中位是 0.10ms，说明这 16.6ms 确实是「等待一个
+帧」的成本，而不是绘制工作的成本。
+
+结论：`rafToTask` 是 vsync 等待，与绘制面积无关。加深列虚拟化不会改善它。
+
+复跑：`/tmp/paint-area/`（`node run.mjs && node verdict.mjs`）。
+
+## 汇总：两条主要成本都已证明在宿主侧
+
+| 成本项 | 官方 macOS | 官方 Windows | 裸页对照 | 是否 Zeus 可优化 |
+|---|---:|---:|---|---|
+| dispatchLag | 15.5–16ms | 14.8–15.7ms | 15.9ms | 否 |
+| rafToTask | 16–18ms | 5.5–5.8ms | 与绘制面积无关 | 否 |
+| Zeus commit | 2–2.5ms | 2.55–2.70ms | — | 是，但仅占约 5% |
+
+10k 滚动延迟的约 95% 由上述两项宿主成本构成，且两项都已用无框架裸页对照实验
+证明与被测框架无关。Zeus 可修改的范围内不存在足以产生可感知收益的空间。
+
 ## 复跑方式
 
 分解脚本见 `/tmp/nyala-transform-ab/run2/officialbreak.py` 与 `dispatchall.py`；Chrome 侧证据见 `/tmp/nyala-transform-ab/run2/`（6 对交错 A/B，每版 120 samples，全部 committed，无过滤）。本机 WKWebView segmentTrace 采集产物见 `.artifacts/local-macos-rootcause/`。
