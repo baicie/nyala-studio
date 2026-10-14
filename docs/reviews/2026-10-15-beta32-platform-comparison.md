@@ -4,12 +4,13 @@
 `@zeus-js/runtime-dom@0.1.1-beta.13`）。对照为同一 workflow、同一 instrument 设置下
 `0.1.0-beta.31` 的一次独立复采。
 
-| run       | 分支                             | bundle SHA256                        | 判定  |
-| --------- | -------------------------------- | ------------------------------------ | ----- |
-| 38605063491 | `mvp`                            | `9ef85faaa4b9…`（beta.31）            | NO-GO |
-| 38604544592 | `codex/collector-comparability-audit` | `f363cf4391f9…`（beta.32）        | NO-GO |
+| run | 分支 | bundle SHA256 | 用途 | 判定 |
+| --- | --- | --- | --- | --- |
+| 38605063491 | `mvp` | `9ef85faaa4b9…`（beta.31） | 跨 run 对照，但采集器较旧 | NO-GO |
+| 38609171367 | `codex/collector-comparability-audit` | `9ef85faaa4b9…`（beta.31） | 同采集器机制对照 | 未跑门（版本覆盖） |
+| 38604544592 | `codex/collector-comparability-audit` | `f363cf4391f9…`（beta.32） | 候选 | NO-GO |
 
-两个 run 均为 `measurementContractVersion: 7`、同一 `scrollCommitBoundary` 与
+三个 run 均为 `measurementContractVersion: 7`、同一 `scrollCommitBoundary` 与
 `executionOrder`、`admissionGrade: true`、每 workload/renderer 5 轮、无
 `limitations`。此前用于对照的 38552402643 打开了 `instrument_baseline`，其 baseline
 renderer 数字带 observer 开销，已被替换为本次配对复采。
@@ -50,6 +51,27 @@ Windows WebView2 方向相反：10k zeus scroll p95 19.7→22（+11.7%），comm
 `scripts/compare-sql-result-grid-platform-evidence.mjs` 现在把这条判据固化：任一 workload
 的对照 renderer scroll p95 变化达到 ±10% 即输出 caveat，声明该 run 对的 Zeus delta 只能
 作为上界，不能作为收益。
+
+## 同一采集器下的 host 无关机制证据
+
+run 38609171367 用**同一份采集器代码**（本分支）测量 beta.31，与 38604544592 的 beta.32
+配对，因此 `textChurn` 计数不受宿主性能影响。`textChurn` 记录测量滚动期间的
+characterData mutation 数：
+
+| workload     | renderer | beta.31 | beta.32 | 变化     |
+| ------------ | -------- | ------- | ------- | -------- |
+| 1k-x-20      | zeus     | 6762    | 6422    | −5.0%    |
+| 10k-x-50     | zeus     | 6762    | 6401    | −5.3%    |
+| wide-columns | zeus     | 6762    | 6422    | −5.0%    |
+| narrow-panel | zeus     | 2415    | 2075    | −14.1%   |
+
+macOS 与 Windows 两侧数字完全一致，说明这是确定性的写入次数变化，而非计时噪声。
+`addedNodes` 与 `removedNodes` 在两侧均为 0，确认成本来自复用单元格重绑定既有文本节点，
+而非子树重建——这与 bundle diff 观察到的 `e.data!==t&&(e.data=t)` 一致。
+
+同时这也给收益设上了界：修复只取消了约 5%（窄面板 14%）的冗余文本写入，
+其余 95% 的写入是数据确实变化时必须执行的。所以先前基于本机 A/B 的「−8.6%」
+高估了可归因幅度；真实可归因的机制收益约为 5% 的写入削减。
 
 ## 门判定
 
