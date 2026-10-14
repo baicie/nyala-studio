@@ -122,6 +122,37 @@ Windows 上唯一的正向信号是 narrow-panel 的 rafToTask −16.7%（macOS 
 但该项写入削减也是最大的 14.1%，且窄面板不是 Z1 门的主指标。10k 上两个平台的
 rafToTask 与 commit 都完全没有移动。
 
+## 仍然存在的 Zeus 侧差距：wide-columns
+
+同 run 内对照三个 renderer 的 rafToTask 中位（macOS / Windows，ms）：
+
+| workload | zeus | workbench-table | native | zeus DOM 节点 | WBT DOM 节点 |
+| --- | --- | --- | --- | ---: | ---: |
+| 1k-x-20 | 13.6 / 5.6 | 8.4 / 1.8 | 10.6 / 9.7 | 405 | 404 |
+| 10k-x-50 | 15.0 / 5.5 | 4.6 / 2.8 | 16.2 / 20.4 | 405 | 914 |
+| wide-columns | **26.0 / 8.7** | 8.0 / 2.0 | 6.6 / 3.8 | 405 | 404 |
+| narrow-panel | 5.0 / 2.4 | 2.0 / 0.9 | 4.2 / 6.7 | 171 | 404 |
+
+wide-columns 上 Zeus 与 workbench-table 的 DOM 规模几乎相同（405 vs 404 节点），
+rafToTask 却相差 3.2 倍（macOS 26.0 vs 8.0）。这是本次证据中**唯一仍然可归因于
+Zeus 自身**的滚动延迟差距，也是下一轮应当针对的目标。
+
+两个可检验的差异点，均尚未用同宿主交错采集验证：
+
+1. **渲染行数**。同一 viewport（Zeus 385px / WBT 372px）下 Zeus 固定渲染 23 行，
+   WBT 渲染 14 行。Zeus 多渲染 64% 的行与单元格，而两者 DOM 节点总数相近，说明 WBT
+   在同等节点预算下复用了更多。`grid-virtualizer.ts:100-115` 的 fixed 容量为
+   `ceil(viewport/rowHeight) + overscan*2 + 1`，overscan 默认 4。
+2. **每行携带完整列模板**。`data-grid.tsx:2741` 给每一行都设置
+   `gridTemplateColumns: getGridTemplateColumns()`，该字符串包含全部列（10k-x-50 为
+   50 条轨道），而每次 commit 实际只渲染 13 个可见列。CSS Grid 需要为每行解析完整
+   显式轨道列表，代价约为「可见行数 x 总轨道数」。
+
+需要注意这两项都无法解释 wide 与 10k 的差异方向（10k 轨道更多却更快），因此文本
+整形仍是最可能的因素：Zeus 在 wide 与短文本之间的 rafToTask 差约 11ms，而 WBT
+同项差约 3.4ms，且 native 在 wide 上反而比 10k 更快。文本长度只在 Zeus 上放大成本，
+指向 Zeus 的 cell 绑定或布局路径，而非数据量本身。
+
 ## 门判定
 
 两个 run 都判定 NO-GO，但失败理由不同，且都不是「Zeus 10k 未改善」：
