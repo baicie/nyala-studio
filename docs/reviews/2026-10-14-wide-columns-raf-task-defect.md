@@ -122,6 +122,38 @@ committed 样本数完全一致，差异只在噪声范围内。
 `eventDispatchTime` 为 `null`，所以门禁不会因此误判；但任何消费该字段的分析脚本
 都必须显式处理 null，而不是让它参与算术。
 
+## 已排除的优化候选（均为真实 WKWebView A/B，同一 source revision 仅替换 bundle）
+
+按你的建议直接攻击 wide-columns 的 grid 结构，逐个验证后全部无收益或有害。
+每组都是 baseline/candidate 各 3 次运行、60 个 sample 段、全部 committed。
+
+| 候选 | scrollP95 中位 | rafToTask 中位 | rafToTask p95 | 结论 |
+|---|---:|---:|---:|---|
+| baseline | 36.00ms | 14.00ms | 16.00ms | — |
+| 移除 header 的 `width: totalSize` | 36.00ms | 14.00ms | 16.00ms | 无差异 |
+| header 加 `contain: strict` | 36.00ms | **19.00ms** | **23.00ms** | 明显变差 |
+| header 加 `content-visibility: auto` | — | — | — | **功能性失败** |
+
+`content-visibility: auto` 让 header 塌缩，网格无法 preposition 到最大偏移，
+三次运行全部报 `Scroll workload could not preposition at its maximum offset`。
+这不是性能结果而是正确性缺陷，已放弃。
+
+`contain: strict` 是本组唯一产生了可测变化的修改，方向为负（14ms → 19ms），
+说明 sticky header 的绘制隔离反而让 WebKit 做了更多工作。
+
+## 当前状态
+
+wide-columns 上 Zeus rafToTask 明显高于 native（16ms 对 3ms，同机同 fixture）这一
+现象仍然存在且已确认，但已排除的候选都没有触及它：header 宽度、header paint 隔离、
+行宽、绘制面积、dispatchLag、commit。
+
+值得注意的是：以上所有候选在本机（30Hz）都测不出 scrollP95 差异，因为本机所有
+workload 都已贴在 30ms 帧地板上。rafToTask 是唯一还能分辨的指标，而它对 header
+的任何改动只在 `contain: strict` 时才动，且是向坏的方向动。
+
+这意味着要验证 wide-columns 的真实用户影响，需要在 60Hz 机器上跑完整门禁，
+本机无法替代。
+
 ## 影响
 
 这是本次调查中第一个**落在 Zeus 可修改范围内**的真实性能缺陷。此前对 10k 路径的
