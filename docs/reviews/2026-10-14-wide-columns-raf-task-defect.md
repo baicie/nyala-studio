@@ -154,6 +154,22 @@ workload 都已贴在 30ms 帧地板上。rafToTask 是唯一还能分辨的指�
 这意味着要验证 wide-columns 的真实用户影响，需要在 60Hz 机器上跑完整门禁，
 本机无法替代。
 
+## 前提核实：官方证据对应的就是当前代码
+
+我一度怀疑自己一直在对着过期 bundle 做优化，于是比较了官方证据使用的 bundle
+（`9ef85faa…`，90728 字节）与当前 HEAD 重新构建的 bundle（`0d1e0eae…`，90767 字节）：
+
+- 两者仅相差 `"use strict"` 前缀与 39 字节。
+- `translateY`、`gridTemplateColumns`、`overscanColumns`、`ResizeObserver`
+  等关键行为标记数量完全一致。
+- 当前 HEAD 构建产物与我所有 A/B 使用的 baseline **字节完全相同**（均为 `0d1e0eae…`）。
+
+结论：不存在「对着旧代码优化」的问题，所有 A/B 的 baseline 就是当前生产代码，
+官方证据描述的也是这份代码。该怀疑不成立。
+
+因此 wide-columns 的 rafToTask 异常确实是当前生产代码的行为，需要在 60Hz 硬件上
+跑完整门禁才能判断它对 scrollP95 的实际影响。
+
 ## 影响
 
 这是本次调查中第一个**落在 Zeus 可修改范围内**的真实性能缺陷。此前对 10k 路径的
