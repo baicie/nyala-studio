@@ -801,3 +801,34 @@ test('platform workflow can measure the real product stylesheet', async () => {
 		) ?? [];
 	assert.equal(gateGuards.length, 2, 'both the merge and the gate must skip product-CSS runs');
 });
+
+test('benchmark geometry overrides the product stylesheet row metrics', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-css-geometry-'));
+	try {
+		const { writeFile } = await import('node:fs/promises');
+		const bundle = join(root, 'bundle.js');
+		await writeFile(bundle, 'export const x = 1;\n', 'utf8');
+		const page = join(root, 'page.html');
+		await execFileAsync(process.execPath, [
+			'scripts/benchmark-sql-result-grid.mjs',
+			'--emit-page',
+			page,
+			'--renderer',
+			'zeus',
+			'--zeus-bundle',
+			bundle
+		]);
+		const html = await readFile(page, 'utf8');
+		// The product stylesheet sets rows and header cells to min-height: 2.5rem
+		// (40px). The benchmark lays virtual rows out at ROW_HEIGHT (28px), so an
+		// un-overridden row height makes scroll offsets resolve to the wrong row and
+		// every sample reports a missing row on the native runners.
+		assert.match(html, /data-slot="data-grid-row"\]\s*\{\s*min-height:\s*0/);
+		assert.match(html, /data-slot="data-grid-header"\]\s*\{\s*min-height:\s*28px/);
+		assert.match(html, /data-slot="data-grid-header-cell"\]\s*\{\s*min-height:\s*0/);
+		// The grid viewport must not fall back to the product default of 28rem.
+		assert.match(html, /--zw-data-grid-height:\s*100%/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

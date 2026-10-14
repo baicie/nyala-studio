@@ -879,7 +879,10 @@ zw-data-grid [data-slot="data-grid-header"] { position: sticky; top: 0; z-index:
 zw-data-grid [data-slot="data-grid-spacer"] { position: relative; }
 zw-data-grid [data-slot="data-grid-body"] { position: absolute; top: 28px; left: 0; }
 zw-data-grid [data-slot="data-grid-row"] { position: absolute; left: 0; height: 28px; }
+zw-data-grid [data-slot="data-grid-row"] { min-height: 0; }
 	zw-data-grid [data-slot="data-grid-header-cell"], zw-data-grid [data-slot="data-grid-cell"] { box-sizing: border-box; min-width: 0; height: 28px; padding: 4px 8px; border: 1px solid #444; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+zw-data-grid [data-slot="data-grid-header"] { min-height: 28px; }
+zw-data-grid [data-slot="data-grid-header-cell"] { min-height: 0; }
 	#benchmark-run-marker { position: fixed; z-index: 2147483647; pointer-events: none; image-rendering: pixelated; }
 	</style>
 ${workbenchTableCssTag}
