@@ -112,7 +112,8 @@ function record(overrides = {}) {
 		workloadId: '10k-x-50',
 		renderer: 'zeus',
 		workload: { rows: 10_000, columns: 50, wide: false },
-		scroll: { medianMs: 30, samples: [{ textChurn: 7000 }] },
+		scroll: { medianMs: 30, samples: [] },
+		textChurn: { textWrites: 6422, addedNodes: 0, removedNodes: 0, mutations: 6422 },
 		segmentTrace: {
 			segments: [
 				{ commitStartTime: 10, commitEndTime: 12, nextPaintRafTime: 100, nextPaintTaskTime: 118 },
@@ -148,7 +149,7 @@ test('derives raf-to-task and commit medians that the summary does not carry', a
 		assert.equal(row.metrics.commitMs.baselineMedian, 2);
 		assert.equal(row.metrics.commitMs.candidateMedian, 1);
 		assert.equal(row.metrics.scrollMedianMs.baselineMedian, 30);
-		assert.equal(row.metrics.textChurnMedian.baselineMedian, 7000);
+		assert.equal(row.metrics.textWrites.baselineMedian, 6422);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

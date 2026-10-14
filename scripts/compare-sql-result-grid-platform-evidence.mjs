@@ -21,7 +21,7 @@ const IDENTITY_KEYS = [
 // Metrics that only exist on the raw records, not in the summary object. Without
 // these the Zeus-side commit and raf-to-task costs are invisible, which is the
 // whole point of the comparison.
-const RECORD_METRICS = ['scrollMedianMs', 'rafToTaskMs', 'commitMs', 'textChurnMedian'];
+const RECORD_METRICS = ['scrollMedianMs', 'rafToTaskMs', 'commitMs', 'textWrites'];
 
 // Summary-level metrics. `scrollMedianMs` is absent here because the summary
 // only collapses to `scrollP95Ms`/`scrollMaxMs`.
@@ -256,7 +256,7 @@ function collectRecordMetrics(records) {
 	for (const record of records ?? []) {
 		if (record.status !== 'ok') continue;
 		const key = summaryKey(record);
-		const bucket = groups.get(key) ?? { rafToTask: [], commit: [], textChurn: [] };
+		const bucket = groups.get(key) ?? { rafToTask: [], commit: [], textWrites: [] };
 		const rafToTask = segmentMedian(
 			record,
 			segment => segment.nextPaintTaskTime - segment.nextPaintRafTime
@@ -264,9 +264,7 @@ function collectRecordMetrics(records) {
 		if (rafToTask !== null) bucket.rafToTask.push(rafToTask);
 		const commit = segmentMedian(record, segment => segment.commitEndTime - segment.commitStartTime);
 		if (commit !== null) bucket.commit.push(commit);
-		for (const sample of record.scroll?.samples ?? []) {
-			if (Number.isFinite(sample.textChurn)) bucket.textChurn.push(sample.textChurn);
-		}
+		if (Number.isFinite(record.textChurn?.textWrites)) bucket.textWrites.push(record.textChurn.textWrites);
 		groups.set(key, bucket);
 	}
 	const result = new Map();
@@ -279,7 +277,7 @@ function collectRecordMetrics(records) {
 			),
 			rafToTaskMs: median(bucket.rafToTask),
 			commitMs: median(bucket.commit),
-			textChurnMedian: median(bucket.textChurn)
+			textWrites: median(bucket.textWrites)
 		});
 	}
 	return result;
