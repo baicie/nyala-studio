@@ -510,6 +510,38 @@ Zeus 的提交发生在派发之后，记在了呈现等待里。两侧从赋值
 说明派发位置才是决定性变量。Z1 的 10k 差距因此不应再被当作 Zeus 绑定写入或提交成本的
 问题处理。
 
+### macOS 残差的归因：`raf → task` 间隔，不是 Zeus 的工作
+
+前面提到 macOS 存在 `total − gap − (派发→首次可见)` 的残差，现把它定位到具体区间。
+先排除记账错误：逐样本残差（`totalMs − inputMs − presentationWaitMs − validationMs`）
+恒为 0（run `38525197105` 两平台全部 400 个 Zeus 样本、p95 也为 0），说明 scroll 样本的
+墙钟已被 `commitScroll` 完整分配。macOS 10k 的 9ms 残差不是记账缺口，而是
+`presentationWaitMs` 窗口**内部**的一段——该窗口比 Zeus 采集器覆盖的范围更宽。
+
+按 trace 的 `raf → task` 间隔拆开（`nextPaintTaskTime − nextPaintRafTime`）：
+
+| 平台 / 负载 | firstVisiblePhase | raf → task 中位 | p95 | max |
+| ----------- | ---------------- | -------------: | --: | --: |
+| Windows 1k  | raf 100/100      | 5.50           | 9.50 | 10.90 |
+| Windows 10k | raf 100/100      | 5.50           | 8.30 | 10.50 |
+| macOS 1k    | raf 100/100      | 12.00          | 33.0 | 80.00 |
+| macOS 10k   | raf 100/100      | 16.00          | 27.0 | 53.00 |
+
+残差与该间隔一一对应：`wait − (gap + 派发→首次可见)` 在 Windows 1k/10k 是 −2.20 /
+−2.25ms，在 macOS 1k/10k 是 +4.00 / +8.00ms，而同期 `raf → task` 中位分别是
+5.50/5.50 与 12.00/16.00ms。也就是说 macOS 多出来的等待几乎全部落在「rAF 回调已执行、
+下一个绘制任务尚未运行」之间。
+
+这个区间属于宿主帧调度：`waitForFrame` 在 rAF 里读一次可见行、在紧随的 `setTimeout(0)`
+里再读一次（`sql-result-grid-segment-trace.mjs:43-60`），两读之间的时间由宿主决定，
+不在 Zeus 的采集或提交路径内。macOS WKWebView 在该区间的耗时是 Windows WebView2 的
+2–3 倍（16.00 对 5.50ms，p95 27.0 对 8.3ms），且尾部更重（max 53.0 对 10.5ms）。
+
+因此 macOS 的 10k 尾部有一个明确的、非 Zeus 的成因：WKWebView 在 rAF 与后续绘制任务之间
+的调度延迟显著高于 WebView2。它不随负载变化（1k 与 10k 都是 12–16ms），也不在 Zeus 的
+提交路径上，无法通过 data-grid 或 Zeus 绑定写入优化。要在 macOS 上继续改善 Z1，需要宿主
+层面的帧调度证据或改进，而不是框架侧改动。
+
 ## 20 对交错 A/B：未复现稳定的版本 flush 回归
 
 预先检验假设：“beta31 对相同 1k 窗口转换引入可重复的额外发布 / flush 工作”。
