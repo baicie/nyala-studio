@@ -230,7 +230,9 @@ jobs:
             IFS=';'
             VARIANT_ARGS="--zeus-variant pinned=$RUNNER_TEMP/nyala-zeus-audit/data-grid-bundle.js"
             for pair in ${{ inputs.zeus_variant }}; do
-              VARIANT_ARGS="$VARIANT_ARGS,$pair=$RUNNER_TEMP/nyala-zeus-audit/variant-$pair.js"
+              id="${pair%%=*}"
+              [ -n "$id" ] || continue
+              VARIANT_ARGS="$VARIANT_ARGS,$id=$RUNNER_TEMP/nyala-zeus-audit/variant-$id.js"
             done
             IFS=$OLD_IFS
           fi
@@ -338,7 +340,9 @@ jobs:
             $variantArgs = @("--zeus-variant", "pinned=$env:RUNNER_TEMP\nyala-zeus-audit\data-grid-bundle.js")
             foreach ($pair in ('${{ inputs.zeus_variant }}' -split ';')) {
               if (-not $pair) { continue }
-              $variantArgs += "$pair=$env:RUNNER_TEMP\nyala-zeus-audit\variant-$pair.js"
+              $id = ($pair -split '=', 2)[0]
+              if (-not $id) { continue }
+              $variantArgs += "$id=$env:RUNNER_TEMP\nyala-zeus-audit\variant-$id.js"
             }
           }
           node scripts/benchmark-sql-result-grid-webdriver.mjs `
