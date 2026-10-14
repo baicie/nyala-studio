@@ -36,6 +36,33 @@ Zeus 10k 滚动延迟中，框架自身只占 2–3ms。其余全部是宿主与
 
 两者都没有降低 dispatchLag 或 rafToTask，而那才是 90% 以上的成本。
 
+## dispatchLag 对照实验：确认它是宿主的固定成本
+
+为了排除「dispatchLag 是 Zeus 造成的」这一可能，在**完全不含任何框架的裸页**
+（一个 `overflow:auto` 的 div 加一个 400000px 高的内容块）上用 Chrome 复现四种时序：
+
+| 场景 | dispatchLag 中位 | 到绘制中位 | 说明 |
+|---|---:|---:|---|
+| 裸页，基准同款时序 | 15.9ms | 33.3ms | 无任何框架 |
+| 裸页，帧内早期写 scrollTop | 17.0ms | 32.8ms | 无任何框架 |
+| 裸页，帧内晚期写 scrollTop | 5.5ms | 21.6ms | 无任何框架 |
+| 裸页，真实可信 wheel 事件 | 11.1ms | 11.2ms | 无任何框架，真实用户输入 |
+| **Zeus 10k-x-50（官方 macOS）** | **15.5–16ms** | **34.5–37.5ms** | 完整框架 |
+| native renderer（官方 macOS） | 16–19ms | — | 无 data-grid 框架 |
+
+裸页在基准同款时序下的 dispatchLag 是 15.9ms，与 Zeus 的 15.5–16ms 实质相同。
+这证明 dispatchLag 是「程序化写 scrollTop 后等待滚动事件被派发」这一动作的固有成本，
+与被测框架无关。Zeus 在这项上的 2–3ms 差距落在噪声内。
+
+两个次要观察：
+
+- 帧内时机确实影响 dispatchLag（早期 17ms vs 晚期 5.5ms），但基准时序是固定的，
+  这个差值对所有 renderer 一视同仁，不构成 renderer 之间的差异来源。
+- 真实 wheel 输入的 dispatchLag 中位是 11.1ms，低于程序化写入。这说明程序的
+  程序化滚动测量比真实用户手势略悲观，但该偏差同样对所有 renderer 一致。
+
+复跑：`/tmp/dispatch-probe/`（`node run.mjs && node verdict.mjs`）。
+
 ## 复跑方式
 
 分解脚本见 `/tmp/nyala-transform-ab/run2/officialbreak.py` 与 `dispatchall.py`；Chrome 侧证据见 `/tmp/nyala-transform-ab/run2/`（6 对交错 A/B，每版 120 samples，全部 committed，无过滤）。本机 WKWebView segmentTrace 采集产物见 `.artifacts/local-macos-rootcause/`。
