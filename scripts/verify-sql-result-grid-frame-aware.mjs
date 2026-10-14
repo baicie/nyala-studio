@@ -3,6 +3,11 @@
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { createSqlResultGridFrameAwareProfile } from './sql-result-grid-frame-aware-profile.mjs';
+import {
+	createFrameAwareHostExcessReport,
+	createFrameAwareSuperiorityVerdict,
+	SQL_RESULT_GRID_FRAME_AWARE_TEN_K_MINIMUM_IMPROVEMENT
+} from './sql-result-grid-frame-aware-verdict.mjs';
 
 const cli = parseArgs(process.argv.slice(2));
 if (cli.help === 'true') {
@@ -25,12 +30,31 @@ for (const evidencePath of evidencePaths) {
 				.map(id => id.trim())
 				.filter(Boolean)
 		: undefined;
+	const fileName = basename(absolutePath, '.json');
+	// Every platform writes `platform-evidence.json`, so the file name alone cannot
+	// tell a Windows run from a macOS run. Prefer the evidence's own platform
+	// identity and keep the file name only as a fallback.
+	const label = evidence.label ?? evidence.platformName ?? fileName;
+	const profile = createSqlResultGridFrameAwareProfile(evidence, workloadIds ? { workloadIds } : {});
 	analyses.push({
-		label: basename(absolutePath, '.json'),
+		label,
 		evidence: absolutePath,
-		platform: evidence.platform ?? null,
+		platform: evidence.platformName ?? evidence.platform ?? null,
 		runs: evidence.runs ?? null,
-		profile: createSqlResultGridFrameAwareProfile(evidence, workloadIds ? { workloadIds } : {})
+		profile,
+		verdicts: profile.workloads.map(workload =>
+			createFrameAwareSuperiorityVerdict({
+				label: `${label}/${workload.workloadId}`,
+				renderers: workload.renderers,
+				requiredImprovement: SQL_RESULT_GRID_FRAME_AWARE_TEN_K_MINIMUM_IMPROVEMENT
+			})
+		),
+		hostExcess: profile.workloads.map(workload =>
+			createFrameAwareHostExcessReport({
+				label: `${label}/${workload.workloadId}`,
+				renderers: workload.renderers
+			})
+		)
 	});
 }
 

@@ -87,8 +87,13 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /provenance/);
 	assert.equal(MEASUREMENT_CONTRACT_VERSION, 7);
 	// v7 platform records must request the presentation floor without paying for
-	// renderer observers, because observer cost would bias scrollP95Ms.
-	assert.match(source, /floorOnly:\s*'true'/);
+	// renderer observers, because observer cost would bias scrollP95Ms. That is
+	// the default; --instrument-baseline opts out to capture baseline commit work.
+	assert.match(source, /floorOnly:\s*String\(!instrumentBaseline\)/);
+	assert.match(source, /const instrumentBaseline = String\(cli\['instrument-baseline'\]/);
+	// An instrumented run must declare itself inadmissible so a diagnostic run
+	// can never be mistaken for v7 admission evidence.
+	assert.match(source, /admissionGrade:\s*!instrumentBaseline/);
 	// The gate recomputes the summary from raw records and compares it with
 	// isDeepStrictEqual, so the producer must aggregate presentationFloorP95Ms
 	// with exactly the same shape or every platform run fails summary integrity.

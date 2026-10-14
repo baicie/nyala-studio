@@ -62,6 +62,11 @@ if (cli.help === 'true') {
   --script-timeout-ms <n> WebDriver script budget (default: 120000)
   --run-budget-ms <n> Whole-platform-run budget (default: 1800000)
   --trace-profile <true|false>  Record observer-free scroll timing segments
+  --instrument-baseline <true|false>  Instrument the baseline renderer so commit
+    work is recorded. Disables floorOnly, which means the presentation floor and
+    the renderer commit cost are measured in the same run and the recorded
+    scrollP95Ms carries observer overhead. Diagnostic evidence only: such a run
+    must not be used for v7 admission.
 `);
 	process.exit(0);
 }
@@ -104,6 +109,11 @@ const runBudgetMs = parseBoundedPositiveInteger(cli['run-budget-ms'] ?? '1800000
 // shows exactly how much retrying a platform needed.
 const maxRoundAttempts = parseBoundedPositiveInteger(cli['max-round-attempts'] ?? '3', '--max-round-attempts', 10);
 const traceProfile = String(cli['trace-profile'] ?? 'false') === 'true';
+// The baseline renderer is only instrumented when the caller asks for commit
+// work. floorOnly exists so the presentation floor is sampled without observer
+// overhead inside scrollP95Ms; that same guarantee is why an instrumented run
+// cannot produce admission-grade scrollP95Ms.
+const instrumentBaseline = String(cli['instrument-baseline'] ?? 'false') === 'true';
 const outputPath = resolve(cli.output ?? defaultOutput);
 const screenshotDir = resolve(cli['screenshot-dir'] ?? join(repositoryRoot, 'platform-screenshots'));
 const zeusBundle = cli['zeus-bundle'] ?? '/tmp/nyala-zeus-audit/data-grid-bundle.js';
@@ -326,8 +336,10 @@ async function run() {
 				// workload. floorOnly samples that floor without installing any
 				// renderer observer, because observer overhead would land inside
 				// scrollP95Ms and bias the comparison the floor exists to inform.
+				// An instrumented-baseline run trades that guarantee for baseline
+				// commit work, so it is diagnostic evidence and never admission-grade.
 				diagnosticProfile: 'true',
-				floorOnly: 'true'
+				floorOnly: String(!instrumentBaseline)
 			};
 			query.resultEndpoint = benchmarkServer.resultUrl;
 			if (traceProfile) query.traceProfile = 'true';
@@ -764,8 +776,16 @@ async function runObserverFreeSegmentTraceNavigation(
 		resultChannel
 	);
 	if (record.status !== 'ok' || !record.segmentTrace) {
-		const reason = String(record.error ?? record.reason ?? 'Missing segment trace.').split('\n')[0];
-		throw new Error(`Observer-free segment trace failed for ${expected.workload.id}/${expected.renderer}: ${reason}`);
+		// Naming the failing condition matters: an earlier build reported only
+		// "Missing segment trace." for every renderer whose trace never arrived,
+		// which hid whether the navigation failed or the trace was simply absent.
+		const reason =
+			record.error ??
+			record.reason ??
+			(record.status === 'ok'
+				? 'the run reported ok but carried no segmentTrace.'
+				: `the run reported status "${record.status}" and carried no segmentTrace.`);
+		throw new Error(`Observer-free segment trace failed for ${expected.workload.id}/${expected.renderer}: ${String(reason).split('\n')[0]}`);
 	}
 	validateObserverFreeSegmentTraceSnapshot(record.segmentTrace, { expectedSampleCount: 22 });
 	return record.segmentTrace;
@@ -894,6 +914,19 @@ async function writeEvidence({
 		reason,
 		...identity,
 		provenance,
+		// An instrumented-baseline run installs renderer observers, so its
+		// scrollP95Ms carries observer overhead and its presentation floor is not
+		// sampled cleanly. Such evidence may answer diagnostic questions about
+		// commit work, but it must never be scored for v7 admission.
+		admissionGrade: !instrumentBaseline,
+		...(instrumentBaseline
+			? {
+					limitations: [
+						'This run instrumented the baseline renderer, so scrollP95Ms carries observer overhead and the presentation floor was not sampled without instrumentation.',
+						'It is diagnostic evidence about renderer commit work and must not be scored for v7 admission.'
+					]
+				}
+			: {}),
 		summary: summarize(records),
 		records,
 		screenshots,

@@ -18,6 +18,11 @@ on:
         required: false
         default: 'windows-2022'
         type: string
+      instrument_baseline:
+        description: 'Instrument the baseline renderer to capture commit work (diagnostic evidence only, never v7 admission)'
+        required: false
+        default: 'false'
+        type: string
 
 permissions:
   contents: read
@@ -190,6 +195,7 @@ jobs:
             --run-budget-ms 4200000 \
             --zeus-bundle "$RUNNER_TEMP/nyala-zeus-audit/data-grid-bundle.js" \
             --trace-profile true \
+            --instrument-baseline "${{ inputs.instrument_baseline || 'false' }}" \
             --repository "$GITHUB_REPOSITORY" \
             --source-revision "$GITHUB_SHA" \
             --source-ref "$GITHUB_REF" \
@@ -287,6 +293,7 @@ jobs:
             --run-budget-ms 4200000 `
             --zeus-bundle "$env:RUNNER_TEMP\nyala-zeus-audit\data-grid-bundle.js" `
             --trace-profile true `
+            --instrument-baseline "${{ inputs.instrument_baseline || 'false' }}" `
             --repository "$env:GITHUB_REPOSITORY" `
             --source-revision "$env:GITHUB_SHA" `
             --source-ref "$env:GITHUB_REF" `
@@ -339,13 +346,18 @@ jobs:
           merge-multiple: false
 
       - name: Merge evidence
+        if: ${{ inputs.instrument_baseline != 'true' }}
         run: |
           node scripts/merge-sql-result-grid-platform-evidence.mjs \
             --macos "$RUNNER_TEMP/sql-result-grid-evidence/sql-result-grid-macos-webkit/platform-evidence.json" \
             --windows "$RUNNER_TEMP/sql-result-grid-evidence/sql-result-grid-windows-webview2/platform-evidence.json" \
             --output "$RUNNER_TEMP/sql-result-grid-evidence/platform-evidence.json"
 
+      # An instrumented-baseline run carries observer overhead inside
+      # scrollP95Ms, so its records cannot be scored for v7 admission. Skipping
+      # the gate keeps a fail-closed NO-GO from being mistaken for a real result.
       - name: Run fail-closed Z1 gate
+        if: ${{ inputs.instrument_baseline != 'true' }}
         env:
           NYALA_EXPECTED_REPOSITORY: ${{ github.repository }}
           NYALA_EXPECTED_SOURCE_REVISION: ${{ github.sha }}

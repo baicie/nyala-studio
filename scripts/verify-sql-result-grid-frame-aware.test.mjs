@@ -6,6 +6,12 @@ import {
 	nearestRank,
 	unionMs
 } from './sql-result-grid-frame-aware-profile.mjs';
+import {
+	createFrameAwareHostExcessReport,
+	createFrameAwareSuperiorityVerdict,
+	SQL_RESULT_GRID_FRAME_AWARE_OUTCOME,
+	SQL_RESULT_GRID_FRAME_AWARE_TEN_K_MINIMUM_IMPROVEMENT
+} from './sql-result-grid-frame-aware-verdict.mjs';
 
 const BASE = {
 	measurementContractVersion: 7,
@@ -155,4 +161,85 @@ test('median and nearest-rank follow the registered conventions', () => {
 	assert.equal(nearestRank([1, 2, 3, 4], 0.95), 4);
 	assert.equal(nearestRank([1, 2, 3, 4], 0.5), 2);
 	assert.equal(nearestRank([], 0.95), null);
+});
+
+function renderer(rendererName, medianMs) {
+	return { renderer: rendererName, rendererWork: { available: true, medianMs } };
+}
+
+test('frame-aware verdict scores renderer work against the fastest baseline', () => {
+	const verdict = createFrameAwareSuperiorityVerdict({
+		label: 'win/10k-x-50',
+		renderers: [
+			renderer('zeus', 2.5),
+			renderer('workbench-table', 10),
+			renderer('native', 8)
+		],
+		requiredImprovement: SQL_RESULT_GRID_FRAME_AWARE_TEN_K_MINIMUM_IMPROVEMENT
+	});
+	// The fastest baseline is native at 8ms, not WorkbenchTable at 10ms.
+	assert.equal(verdict.baselineRenderer, 'native');
+	assert.equal(verdict.improvement, (8 - 2.5) / 8);
+	assert.equal(verdict.outcome, SQL_RESULT_GRID_FRAME_AWARE_OUTCOME.superiorWithinThreshold);
+});
+
+test('frame-aware verdict reports below-threshold superiority without failing', () => {
+	const verdict = createFrameAwareSuperiorityVerdict({
+		label: 'mac/10k-x-50',
+		renderers: [renderer('zeus', 9), renderer('workbench-table', 10)],
+		requiredImprovement: 0.2
+	});
+	assert.equal(verdict.improvement, 0.1);
+	assert.equal(verdict.outcome, SQL_RESULT_GRID_FRAME_AWARE_OUTCOME.superiorBelowThreshold);
+	assert.match(verdict.reason, /below the 20% threshold/);
+});
+
+test('frame-aware verdict is unavailable when either side lacks renderer work', () => {
+	const missingBaseline = createFrameAwareSuperiorityVerdict({
+		label: 'win/10k-x-50',
+		renderers: [renderer('zeus', 2.5), { renderer: 'workbench-table', rendererWork: { available: false } }],
+		requiredImprovement: 0.2
+	});
+	assert.equal(missingBaseline.outcome, SQL_RESULT_GRID_FRAME_AWARE_OUTCOME.unavailable);
+
+	const missingZeus = createFrameAwareSuperiorityVerdict({
+		label: 'win/10k-x-50',
+		renderers: [{ renderer: 'zeus', rendererWork: { available: false } }, renderer('native', 8)],
+		requiredImprovement: 0.2
+	});
+	assert.equal(missingZeus.outcome, SQL_RESULT_GRID_FRAME_AWARE_OUTCOME.unavailable);
+	assert.equal(missingZeus.zeusRendererWorkMs, null);
+});
+
+test('frame-aware verdict rejects a non-positive baseline as unscoreable', () => {
+	const verdict = createFrameAwareSuperiorityVerdict({
+		label: 'win/10k-x-50',
+		renderers: [renderer('zeus', 2.5), renderer('native', 0)],
+		requiredImprovement: 0.2
+	});
+	assert.equal(verdict.outcome, SQL_RESULT_GRID_FRAME_AWARE_OUTCOME.unavailable);
+	assert.match(verdict.reason, /must be positive/);
+});
+
+test('host excess is reported for attribution and never gates', () => {
+	const report = createFrameAwareHostExcessReport({
+		label: 'mac/10k-x-50',
+		renderers: [
+			{
+				renderer: 'zeus',
+				hostIntervalMs: 16,
+				hostExcess: { available: true, p95ExcessMs: 26 },
+				scrollTotal: { p95Ms: 42 }
+			},
+			{ renderer: 'native', rendererWork: { available: true, medianMs: 8 }, hostExcess: { available: false } }
+		]
+	});
+	assert.equal(report.rows.length, 1);
+	assert.deepEqual(report.rows[0], {
+		renderer: 'zeus',
+		hostIntervalMs: 16,
+		p95ExcessMs: 26,
+		scrollP95Ms: 42
+	});
+	assert.match(report.note, /does not gate admission/);
 });
