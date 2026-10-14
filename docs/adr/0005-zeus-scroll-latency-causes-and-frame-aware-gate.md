@@ -69,9 +69,10 @@ the first two are unsupported and the third is an unrelated architecture project
    - **Primary (renderer work)**: median `commit` interval per sample, from the Zeus
      `segmentTrace`, compared against `min(WorkbenchTable, native)` on the same records. This is
      the only part of the latency the framework controls.
-   - **Guard (frame stability)**: the share of samples whose `totalMs` exceeds
-     `1.5 x` the platform's own measured `raf -> task` interval. This bounds the part of the
-     tail that host scheduling cannot explain, and is reported per platform rather than pooled.
+   - **Guard (excess over the host interval)**: report `p95(totalMs) - hostRafToTask` per
+     platform, where `hostRafToTask` is that platform's own median
+     `nextPaintTaskTime - nextPaintRafTime`. This bounds the part of the tail that host
+     scheduling cannot explain, and is reported per platform rather than pooled.
 3. Keep `bestNonZeus` and the per-platform split. A pooled ratio hides the macOS host gap that
    this analysis identified, so a single cross-platform improvement number must not be the gate.
 4. Do not adopt a floor subtraction. On `10k-x-50` the Zeus wait (`15.3ms`) and the shared floor
@@ -89,6 +90,48 @@ the first two are unsupported and the third is an unrelated architecture project
 - The `20%` target and the v6/v7 artifacts stay unchanged until a v8 schema is accepted.
 - If a future candidate regresses `commit` interval or the two-frame share, that is the signal to
   optimize. Until then the framework is not the bottleneck on this workload.
+
+## Metric check on the two completed gate runs
+
+Both proposed metrics were recomputed from the raw records before being written here, and the
+first form of the guard did not survive that check.
+
+Primary (median per-sample commit union, `max` over the commits the sample claims) is computed
+from `segmentTrace.diagnostics.commits` joined by `commitTransactionIds`. Zeus commits are
+`commitEndTime - commitStartTime`; WorkbenchTable commits are the union of its nested
+`commitIntervals`.
+
+| Run / platform / workload | Zeus median | WorkbenchTable median |
+| ------------------------- | ----------: | --------------------: |
+| `38523458804` win 10k     |        2.90 |                     — |
+| `38525197105` win 1k      |        2.50 |                  5.55 |
+| `38525197105` win 10k     |        2.55 |                 10.40 |
+| `38525197105` mac 1k      |        2.00 |                  8.50 |
+| `38525197105` mac 10k     |        2.00 |                 25.00 |
+
+Run `38523458804` carries no WorkbenchTable commit intervals, so the primary is Zeus-only there.
+Where both sides exist, Zeus spends `2.0-2.6ms` per sample against WorkbenchTable's
+`5.6-25.0ms`, a `2.2x`-`12.5x` difference. This is the quantity the framework can move, and it
+is the opposite sign of the current gate: the gate compares `scrollP95Ms`, where Zeus already has
+the better median.
+
+The guard's first form (`share of samples above 1.5 x host interval`) was rejected: it returns
+`100%` for nearly every renderer and workload, including WorkbenchTable, so it carries no signal.
+Subtracting the host interval and taking `p95` of the remainder does discriminate:
+
+| Run / platform / workload | Zeus excess | WorkbenchTable excess |
+| ------------------------- | ----------: | --------------------: |
+| `38523458804` win 1k      |       13.70 |                     — |
+| `38523458804` win 10k     |       18.10 |                     — |
+| `38525197105` win 1k      |       13.70 |                 14.90 |
+| `38525197105` win 10k     |       23.60 |                 26.00 |
+| `38525197105` mac 1k      |       26.00 |                 27.00 |
+| `38525197105` mac 10k     |       26.00 |                 45.00 |
+
+Zeus's excess is at or below the baseline's on five of the six comparable rows, and clearly
+below on macOS `10k-x-50` (`26.00` against `45.00`). A v8 threshold would still have to be
+pre-registered; this table only shows that the quantity is well-defined and separates the two
+renderers, and it does not propose a value.
 
 ## Status meaning
 
