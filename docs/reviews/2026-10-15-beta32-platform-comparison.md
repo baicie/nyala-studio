@@ -215,3 +215,36 @@ beta.32 做交错采集（interleaved），使宿主漂移同时作用于两者�
 
 run 38620933262 在 macOS 与 Windows 上重复了同一结论（见上表），因此这一条已经
 跨两个平台、跨宿主漂移幅度验证完毕。
+
+## 让门禁真正加载产品 CSS
+
+上面的结论是「CSS 候选无法用现有装置验证」。装置已修：`--zeus-css <path>` 让
+benchmark 页面把真实样式表作为独立 `<style>` 块加载，默认仍是不带产品 CSS 的
+历史页面，旧证据可复现；evidence 记录 CSS 模式（inline / product）、解析后的路径
+与内容 SHA-256，因此两种证据从文件本身即可区分。workflow 新增可选输入
+`zeus_css_package_version`，从被测版本安装 `@zeus-web/themes` 并把
+`dist/components.css` 送进两个平台 job。产品 CSS 的 run 与其它诊断 run 一样不进
+Z1 门。
+
+`@zeus-web/data-grid@0.1.0-beta.32` 的发布包里 CSS 文件数为 **0**：样式完全在
+`@zeus-web/themes` 里，此前从未进入被测页面。
+
+### 第一次产品 CSS run 失败，暴露了一个真实装置 bug
+
+run 38630294128 的 macOS 与 Windows job 全数失败，全部 renderer（含不加载 Zeus
+bundle 的 native）都报 `renderer did not expose contained document geometry`。
+
+根因不在产品 CSS 的规则内容，而在注入方式：产品 CSS 被写进页面自身的 `<style>`
+**内部**，形成嵌套 `<style>`。浏览器会丢弃内层 `<style>` 元素**及其之后的全部规则**，
+于是 benchmark 的几何脚手架（`html/body/#root` 高度、viewport、row 定位）整段消失。
+用 1 字节的平凡 CSS（`a { color: red; }`）即可复现同一失败，而空文件不会——这把
+根因从「某条产品规则冲突」缩小到「注入位置」。
+
+修复（`ef60d7fe`）：产品样式表作为页面 `<style>` 之前的独立同级块注入，并给
+grid viewport 显式设置 `--zw-data-grid-height: 100%`，否则产品 CSS 的
+`var(--zw-data-grid-height, 28rem)` 兜底会把 viewport 固定成 28rem。本机对已发布的
+beta.32 样式表复测：native / workbench-table / zeus 三个 renderer 均跑完，zeus
+dom=406，几何有效。并补了回归测试，要求产品块位于几何规则之前且不包含它们。
+
+这也是本记录里唯一一次「宿主侧装置 bug 伪装成产品性能问题」的真实案例：先看
+「所有 renderer 同时失败」这一信号，才能排除被测代码。
