@@ -411,6 +411,42 @@ getter/setter 的普通对象，setter 走 `table.scrollTop` 并做 canonical↔
 对两侧发的是语义等价的滚动请求，差异只在「谁来驱动这次提交」：一侧由框架的同步状态机
 驱动，一侧由 DOM scroll 事件驱动。这正是本节要测量的对象，而不是测量缺陷。
 
+### WBT 的同步优势覆盖真实用户滚动，不只是程序化赋值
+
+上一节说 WBT 靠 `setScrollPositionNow` 的同步派发领先，但如果那只是程序化赋值的特例、
+真实滚轮／拖动仍走 DOM scroll 事件，那这套修复对用户就没有意义。需要确认 WBT 是否
+允许 DOM 原生滚动。`ScrollableElement` 的构造函数第一行就是
+`element.style.overflow = 'hidden'`（`scrollableElement.ts:225`），即被托管的滚动容器
+永远不是原生可滚动元素；`onScroll` 回调再把状态写回
+`this._element.scrollTop = e.scrollTop`（`:719`）保持视觉一致。
+
+真实输入走的是同一条同步链：`_onMouseWheel` 计算 `desiredScrollPosition` 后调用
+`this._scrollable.setScrollPositionNow(desiredScrollPosition)`（`:544`）或
+`setScrollPositionSmooth`；拖动滚动条由 `Scrollbar.writeScrollPosition` 写入后同样落到
+`setScrollPositionNow`。`_setState` 随后同步 fire，`ListView.onScroll` 立即 `render`。
+由于容器 `overflow: hidden`，浏览器不会为它派发可用的原生滚动，滚动条本体是
+`Scrollbar` 自绘的。
+
+因此 WBT 的同步提交不是 benchmark 专用技巧，而是它对所有滚动输入的统一模型：滚轮、
+拖动、程序化赋值都经由 `Scrollable` 的内部状态机同步派发，渲染永远发生在输入的同一调用
+栈内。Zeus 则是另一种模型：容器保持原生可滚动，渲染挂在 DOM scroll 事件上，必然等到
+浏览器派发。两者的 `inputMs` 差异就是这个模型差异的直接后果。
+
+这条差异同时说明 Zeus 侧修复的两种形态代价不同：
+
+1. **完整迁移到内部滚动状态**（自绘滚动容器、`overflow: hidden`、接管 wheel 与拖动）。
+   能让渲染与所有输入同栈，但要把原生滚动语义、滚动条外观、惯性、触屏、RTL、
+   accessibility 一并接管，等于重写 data-grid 的滚动子系统。风险与范围都远超
+   「优化一个绑定路径」，不适合作为性能修复。
+2. **仅在原生滚动赋值处补一次同步提交**（保留原生滚动容器，但让 data-grid 在
+   `scrollTop` 被程序化赋值时立即 `updateRange()`，scroll 事件到达时按偏移幂等跳过）。
+   能覆盖 harness 的 `commitScroll` 与 `scrollToOffset`，但不覆盖用户手势滚动——用户滚动
+   仍然要等派发。
+
+Z1 测的是第 2 类输入（`commitScroll` 直接赋值 `scrollTop`）。因此形态 2 是与门禁口径
+一致、且改动可控的候选；形态 1 才等价于基线，但属于重写。必须明确区分这两个目标，
+不能用形态 2 的收益去宣称已追平基线的滚动模型，也不能把形态 1 的代价隐藏在"性能修复"里。
+
 ## 20 对交错 A/B：未复现稳定的版本 flush 回归
 
 预先检验假设：“beta31 对相同 1k 窗口转换引入可重复的额外发布 / flush 工作”。
