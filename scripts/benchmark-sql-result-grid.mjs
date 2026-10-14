@@ -163,9 +163,17 @@ if (
 	);
 }
 const zeusBundle = cli['zeus-bundle'] ?? process.env.NYALA_ZEUS_BUNDLE;
+const zeusCssPath = cli['zeus-css'] ?? process.env.NYALA_ZEUS_CSS ?? null;
 if (selectedRenderers.includes('zeus')) {
 	if (!zeusBundle) throw new Error('Zeus renderer requires --zeus-bundle <path> or NYALA_ZEUS_BUNDLE.');
 	if (!(await exists(zeusBundle))) throw new Error(`Unable to load Zeus bundle at ${zeusBundle}`);
+}
+// Product CSS is opt-in and fail-closed. The published data-grid bundle ships no
+// stylesheet, so the page's inline block is the only styling Zeus sees by default.
+// A caller that names a product stylesheet wants that file measured; silently
+// falling back to the inline block would produce another false A/B.
+if (zeusCssPath && !(await exists(zeusCssPath))) {
+	throw new Error(`Unable to load Zeus product CSS at ${zeusCssPath}`);
 }
 const outputPath = resolve(cli.output ?? defaultOutput);
 const workbenchTableBundle =
@@ -183,7 +191,8 @@ if (cli['emit-page']) {
 			includeZeus: selectedRenderers.includes('zeus'),
 			zeusBundle,
 			workbenchTableBundle,
-			workbenchTableImplementation
+			workbenchTableImplementation,
+			zeusCssPath
 		}),
 		'utf8'
 	);
@@ -205,7 +214,8 @@ try {
 		includeZeus: selectedRenderers.includes('zeus'),
 		zeusBundle,
 		workbenchTableBundle,
-		workbenchTableImplementation
+		workbenchTableImplementation,
+		zeusCssPath
 	});
 	await writeFile(join(temporaryRoot, 'benchmark.html'), html, 'utf8');
 	browserRunner = await launchChromiumBenchmark(chromePath, temporaryRoot);
@@ -818,7 +828,13 @@ function delay(milliseconds) {
 	return new Promise(resolveDelay => setTimeout(resolveDelay, milliseconds));
 }
 
-async function createBenchmarkPage({ includeZeus, zeusBundle, workbenchTableBundle, workbenchTableImplementation }) {
+async function createBenchmarkPage({
+	includeZeus,
+	zeusBundle,
+	workbenchTableBundle,
+	workbenchTableImplementation,
+	zeusCssPath
+}) {
 	const zeusSource = includeZeus && (await exists(zeusBundle)) ? await readFile(zeusBundle, 'utf8') : '';
 	const zeusTag = zeusSource ? `<script type="module">\n${zeusSource}\n</script>` : '';
 	const workbenchTableCssTag = workbenchTableBundle
@@ -826,6 +842,14 @@ async function createBenchmarkPage({ includeZeus, zeusBundle, workbenchTableBund
 		: '';
 	const workbenchTableScriptTag = workbenchTableBundle
 		? `<script type="module">\n${workbenchTableBundle.javascript.replaceAll('</script>', '<\\/script>')}\n</script>`
+		: '';
+	// The published data-grid bundle ships no CSS of its own, so the page's inline
+	// block is the only styling Zeus ever sees here. Loading the real product
+	// stylesheet is opt-in: existing evidence stays reproducible, and any CSS-level
+	// candidate must be measured with this set or the change is untestable.
+	const productCss = zeusCssPath && (await exists(zeusCssPath)) ? await readFile(zeusCssPath, 'utf8') : '';
+	const productCssTag = productCss
+		? `<style data-nyala-product-css>\n${productCss.replaceAll('</style>', '<\\/style>')}\n</style>`
 		: '';
 	return `<!doctype html>
 <meta charset="utf-8">
@@ -854,6 +878,7 @@ zw-data-grid [data-slot="data-grid-spacer"] { position: relative; }
 zw-data-grid [data-slot="data-grid-body"] { position: absolute; top: 28px; left: 0; }
 zw-data-grid [data-slot="data-grid-row"] { position: absolute; left: 0; height: 28px; }
 	zw-data-grid [data-slot="data-grid-header-cell"], zw-data-grid [data-slot="data-grid-cell"] { box-sizing: border-box; min-width: 0; height: 28px; padding: 4px 8px; border: 1px solid #444; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	${productCssTag}
 	#benchmark-run-marker { position: fixed; z-index: 2147483647; pointer-events: none; image-rendering: pixelated; }
 	</style>
 ${workbenchTableCssTag}

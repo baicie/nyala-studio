@@ -31,6 +31,10 @@ on:
         description: 'Interleaved data-grid versions as id=version,id=version. Each version plus the pinned version is measured inside one WebView session so host drift hits them all. Diagnostic paired evidence, never gated.'
         required: false
         type: string
+      zeus_css_package_version:
+        description: 'Measure with the real @zeus-web/themes components.css from this version instead of the benchmark inline stylesheet. Empty keeps the historical inline-CSS page. Diagnostic evidence, never gated.'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -115,6 +119,18 @@ jobs:
             IFS=$old_ifs
           fi
 
+          # The published data-grid bundle ships no stylesheet, so the benchmark
+          # page's inline block is normally the only styling under test. Copy the
+          # real product CSS out of the same version so a CSS-level candidate can
+          # be measured at all, and so provenance can name the exact bytes.
+          if [ -n "${{ inputs.zeus_css_package_version }}" ]; then
+            css_version="${{ inputs.zeus_css_package_version }}"
+            pnpm add --dir "$AUDIT_DIR" --save-exact "@zeus-web/themes@$css_version"
+            css_file="$AUDIT_DIR/node_modules/@zeus-web/themes/dist/components.css"
+            test -f "$css_file"
+            cp "$css_file" "$AUDIT_DIR/zeus-product.css"
+          fi
+
       - name: Create structured dependency audit
         run: |
           node scripts/create-sql-result-grid-zeus-audit.mjs \
@@ -155,6 +171,7 @@ jobs:
             ${{ runner.temp }}/nyala-zeus-audit/data-grid-bundle.js
             ${{ runner.temp }}/nyala-zeus-audit/variant-*.js
             ${{ runner.temp }}/nyala-zeus-audit/variant-*.registry.json
+            ${{ runner.temp }}/nyala-zeus-audit/zeus-product.css
             ${{ runner.temp }}/nyala-zeus-audit/zeus-audit.json
             ${{ runner.temp }}/nyala-zeus-audit/phase-z1-benchmark.json
           if-no-files-found: error
@@ -236,6 +253,10 @@ jobs:
             done
             IFS=$OLD_IFS
           fi
+          CSS_ARGS=""
+          if [ -f "$RUNNER_TEMP/nyala-zeus-audit/zeus-product.css" ]; then
+            CSS_ARGS="--zeus-css $RUNNER_TEMP/nyala-zeus-audit/zeus-product.css"
+          fi
           node scripts/benchmark-sql-result-grid-webdriver.mjs \
             --app-binary "$GITHUB_WORKSPACE/target/debug/sql-studio-next" \
             --platform macos \
@@ -243,6 +264,7 @@ jobs:
             --run-budget-ms 4200000 \
             --zeus-bundle "$RUNNER_TEMP/nyala-zeus-audit/data-grid-bundle.js" \
             $VARIANT_ARGS \
+            $CSS_ARGS \
             --trace-profile true \
             --instrument-baseline "${{ inputs.instrument_baseline || 'false' }}" \
             --repository "$GITHUB_REPOSITORY" \
@@ -349,6 +371,11 @@ jobs:
             }
             $variantArgs = @("--zeus-variant", ($variantList -join ','))
           }
+          $cssArgs = @()
+          $cssFile = Join-Path $env:RUNNER_TEMP 'nyala-zeus-audit\zeus-product.css'
+          if (Test-Path $cssFile -PathType Leaf) {
+            $cssArgs = @('--zeus-css', $cssFile)
+          }
           node scripts/benchmark-sql-result-grid-webdriver.mjs `
             --app-binary "$env:GITHUB_WORKSPACE\target\debug\sql-studio-next.exe" `
             --platform windows `
@@ -356,6 +383,7 @@ jobs:
             --run-budget-ms 4200000 `
             --zeus-bundle "$env:RUNNER_TEMP\nyala-zeus-audit\data-grid-bundle.js" `
             @variantArgs `
+            @cssArgs `
             --trace-profile true `
             --instrument-baseline "${{ inputs.instrument_baseline || 'false' }}" `
             --repository "$env:GITHUB_REPOSITORY" `
@@ -410,7 +438,7 @@ jobs:
           merge-multiple: false
 
       - name: Merge evidence
-        if: ${{ inputs.instrument_baseline != 'true' && inputs.zeus_package_version == '' && inputs.zeus_variant == '' }}
+        if: ${{ inputs.instrument_baseline != 'true' && inputs.zeus_package_version == '' && inputs.zeus_variant == '' && inputs.zeus_css_package_version == '' }}
         run: |
           node scripts/merge-sql-result-grid-platform-evidence.mjs \
             --macos "$RUNNER_TEMP/sql-result-grid-evidence/sql-result-grid-macos-webkit/platform-evidence.json" \
@@ -423,7 +451,7 @@ jobs:
       # A version override collects control evidence for a paired comparison.
       # The gate scores one pinned version, so it is skipped for overrides.
       - name: Run fail-closed Z1 gate
-        if: ${{ inputs.instrument_baseline != 'true' && inputs.zeus_package_version == '' && inputs.zeus_variant == '' }}
+        if: ${{ inputs.instrument_baseline != 'true' && inputs.zeus_package_version == '' && inputs.zeus_variant == '' && inputs.zeus_css_package_version == '' }}
         env:
           NYALA_EXPECTED_REPOSITORY: ${{ github.repository }}
           NYALA_EXPECTED_SOURCE_REVISION: ${{ github.sha }}

@@ -716,3 +716,78 @@ test('platform workflow can interleave bundle variants inside one WebView sessio
 	const gateGuards = source.match(/inputs\.zeus_package_version == '' && inputs\.zeus_variant == ''/g) ?? [];
 	assert.equal(gateGuards.length, 2, 'both the merge and the gate must be skipped for an interleaved run');
 });
+
+test('benchmark page loads product CSS only when a stylesheet is named', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-css-page-'));
+	const bundle = join(root, 'bundle.js');
+	const css = join(root, 'components.css');
+	const emitPage = async (...args) => {
+		const page = join(root, `page-${args.length}-${Math.random().toString(36).slice(2)}.html`);
+		await execFileAsync(process.execPath, [
+			'scripts/benchmark-sql-result-grid.mjs',
+			'--emit-page',
+			page,
+			'--renderer',
+			'zeus',
+			'--zeus-bundle',
+			bundle,
+			...args
+		]);
+		return await readFile(page, 'utf8');
+	};
+	try {
+		await (await import('node:fs/promises')).writeFile(bundle, 'export const x = 1;\n', 'utf8');
+		await (await import('node:fs/promises')).writeFile(css, '.zw-cell { white-space: nowrap; }\n', 'utf8');
+
+		// Default: byte-for-byte the historical inline-CSS page, no product block.
+		const withoutCss = await emitPage();
+		assert.ok(!withoutCss.includes('data-nyala-product-css'));
+
+		// Explicit: the real stylesheet is inlined into a marked style block.
+		const withCss = await emitPage('--zeus-css', css);
+		assert.match(withCss, /data-nyala-product-css/);
+		assert.ok(withCss.includes('.zw-cell { white-space: nowrap; }'));
+
+		// A named stylesheet that does not exist must fail closed rather than
+		// silently measuring the inline block under a product-CSS label.
+		await assert.rejects(() => emitPage('--zeus-css', join(root, 'missing.css')), /Unable to load Zeus product CSS/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('webdriver evidence records which stylesheet the page carried', async () => {
+	const source = await import('node:fs/promises').then(fs =>
+		fs.readFile(new URL('./benchmark-sql-result-grid-webdriver.mjs', import.meta.url), 'utf8')
+	);
+	// Inline-CSS evidence and product-CSS evidence must be distinguishable from
+	// the evidence file alone, including the exact bytes that were measured.
+	assert.match(source, /zeusCss: zeusCss/);
+	assert.match(source, /mode: 'product'/);
+	assert.match(source, /mode: 'inline'/);
+	assert.match(source, /sha256: await sha256File\(zeusCss\)/);
+	// The stylesheet must be forwarded to the emitted page, not just recorded.
+	assert.match(source, /emitArgs\.push\('--zeus-css', zeusCss\)/);
+	// Fail closed before any run starts.
+	assert.match(source, /Unable to load Zeus product CSS at/);
+});
+
+test('platform workflow can measure the real product stylesheet', async () => {
+	const source = await import('node:fs/promises').then(fs =>
+		fs.readFile(new URL('../.github/workflows/sql-result-grid-platform.yml', import.meta.url), 'utf8')
+	);
+	assert.match(source, /zeus_css_package_version:/);
+	// The stylesheet has to be the one shipped by the measured version, and it has
+	// to reach both platform jobs.
+	assert.match(source, /@zeus-web\/themes@\$css_version/);
+	assert.match(source, /zeus-product\.css/);
+	assert.match(source, /CSS_ARGS="--zeus-css/);
+	assert.match(source, /\$cssArgs = @\('--zeus-css', \$cssFile\)/);
+	// A product-CSS run measures a different system than the admission contract
+	// describes, so it must stay out of the gate alongside the other diagnostics.
+	const gateGuards =
+		source.match(
+			/inputs\.zeus_package_version == '' && inputs\.zeus_variant == '' && inputs\.zeus_css_package_version == ''/g
+		) ?? [];
+	assert.equal(gateGuards.length, 2, 'both the merge and the gate must skip product-CSS runs');
+});

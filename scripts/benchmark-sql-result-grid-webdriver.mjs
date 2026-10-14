@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync as exists } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -130,6 +131,11 @@ const instrumentBaseline = String(cli['instrument-baseline'] ?? 'false') === 'tr
 const outputPath = resolve(cli.output ?? defaultOutput);
 const screenshotDir = resolve(cli['screenshot-dir'] ?? join(repositoryRoot, 'platform-screenshots'));
 const zeusBundle = cli['zeus-bundle'] ?? '/tmp/nyala-zeus-audit/data-grid-bundle.js';
+// --zeus-css <path> loads the real zeus-ui stylesheet into the benchmark page.
+// The published data-grid bundle ships no CSS, so without this the page's inline
+// block is the only styling under test and any CSS candidate stays unmeasurable.
+// Omitting it keeps the historical inline-CSS page byte-for-byte reproducible.
+const zeusCss = cli['zeus-css'] ?? process.env.NYALA_ZEUS_CSS ?? null;
 // 交错采集模式：--zeus-variant <id>=<path>[,<id>=<path>] 让同一次 WebView 会话在同一段
 // 宿主状态下交替测量多个 Zeus bundle 变体。这是对抗 GitHub-hosted runner 之间数十
 // 个百分点宿主漂移的唯一可靠手段，因为漂移会同时作用于两个变体。
@@ -153,6 +159,9 @@ if (!appBinary && !['safari', 'edge'].includes(browser)) {
 }
 if (appBinary && !['macos', 'windows'].includes(platform)) {
 	throw new Error(`--platform must be macos or windows for embedded evidence, got ${platform || 'empty'}`);
+}
+if (zeusCss && !(await exists(resolve(zeusCss)))) {
+	throw new Error(`Unable to load Zeus product CSS at ${zeusCss}`);
 }
 
 await run();
@@ -193,6 +202,19 @@ async function run() {
 		if (appBinary) provenance = { ...provenance, binarySha256: await sha256File(appBinary) };
 		if (selectedRenderers.includes('zeus')) {
 			provenance = { ...provenance, zeusBundleSha256: await sha256File(zeusBundle) };
+			// Record which stylesheet the page actually carried. A reader must be able
+			// to tell inline-CSS evidence from product-CSS evidence without trusting
+			// the run that produced it.
+			provenance = {
+				...provenance,
+				zeusCss: zeusCss
+					? {
+							mode: 'product',
+							path: resolve(zeusCss),
+							sha256: await sha256File(zeusCss)
+						}
+					: { mode: 'inline' }
+			};
 		}
 		if (interleaved) {
 			provenance = {
@@ -223,6 +245,7 @@ async function run() {
 				'--zeus-bundle',
 				bundle
 			];
+			if (zeusCss) emitArgs.push('--zeus-css', zeusCss);
 			if (selectedRenderers.includes('zeus')) emitArgs.push('--require-zeus', 'true');
 			execFileSync(process.execPath, emitArgs, { stdio: 'inherit' });
 			pages.set(name, pagePath);
