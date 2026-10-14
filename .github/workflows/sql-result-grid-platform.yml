@@ -337,13 +337,17 @@ jobs:
         run: |
           $variantArgs = @()
           if ('${{ inputs.zeus_variant }}' -ne '') {
-            $variantArgs = @("--zeus-variant", "pinned=$env:RUNNER_TEMP\nyala-zeus-audit\data-grid-bundle.js")
+            # The parser takes a single comma-separated token, so the whole list
+            # must be one argument. Passing --zeus-variant and its value as two
+            # argv entries makes the value look like an unexpected argument.
+            $variantList = @("pinned=$env:RUNNER_TEMP\nyala-zeus-audit\data-grid-bundle.js")
             foreach ($pair in ('${{ inputs.zeus_variant }}' -split ';')) {
               if (-not $pair) { continue }
               $id = ($pair -split '=', 2)[0]
               if (-not $id) { continue }
-              $variantArgs += "$id=$env:RUNNER_TEMP\nyala-zeus-audit\variant-$id.js"
+              $variantList += "$id=$env:RUNNER_TEMP\nyala-zeus-audit\variant-$id.js"
             }
+            $variantArgs = @("--zeus-variant", ($variantList -join ','))
           }
           node scripts/benchmark-sql-result-grid-webdriver.mjs `
             --app-binary "$env:GITHUB_WORKSPACE\target\debug\sql-studio-next.exe" `
