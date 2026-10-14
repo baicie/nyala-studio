@@ -62,6 +62,7 @@ test('observer-free trace validator accepts ordered renderer timing segments', (
 		correlation: SQL_RESULT_GRID_SEGMENT_TRACE_CORRELATION,
 		instrumentation: SQL_RESULT_GRID_SEGMENT_TRACE_INSTRUMENTATION,
 		observerFree: true,
+		nativeScrollEvent: 'observed',
 		domObserverFree: true,
 		diagnosticsCallback: true,
 		measureNodeChurn: false,
@@ -79,11 +80,12 @@ test('observer-free trace validator rejects node-churn instrumentation', () => {
 		correlation: SQL_RESULT_GRID_SEGMENT_TRACE_CORRELATION,
 		instrumentation: SQL_RESULT_GRID_SEGMENT_TRACE_INSTRUMENTATION,
 		observerFree: true,
+		nativeScrollEvent: 'observed',
 		domObserverFree: true,
 		diagnosticsCallback: true,
 		measureNodeChurn: true,
 		maximumOffset: 1000,
-		segments: [],
+		segments: [segment('sample', 0, 2)],
 		diagnostics: { commits: [] }
 	};
 	assert.throws(() => validateObserverFreeSegmentTraceSnapshot(snapshot), /observer-free flags/);
@@ -101,6 +103,7 @@ test('observer-free trace validator accepts renderers without diagnostics callba
 		correlation: SQL_RESULT_GRID_SEGMENT_TRACE_CORRELATION,
 		instrumentation: SQL_RESULT_GRID_SEGMENT_TRACE_INSTRUMENTATION,
 		observerFree: true,
+		nativeScrollEvent: 'observed',
 		domObserverFree: true,
 		diagnosticsCallback: false,
 		measureNodeChurn: false,
@@ -152,6 +155,7 @@ function workbenchTrace() {
 			correlation: SQL_RESULT_GRID_SEGMENT_TRACE_CORRELATION,
 			instrumentation: SQL_RESULT_GRID_SEGMENT_TRACE_INSTRUMENTATION,
 			observerFree: true,
+			nativeScrollEvent: 'not-emitted',
 			domObserverFree: true,
 			diagnosticsCallback: true,
 			measureNodeChurn: false,
@@ -188,6 +192,7 @@ test('observer-free WorkbenchTable trace rejects intervals outside the handler a
 test('observer-free Zeus trace still rejects stages that overlap its completed handler', () => {
 	const snapshot = workbenchTrace();
 	snapshot.segments = [segment('preposition', null, 1), segment('sample', 0, 2), segment('reset', null, 3)];
+	snapshot.nativeScrollEvent = 'observed';
 	snapshot.diagnostics = { commits: [commit(1), commit(2), commit(3)] };
 	snapshot.diagnostics.commits[0].handlerEndTime = snapshot.diagnostics.commits[0].rangeStartTime + 1;
 	assert.throws(() => validateObserverFreeSegmentTraceSnapshot(snapshot), /renderer timing is invalid/);

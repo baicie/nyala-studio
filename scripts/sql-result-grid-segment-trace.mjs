@@ -179,6 +179,11 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 		timingClock: 'performance-now',
 		correlation: 'scroll-input-handler-range-commit-visible-paint-v1',
 		instrumentation: 'observer-free-v1',
+		// WorkbenchTable's AbstractScrollableElement drives an internal Scrollable
+		// that never assigns DOM scrollTop, so no native scroll event fires and
+		// eventDispatchTime is null on every one of its segments. Recording that
+		// structurally stops analysis code from treating the null as a number.
+		nativeScrollEvent: segments.some(segment => segment.eventDispatchTime !== null) ? 'observed' : 'not-emitted',
 		observerFree: true,
 		domObserverFree: true,
 		diagnosticsCallback: Boolean(diagnostics),
@@ -225,6 +230,18 @@ export function validateObserverFreeSegmentTraceSnapshot(snapshot, options = {})
 	if (snapshot.timingClock !== 'performance-now') fail('timing clock is invalid.');
 	if (snapshot.correlation !== SQL_RESULT_GRID_SEGMENT_TRACE_CORRELATION) fail('correlation is invalid.');
 	if (snapshot.instrumentation !== SQL_RESULT_GRID_SEGMENT_TRACE_INSTRUMENTATION) fail('instrumentation is invalid.');
+	if (!['observed', 'not-emitted'].includes(snapshot.nativeScrollEvent))
+		fail('native scroll event disposition is invalid.');
+	if ((snapshot.nativeScrollEvent === 'observed') !== snapshot.segments.some(s => s.eventDispatchTime !== null))
+		fail('native scroll event disposition disagrees with the segments.');
+	// A renderer that emits native scroll events must record them on every
+	// sample segment, otherwise dispatchLag would silently mix observed and
+	// unobserved samples within one renderer.
+	if (
+		snapshot.nativeScrollEvent === 'observed' &&
+		snapshot.segments.some(s => s.phase === 'sample' && s.eventDispatchTime === null)
+	)
+		fail('observed native scroll events are missing from a sample segment.');
 	if (
 		snapshot.observerFree !== true ||
 		snapshot.domObserverFree !== true ||
