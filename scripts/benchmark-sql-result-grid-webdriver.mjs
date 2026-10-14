@@ -61,6 +61,7 @@ if (cli.help === 'true') {
   --workflow-run-attempt <n> GitHub Actions attempt provenance
   --script-timeout-ms <n> WebDriver script budget (default: 120000)
   --run-budget-ms <n> Whole-platform-run budget (default: 1800000)
+  --navigation-timeout-ms <n>  Per-navigation WebDriver deadline (default: 30000)
   --trace-profile <true|false>  Record observer-free scroll timing segments
   --instrument-baseline <true|false>  Instrument the baseline renderer so commit
     work is recorded. Disables floorOnly, which means the presentation floor and
@@ -98,6 +99,14 @@ const RESULT_POLL_EVAL_TIMEOUT_MS = 10_000;
 const RESULT_CHANNEL_GRACE_MS = 15_000;
 const OBSERVE_EVAL_TIMEOUT_MS = 15_000;
 const runBudgetMs = parseBoundedPositiveInteger(cli['run-budget-ms'] ?? '1800000', '--run-budget-ms', 5_400_000);
+// A navigation that cannot complete inside this budget has lost the host WebView,
+// not merely been slow. Keeping it explicit lets a degraded platform fail fast
+// and lets session recycling start well before the round budget is gone.
+const navigationTimeoutMs = parseBoundedPositiveInteger(
+	cli['navigation-timeout-ms'] ?? '30000',
+	'--navigation-timeout-ms',
+	300_000
+);
 // A round can fail for reasons that are not renderer behaviour: the host can
 // miss a presentation opportunity inside the fixed per-sample budget, or a
 // degraded WebView can drop a navigation. Those failures are real but they are
@@ -146,6 +155,16 @@ async function run() {
 	// even when the slot never produced a usable record.
 	const retriedRounds = [];
 	let sessionId;
+	// Session recycling replaces the id, so every navigation must read it live
+	// rather than close over one value for the whole run.
+	const liveSession = {
+		get sessionId() {
+			return sessionId;
+		},
+		set sessionId(value) {
+			sessionId = value;
+		}
+	};
 	let temporaryRoot;
 	let appHost;
 	let benchmarkServer;
@@ -194,8 +213,8 @@ async function run() {
 		const session = appBinary
 			? await createEmbeddedWebdriverSession(driverUrl, { timeoutMs: startupTimeoutMs })
 			: await createExternalSession(driverUrl, browser);
-		sessionId = session.sessionId;
-		await setSessionTimeouts(driverUrl, sessionId, scriptTimeoutMs);
+		liveSession.sessionId = session.sessionId;
+		await setSessionTimeouts(driverUrl, liveSession.sessionId, scriptTimeoutMs);
 		if (appBinary) identity = identifyEmbeddedWebview(session.capabilities, platform);
 		const benchmarkPlan = createBalancedBenchmarkPlan(selectedWorkloads, selectedRenderers, repeat);
 		const benchmarkStartedAt = Date.now();
@@ -240,6 +259,14 @@ async function run() {
 					attemptScreenshots = [];
 					attemptFailures.push(error instanceof Error ? error.message : String(error));
 					if (attempt >= maxRoundAttempts) {
+						if (attempt > 1) recordRoundRetryHistory(attempt);
+						throw error;
+					}
+					// One navigation failure can be a slow page, but two in a row on
+					// the same session mean the WebView stopped servicing requests,
+					// which re-navigating cannot fix. Start a fresh WebView before the
+					// remaining attempts are spent on a dead one.
+					if (isNavigationFailure(error) && attempt >= 2 && !(await recycleSessionAfterNavigationFailures(liveSession))) {
 						if (attempt > 1) recordRoundRetryHistory(attempt);
 						throw error;
 					}
@@ -349,7 +376,13 @@ async function run() {
 			const url = `${benchmarkServer.url}?${new URLSearchParams(query)}`;
 			const stageStartedAt = Date.now();
 			let stage = 'navigate';
-			await webdriverRequest(driverUrl, `/session/${sessionId}/url`, 'POST', { url });
+			await webdriverRequest(
+				driverUrl,
+				`/session/${sessionId}/url`,
+				'POST',
+				{ url },
+				{ timeoutMs: navigationTimeoutMs }
+			);
 			await waitForNavigation(driverUrl, sessionId, url);
 			const afterNavigateMs = Date.now() - stageStartedAt;
 			stage = 'calibrate';
@@ -607,6 +640,54 @@ async function createExternalSession(baseUrl, browserName) {
 		throw new Error(`WebDriver did not return a session id: ${JSON.stringify(payload)}`);
 	}
 	return { sessionId };
+}
+
+async function openBenchmarkSession() {
+	return appBinary
+		? await createEmbeddedWebdriverSession(driverUrl, { timeoutMs: startupTimeoutMs })
+		: await createExternalSession(driverUrl, browser);
+}
+
+/**
+ * Whether a navigation failed on the session URL, either by exceeding its
+ * deadline or by returning an error response. One failure can be a slow page,
+ * so this only justifies recycling once the same session has already failed
+ * once; two failures in a row mean the WebView is not worth another attempt.
+ */
+function isNavigationFailure(error) {
+	if (!(error instanceof Error)) return false;
+	return /WebDriver POST \S+\/url (?:request failed \(timeout \d+ms\)|failed:)/.test(error.message);
+}
+
+/**
+ * Navigation failures are not always transient. A renderer that leaves a very
+ * large DOM behind (the 10k native table builds roughly 510k nodes) can drive
+ * the host WebView into a state where every later navigation in the same
+ * session fails. Re-navigating that session cannot recover it, so the run has
+ * to start a fresh WebView rather than spend its remaining attempts on a dead
+ * one.
+ *
+ * @param {{sessionId?: string}} session the run's live session state; updated in place.
+ * @returns {Promise<boolean>} whether a fresh session is now in use.
+ */
+async function recycleSessionAfterNavigationFailures(session) {
+	const staleSessionId = session.sessionId;
+	session.sessionId = undefined;
+	try {
+		if (staleSessionId) {
+			await webdriverRequest(driverUrl, `/session/${staleSessionId}`, 'DELETE').catch(() => undefined);
+		}
+		const fresh = await openBenchmarkSession();
+		session.sessionId = fresh.sessionId;
+		await setSessionTimeouts(driverUrl, fresh.sessionId, scriptTimeoutMs);
+		process.stderr.write(`${label}: recycled the WebDriver session after repeated navigation failures.\n`);
+		return true;
+	} catch (error) {
+		process.stderr.write(
+			`${label}: could not recycle the WebDriver session after navigation failures: ${error instanceof Error ? error.message : String(error)}\n`
+		);
+		return false;
+	}
 }
 
 async function calibrateCssViewport(baseUrl, sessionId, workload, embedded) {

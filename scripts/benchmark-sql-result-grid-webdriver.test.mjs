@@ -525,6 +525,80 @@ for (const { name, expectedAttempts, navigationDelayMs, runBudgetMs } of [
 		}
 	});
 
+test('repeated navigation timeouts recycle the WebDriver session', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-webdriver-recycle-test-'));
+	const navigationTimeoutMs = 300;
+	let issuedSessions = 0;
+	let deletedSessions = 0;
+	let currentSession = null;
+	let navigationsOnCurrentSession = 0;
+	const server = createServer((request, response) => {
+		response.setHeader('content-type', 'application/json');
+		if (request.method === 'POST' && request.url === '/session') {
+			issuedSessions += 1;
+			currentSession = `session-${issuedSessions}`;
+			response.end(JSON.stringify({ value: { sessionId: currentSession } }));
+		} else if (request.method === 'DELETE' && request.url.startsWith('/session/')) {
+			deletedSessions += 1;
+			response.end(JSON.stringify({ value: null }));
+		} else if (request.method === 'POST' && /^\/session\/[^/]+\/url$/.test(request.url)) {
+			navigationsOnCurrentSession += 1;
+			// The first session stalls on every navigation, the way a WebView
+			// degrades after a very large DOM. Later sessions stall once and then
+			// recover, so the run can finish on the recycled session.
+			if (issuedSessions === 1 || navigationsOnCurrentSession === 1) {
+				// Expire the way a real stalled navigation does: hold the response
+				// past the client deadline so the client aborts on its own timeout.
+				setTimeout(() => {
+					if (!response.writableEnded) response.writeHead(503).end();
+				}, navigationTimeoutMs * 2);
+				return;
+			}
+			response.end(JSON.stringify({ value: null }));
+		} else {
+			response.end(JSON.stringify({ value: null }));
+		}
+	});
+	await new Promise(resolveListen => server.listen(0, '127.0.0.1', resolveListen));
+	try {
+		await assert.rejects(
+			execFileAsync(process.execPath, [
+				'scripts/benchmark-sql-result-grid-webdriver.mjs',
+				'--browser',
+				'safari',
+				'--driver-url',
+				`http://127.0.0.1:${server.address().port}`,
+				'--renderer',
+				'native',
+				'--workload',
+				'narrow-panel',
+				'--repeat',
+				'1',
+				'--max-round-attempts',
+				'3',
+				'--navigation-timeout-ms',
+				String(navigationTimeoutMs),
+				'--output',
+				join(root, 'evidence.json'),
+				'--screenshot-dir',
+				join(root, 'screenshots')
+			])
+		);
+		// The stalled session must be deleted and a fresh one opened, otherwise
+		// every remaining attempt would be spent on a WebView that no longer
+		// answers.
+		assert.ok(
+			issuedSessions >= 2,
+			`expected a new session, saw ${issuedSessions}`
+		);
+		assert.ok(deletedSessions >= 1, `expected the stalled session to be deleted, saw ${deletedSessions}`);
+	} finally {
+		server.closeAllConnections();
+		await new Promise(resolveClose => server.close(resolveClose));
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test('Chromium benchmark emits a reusable page without outer document scrollbars', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'nyala-benchmark-page-test-'));
 	try {
