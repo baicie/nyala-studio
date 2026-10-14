@@ -691,6 +691,16 @@ test('platform workflow can measure a control data-grid version without scoring 
 	assert.equal(source.match(/inputs\.zeus_package_version == ''/g)?.length, 2);
 });
 
+test('interleaved runs expect one record series per variant', async () => {
+	const source = await import('node:fs/promises').then(fs =>
+		fs.readFile(new URL('benchmark-sql-result-grid-webdriver.mjs', import.meta.url), 'utf8')
+	);
+	// A variant run collects one series per variant per workload. Asserting on the
+	// un-scaled count reported a complete interleaved run as blocked.
+	assert.match(source, /const expectedRecords =[\s\S]{0,320}zeusVariants\.length \|\| 1/);
+	assert.match(source, /const complete = records\.length === expectedRecords/);
+});
+
 test('platform workflow can interleave bundle variants inside one WebView session', async () => {
 	const source = await import('node:fs/promises').then(fs =>
 		fs.readFile(new URL('../.github/workflows/sql-result-grid-platform.yml', import.meta.url), 'utf8')

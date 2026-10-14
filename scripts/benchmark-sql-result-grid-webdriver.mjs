@@ -576,7 +576,15 @@ async function run() {
 		}
 	}
 
-	const complete = records.length === selectedWorkloads.length * selectedRenderers.length * repeat;
+	// Each Zeus variant is a separate measured series, so the expected record
+	// count scales with the variant count. Without this an interleaved run collects
+	// every record correctly and is still reported as blocked.
+	const expectedRecords =
+		selectedWorkloads.length *
+		(selectedRenderers.filter(renderer => renderer !== 'zeus').length +
+			(selectedRenderers.includes('zeus') ? zeusVariants.length || 1 : 0)) *
+		repeat;
+	const complete = records.length === expectedRecords;
 	const allSuccessful = complete && records.every(record => record.status === 'ok');
 	await writeEvidence({
 		status: allSuccessful ? 'ready' : 'blocked',
