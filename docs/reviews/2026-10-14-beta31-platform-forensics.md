@@ -222,6 +222,66 @@ commit / layout 的墙钟区间并集，普通中位 / nearest-rank p95，单位
 100 个独立 run。它们不是线程 CPU 时间，不是用户速度改善比例，仍不能分解另一导航的
 正式 p95。数据保留在 `.artifacts/run38525197105/sidecar-interval-summary.json`。
 
+## 滚动区间分解：Zeus 的等待是帧相位，WorkbenchTable 的等待是残余工作
+
+正式 admission 记录本身带 `diagnosticProfile=true` 与 `floorOnly=true`，因此逐样本的
+`inputMs`、`presentationWaitMs`、`validationMs` 以及 Zeus 的 `segmentTrace` 时间戳都
+出现在正式记录里，而不是只存在于独立侧采。本节全部数字直接取自
+run `38523458804` 与 `38525197105` 的 `platform-evidence.json` 正式记录，未使用侧采聚合。
+
+先把 `inputMs` 与 `presentationWaitMs` 分开。`inputMs` 是 `scrollTop=` 赋值当期同步返回的
+墙钟时间，`presentationWaitMs` 是其后等待呈现机会的墙钟时间：
+
+| 平台 / 负载 | renderer      | input 中位 | input p95 | wait 中位 | wait p95 |
+| ----------- | ------------- | ---------: | --------: | -------: | -------: |
+| Windows 1k  | Zeus          | 0.00       | 0.10      | 15.55    | 19.20    |
+| Windows 1k  | WorkbenchTable| 6.35       | 7.90      | 8.95     | 10.60    |
+| Windows 10k | Zeus          | 0.00       | 0.10      | 15.30    | 29.00    |
+| Windows 10k | WorkbenchTable| 12.30      | 18.60     | 4.75     | 14.90    |
+| macOS 1k    | Zeus          | 1.00       | 1.00      | 22.00    | 37.00    |
+| macOS 1k    | WorkbenchTable| 9.00       | 19.00     | 9.00     | 15.00    |
+| macOS 10k   | Zeus          | 1.00       | 1.00      | 27.00    | 41.00    |
+| macOS 10k   | WorkbenchTable| 22.00      | 40.00     | 6.00     | 19.00    |
+
+两个 renderer 的 `inputMs` 相差一个数量级，这不是噪声。Zeus 在 `scrollTop=` 赋值当期几乎不
+做工作（0–1ms），WorkbenchTable 在当期同步完成渲染（6–22ms）。Zeus 的
+`segmentTrace` 把这 2–3ms 精确定位在 signal 发布与随后的同步 commit 内：Windows 10k 的
+`publish` 与 `commit` 都从 `eventDispatchTime + 0.10ms` 起、到 `+2.6ms` 止，
+`dispatch → firstVisible` 中位 2.70ms、p95 3.70ms。也就是说 Zeus 自身提交只有 2.6ms，
+且这 2.6ms 发生在 scroll 事件处理路径内，而不是被推到 rAF 之后。
+
+把这个等待按 ~16.67ms 的帧节拍量化（`pw / 16.67` 取最近帧数，残差为距该帧边界的距离）：
+
+| 平台 / 负载 | renderer      | wait 残差中位 | 等待 ≥1.5 帧的样本 |
+| ----------- | ------------- | ------------: | -----------------: |
+| Windows 1k  | Zeus          | −1.10         | 1 / 100            |
+| Windows 1k  | WorkbenchTable| −6.60         | 0 / 100            |
+| Windows 10k | Zeus          | −1.50         | 6 / 100            |
+| Windows 10k | WorkbenchTable| +4.00         | 0 / 100            |
+| macOS 1k    | Zeus          | −0.70         | 41 / 100           |
+| macOS 1k    | WorkbenchTable| −0.20         | 0 / 100            |
+| macOS 10k   | Zeus          | −0.70         | 59 / 100           |
+| macOS 10k   | WorkbenchTable| +5.00         | 1 / 100            |
+
+Zeus 的等待几乎全部落在帧边界之下（残差中位 −0.7 ~ −1.5ms），WorkbenchTable 的残差是
+正的（+4 ~ +5ms），说明后者的等待是「本帧剩余的渲染工作」而非「等下一帧」。Zeus 的中位
+延迟因此已经等于一个帧周期：Windows 10k 中位 15.4ms 对 WorkbenchTable 18.0ms，Zeus
+更快；macOS 10k 中位 28.0ms 对 29.0ms，同样更快。
+
+失败完全来自尾部分布。以帧数计，Windows 10k 的 Zeus 有 94/100 落在 1 帧、5 个落在 2 帧、
+1 个落在 28 帧；WorkbenchTable 是 77/100 落在 1 帧、22 个落在 2 帧、1 个落在 17 帧。
+macOS 10k 的 Zeus 是 40 个 1 帧、54 个 2 帧；WorkbenchTable 是 34 个 1 帧、52 个 2 帧。
+两边的极端离群（Windows 的 464ms 与 283ms、250.5ms、128.7ms）在两个 renderer 上都出现，
+不构成 Zeus 特有的缺陷； Zeus 独有的只是「1 帧 → 2 帧」这一步：把 p95 从一个帧推到
+两个帧。WorkbenchTable 用更多的 CPU（`inputMs` 12–22ms）换掉了这一步。
+
+这一分解说明 10k 的差距不是「Zeus 提交太慢」，而是「Zeus 的提交快到只能等下一个呈现
+机会，而基线在同一帧内完成」。缩短那 2.6ms 不会把它移回当前帧；只有让提交在滚动事件
+内同步完成才可能消除这一个帧的差。同时它也说明 floor 不是可以相减的同量纲余量：
+Zeus 的 15.3ms 等待与 16.7ms 的 floor 是同一个物理等待的两次测量，而不是「等待减去
+floor」后剩下的可优化空间。本节不据此修改门禁判据，也不据此宣称已定位可修复的
+生产代码路径。
+
 ## 20 对交错 A/B：未复现稳定的版本 flush 回归
 
 预先检验假设：“beta31 对相同 1k 窗口转换引入可重复的额外发布 / flush 工作”。
