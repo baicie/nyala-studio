@@ -266,3 +266,23 @@ scroll p95，因此这不是 CSS 内容本身的问题，而是原生 WKWebView 
   只能在本机 Chromium 上筛查，不能进官方门禁。
 
 这一步没有产生任何可计分的性能结论，Z1 门仍为 NO-GO。
+
+### 滚动不提交的根因：产品 CSS 的行高与 benchmark 的虚拟行高不一致
+
+run 38636251441 的错误是 `Scroll sample 3 did not commit: expected row 881,
+observed -1`，即滚动到位后没有虚拟行出现。这不是原生 runner 的问题，而是布局口径
+冲突：`components.css` 给 `data-grid-row` 与 `data-grid-header-cell` 声明
+`min-height: 2.5rem`（40px），而 benchmark 按 `ROW_HEIGHT = 28` 排布虚拟行、按
+header 28px 计算偏移。行实际比假设高 43%，滚动换算落在两行之间，于是取不到行。
+
+之前一直没暴露，是因为产品 CSS 从未真正加载过——被测 bundle 里 CSS 文件数为 0。
+本机 Chromium 在加载产品 CSS 后同样能跑通但行高被改写，只是 Chromium 的滚动采样恰好
+落在行内，而原生 runner 更严格。
+
+修复（`b88b7bc2`）：几何块把 row / header-cell 的 `min-height` 钉回 benchmark 口径，
+header 钉回 28px，并补上 viewport 的 `--zw-data-grid-height`。本机以已发布的 beta.32
+样式表复测 10k-x-50 与 wide-columns，zeus 与 workbench-table 全部跑完且 p95 正常。
+
+这条再次印证本记录的主线：**每一次「性能异常」都要先问测量装置是否还成立**。
+CSS 装置从「不存在」到「存在但嵌套」到「存在但行高冲突」，两次失败都发生在装置层，
+都与 Zeus 的性能无关。
