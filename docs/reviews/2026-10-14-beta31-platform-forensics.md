@@ -386,6 +386,31 @@ private _setState(newState: ScrollState, inSmoothScrolling: boolean): void {
 优化，需要独立评估其与原生滚动语义、滚动惯性、focus 保持的交互，不能在没有实验数据前
 直接落地。
 
+### 公平性核实：两侧做的是同一份滚动工作
+
+上面把 WBT 的 12–22ms `inputMs` 归因于同步派发，需要排除「两侧工作量不同」这一替代解释。
+两个平台各负载逐项核对：
+
+| 项 | Zeus | WorkbenchTable |
+| --- | ----: | -------------: |
+| 10k 每次样本推进行数中位 | 5549 | 5549 |
+| 10k 可见行索引范围 | 0–9987 | 0–9987 |
+| 10k 渲染行数 | 23 | 14 |
+| 10k DOM 节点数 | 405 | 914 |
+| 样本全部通过提交校验 | 是 | 是 |
+
+位移量、可见行范围、渲染行数与 DOM 规模同量级，位移轨迹逐样本一致
+（`38525197105` 两平台均如此），且 100% 样本通过 `rowDelta` 与 offset 容差校验。因此两侧
+渲染的行集合规模相当，`inputMs` 的差异不能用「WBT 渲染了更多行」解释。
+
+有一处真实的不对称但不影响上述结论：WBT 的 `scroll` 是 entry 层适配器（一个带
+getter/setter 的普通对象，setter 走 `table.scrollTop` 并做 canonical↔internal 偏移换算），
+而 Zeus 的 `scroll` 是真实 DOM 元素（`[data-slot="data-grid-viewport"]`），赋值即原生
+`scrollTop`。两侧 `scrollViewportHeight` 因此相差 13px（Zeus 385、WBT 372），最大偏移
+相差 13（279643 对 279656），偏移换算把两者对齐到同一 canonical 空间。也就是说 harness
+对两侧发的是语义等价的滚动请求，差异只在「谁来驱动这次提交」：一侧由框架的同步状态机
+驱动，一侧由 DOM scroll 事件驱动。这正是本节要测量的对象，而不是测量缺陷。
+
 ## 20 对交错 A/B：未复现稳定的版本 flush 回归
 
 预先检验假设：“beta31 对相同 1k 窗口转换引入可重复的额外发布 / flush 工作”。
