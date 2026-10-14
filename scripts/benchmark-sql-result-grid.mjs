@@ -854,6 +854,7 @@ async function createBenchmarkPage({
 	return `<!doctype html>
 <meta charset="utf-8">
 <title>Nyala SQL result grid benchmark</title>
+${productCssTag}
 <style>
 html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #1e1e1e; color: #ddd; font: 12px sans-serif; }
 #root { width: 100vw; height: 100vh; overflow: hidden; }
@@ -872,13 +873,13 @@ th { position: sticky; top: 0; background: #2d2d2d; }
 .nyala-workbench-table-host .monaco-table-th { box-sizing: border-box; height: 28px; padding: 4px 8px; border: 1px solid #444; background: #2d2d2d; color: #ddd; }
 .nyala-workbench-table-host .monaco-table-td { box-sizing: border-box; height: 28px; padding: 4px 8px; border: 1px solid #444; color: #ddd; }
 zw-data-grid { display: block; width: 100%; height: calc(100vh - 20px); }
+zw-data-grid { --zw-data-grid-height: 100%; }
 zw-data-grid [data-slot="data-grid-viewport"] { position: relative; box-sizing: border-box; width: 100%; height: 100%; overflow: auto; contain: strict; }
 zw-data-grid [data-slot="data-grid-header"] { position: sticky; top: 0; z-index: 2; min-height: 28px; background: #2d2d2d; }
 zw-data-grid [data-slot="data-grid-spacer"] { position: relative; }
 zw-data-grid [data-slot="data-grid-body"] { position: absolute; top: 28px; left: 0; }
 zw-data-grid [data-slot="data-grid-row"] { position: absolute; left: 0; height: 28px; }
 	zw-data-grid [data-slot="data-grid-header-cell"], zw-data-grid [data-slot="data-grid-cell"] { box-sizing: border-box; min-width: 0; height: 28px; padding: 4px 8px; border: 1px solid #444; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-	${productCssTag}
 	#benchmark-run-marker { position: fixed; z-index: 2147483647; pointer-events: none; image-rendering: pixelated; }
 	</style>
 ${workbenchTableCssTag}

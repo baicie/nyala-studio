@@ -748,6 +748,16 @@ test('benchmark page loads product CSS only when a stylesheet is named', async (
 		assert.match(withCss, /data-nyala-product-css/);
 		assert.ok(withCss.includes('.zw-cell { white-space: nowrap; }'));
 
+		// The product block must be a sibling <style>, not nested inside the page's
+		// own style element. A nested <style> makes the browser swallow every rule
+		// after it, which silently deletes the benchmark's geometry scaffolding and
+		// fails every renderer on missing document geometry.
+		const nested = withCss.indexOf('data-nyala-product-css');
+		const scaffolding = withCss.indexOf('#benchmark-run-marker');
+		assert.ok(nested > 0 && nested < scaffolding, 'product CSS must precede the geometry styles');
+		const productBlock = withCss.slice(withCss.lastIndexOf('<style', nested), withCss.indexOf('</style>', nested));
+		assert.ok(!productBlock.includes('#benchmark-run-marker'), 'geometry rules must not live inside the product block');
+
 		// A named stylesheet that does not exist must fail closed rather than
 		// silently measuring the inline block under a product-CSS label.
 		await assert.rejects(() => emitPage('--zeus-css', join(root, 'missing.css')), /Unable to load Zeus product CSS/);
