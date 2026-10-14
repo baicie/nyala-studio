@@ -27,6 +27,9 @@ const RECORD_METRICS = ['scrollMedianMs', 'rafToTaskMs', 'commitMs', 'textChurnM
 // only collapses to `scrollP95Ms`/`scrollMaxMs`.
 const METRICS = ['scrollP95Ms', 'scrollMaxMs', 'presentationFloorP95Ms'];
 
+/** Control-renderer scrollP95Ms movement above this is treated as run drift. */
+const CONTROL_DRIFT_REPORT_PERCENT = 10;
+
 const cli = parseArgs(process.argv.slice(2));
 if (!cli.baseline || !cli.candidate) {
 	throw new Error('Usage: compare-sql-result-grid-platform-evidence.mjs --baseline <file> --candidate <file> [--json]');
@@ -145,6 +148,7 @@ function compare(baselineFile, candidateFile) {
 			`At least one run is diagnostic only (admissionGrade=false: baseline=${base.admissionGrade}, candidate=${cand.admissionGrade}); it must not be scored for gate admission.`
 		);
 	}
+	caveats.push(...controlRendererCaveats(rows));
 	for (const file of [baselineFile, candidateFile]) {
 		for (const limitation of file.value.limitations ?? []) {
 			caveats.push(`[${file.path}] ${limitation}`);
@@ -180,6 +184,45 @@ function medianOf(summaryEntry, metric) {
 	if (source && typeof source === 'object' && typeof source.median === 'number') return source.median;
 	if (typeof source === 'number') return source;
 	return null;
+}
+
+/**
+ * The native and workbench-table renderers do not load the Zeus bundle, so any
+ * movement in their metrics is host or runner drift, not a Zeus fix effect. If
+ * the controls moved as much as Zeus did, the Zeus delta cannot be attributed
+ * to the change under test and the run pair is not usable as evidence.
+ */
+function controlRendererCaveats(rows) {
+	const caveats = [];
+	const byWorkload = new Map();
+	for (const row of rows) {
+		const renderer = row.key.slice(row.key.lastIndexOf('/') + 1);
+		const workload = row.key.slice(0, row.key.lastIndexOf('/'));
+		if (renderer === 'zeus') continue;
+		const change = row.metrics?.scrollP95Ms?.changePercent;
+		if (!Number.isFinite(change)) continue;
+		const bucket = byWorkload.get(workload) ?? [];
+		bucket.push({ renderer, change });
+		byWorkload.set(workload, bucket);
+	}
+	for (const row of rows) {
+		if (!row.key.endsWith('/zeus')) continue;
+		const workload = row.key.slice(0, row.key.lastIndexOf('/'));
+		const zeusChange = row.metrics?.scrollP95Ms?.changePercent;
+		if (!Number.isFinite(zeusChange)) continue;
+		const controls = byWorkload.get(workload) ?? [];
+		for (const control of controls) {
+			// The controls do not load the Zeus bundle, so any movement at all is
+			// run-level drift. Report it whenever it is large enough to matter
+			// next to the Zeus delta being claimed.
+			if (Math.abs(control.change) >= CONTROL_DRIFT_REPORT_PERCENT) {
+				caveats.push(
+					`${workload}: control renderer ${control.renderer} scrollP95Ms moved ${control.change}% while Zeus moved ${zeusChange}%. The control does not load the Zeus bundle, so this is run-level host or runner drift and it bounds how much of the Zeus delta can be attributed to the bundle change.`
+				);
+			}
+		}
+	}
+	return caveats;
 }
 
 function median(values) {

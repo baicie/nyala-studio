@@ -168,3 +168,60 @@ test('ignores records that did not complete', async () => {
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+test('flags control-renderer movement as run drift', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-compare-evidence-'));
+	try {
+		function withSummary(extra) {
+			return evidence({
+				summary: {
+					'10k-x-50/zeus': { count: 5, scrollP95Ms: { median: extra.zeus, available: true } },
+					'10k-x-50/native': { count: 5, scrollP95Ms: { median: extra.native, available: true } }
+				}
+			});
+		}
+		const report = await run(
+			root,
+			withSummary({ zeus: 50, native: 50 }),
+			evidence({
+				provenance: { workflowRunId: 2, zeusBundleSha256: 'bbb' },
+				summary: {
+					'10k-x-50/zeus': { count: 5, scrollP95Ms: { median: 20, available: true } },
+					'10k-x-50/native': { count: 5, scrollP95Ms: { median: 25, available: true } }
+				}
+			})
+		);
+		assert.ok(
+			report.caveats.some(
+				(caveat) => caveat.includes('control renderer native') && caveat.includes('run-level host or runner drift')
+			)
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('stays quiet when control renderers hold still', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-compare-evidence-'));
+	try {
+		const report = await run(
+			root,
+			evidence({
+				summary: {
+					'10k-x-50/zeus': { count: 5, scrollP95Ms: { median: 50, available: true } },
+					'10k-x-50/native': { count: 5, scrollP95Ms: { median: 50, available: true } }
+				}
+			}),
+			evidence({
+				provenance: { workflowRunId: 2, zeusBundleSha256: 'bbb' },
+				summary: {
+					'10k-x-50/zeus': { count: 5, scrollP95Ms: { median: 20, available: true } },
+					'10k-x-50/native': { count: 5, scrollP95Ms: { median: 50, available: true } }
+				}
+			})
+		);
+		assert.equal(report.caveats.some((caveat) => caveat.includes('control renderer')), false);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
