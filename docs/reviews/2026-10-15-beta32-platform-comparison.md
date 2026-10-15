@@ -434,3 +434,18 @@ post-rAF task：10k 原生约 48.5ms、API 41ms，wide 原生约 52ms、API 43ms
 scroll p95 完全未改善：10k 两者约 34ms，wide 两者约 35ms。trace 与 primary 是不同
 阶段的观测，不可用前者的下降冒充后者收益。此本机 run 的时序也不代表官方 60Hz 门。
 因此不改门禁输入、不修改生产 API、不发布候选；输入路径假设仍未解释 primary 门。
+
+## 修正：本机约 33ms floor 不能用于淘汰官方候选
+
+复核 z1-block-native 与 z1-input-native 的原始 diagnostics.presentationFloor 后发现，
+这些本机 WKWebView run 的 floor 中位数约 33ms；primary 100/100 样本均在第一次
+presentation opportunity 结束，totalMs 大部分集中在 33–34ms。官方 38667024446 的
+macOS floor 为 17ms、Windows 约 15.5ms。因此此前因本机 primary p95 不下降便“淘汰”
+block 候选的表述过强，应撤回：它只能说明该本机呈现节奏下没有观测到收益，不能证明
+在官方平台上无效。也不能简单将 floor 等同于物理屏幕刷新率。
+
+增加明确 opt-in 的 zeus_cell_layout_variant，要求已有交错变体且 id 必须匹配，否则
+fail closed。它向该变体的真实 JS bundle 附加带 marker 的 cell 样式，bundle SHA 因此
+覆盖候选 CSS 字节；默认路径无变化，交错 run 仍不 admission。相同 beta.32 两变体
+用于单独评估 cell 布局机制，visualProbe.cellTextLayout 核对原生平台上的实际 computed
+style 与文本位置。只有官方双平台结果才能决定是否继续产品实现，不能预先宣称收益。

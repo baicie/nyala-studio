@@ -35,6 +35,10 @@ on:
         description: 'Measure with the real @zeus-web/themes components.css from this version instead of the benchmark inline stylesheet. Empty keeps the historical inline-CSS page. Diagnostic evidence, never gated.'
         required: false
         type: string
+      zeus_cell_layout_variant:
+        description: 'Diagnostic only: append block + centered cell CSS to this requested variant id. Requires zeus_variant; never admission.'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -82,7 +86,13 @@ jobs:
 
       - name: Install Zeus only in a temporary directory
         shell: bash
+        env:
+          CELL_LAYOUT_VARIANT: ${{ inputs.zeus_cell_layout_variant }}
         run: |
+          if [ -n "$CELL_LAYOUT_VARIANT" ] && [ -z "${{ inputs.zeus_variant }}" ]; then
+            echo 'Cell layout experiment requires an interleaved variant.' >&2
+            exit 1
+          fi
           printf '{"name":"nyala-zeus-audit","private":true}\n' > "$AUDIT_DIR/package.json"
           version="${{ inputs.zeus_package_version || '0.1.0-beta.32' }}"
           echo "Z1_AUDIT_EXPECTED_VERSION=$version" >> "$GITHUB_ENV"
@@ -114,9 +124,17 @@ jobs:
               "$dir/node_modules/.bin/esbuild" "$dir/node_modules/@zeus-web/data-grid/dist/wc/auto.js" \
                 --bundle --format=iife --platform=browser --minify --legal-comments=none \
                 --outfile="$AUDIT_DIR/variant-$id.js"
+              if [ -n "$CELL_LAYOUT_VARIANT" ] && [ "$id" = "$CELL_LAYOUT_VARIANT" ]; then
+                node --input-type=module -e 'import {readFile,writeFile} from "node:fs/promises"; import {appendBlockCellLayout} from "./scripts/sql-result-grid-cell-layout-variant.mjs"; const p=process.argv[1]; await writeFile(p,appendBlockCellLayout(await readFile(p,"utf8")));' "$AUDIT_DIR/variant-$id.js"
+                cell_layout_applied=true
+              fi
               npm view "@zeus-web/data-grid@$version" version --json > "$AUDIT_DIR/variant-$id.registry.json"
             done
             IFS=$old_ifs
+          fi
+          if [ -n "$CELL_LAYOUT_VARIANT" ] && [ "${cell_layout_applied:-false}" != true ]; then
+            echo 'Requested cell layout variant was not built.' >&2
+            exit 1
           fi
 
           # The published data-grid bundle ships no stylesheet, so the benchmark
