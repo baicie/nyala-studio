@@ -361,3 +361,18 @@ macOS 的 0 受计时精度限制。Zeus 的差异主要在 rect 读取阶段，
 recalc 与 layout，也没有证明哪个具体生产节点造成代价。下一步应对重排范围、grid
 track 计算与长文本测量做机制明确的单变量实验，不能因 rect 有成本就直接添加同步读取
 把时间搬进 commit，或据此宣称性能改善。beta.31/32 在 10k rect 上无明显改善。
+
+## 本机浏览器 trace：去掉探针后的布局仍存在
+
+临时 CDP harness 在初始 benchmark 完成后开启 devtools.timeline，仅交替滚动 20 次，
+每次等待两次 rAF 与后续 task，不调用可见性探针。此实验使用 Chromium headless、
+产品 CSS 加 benchmark 覆盖，不是原生平台性能证据。普通与长文本均发生 20 次 Layout；
+第一次采集累计分别约 24ms 与 38ms，RasterTask 累计约 92ms 与 155ms（跨线程累计，
+不可与主线程时间直接相加）。这证明即使没有探针，布局/栅格工作仍然发生。
+
+Layout beginData 显示典型 dirtyObjects=940、totalObjects=1036。分别对行与单元格
+设置 contain:layout style 后，dirtyObjects 仍为 940；没有观察到缩小失效范围，
+长文本 Layout 累计还从基线约 37ms 变为行隔离约 62ms、单元格隔离约 50ms。单次
+顺序采集不能用于效益估计，但足以否定“此 containment 在该场景减少 dirty 对象数”
+这一预测。不据此修改生产代码，也不把普通文本局部下降解释为收益。
+临时 trace 保存在 /tmp/z1-layout-*.json，未混入提交或 admission evidence。
