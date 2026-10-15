@@ -154,7 +154,7 @@ try {
 			'-DevicePixelRatio',
 			String(before.devicePixelRatio),
 			'-Delta',
-			'120'
+			'-120'
 		]);
 	}
 	report.nativeInput = helperResult;
@@ -340,7 +340,7 @@ function windowsHelperSource() {
     [Parameter(Mandatory=$true)][double]$ClientX,
     [Parameter(Mandatory=$true)][double]$ClientY,
     [Parameter(Mandatory=$true)][double]$DevicePixelRatio,
-    [int]$Delta = 120
+    [int]$Delta = -120
 )
 
 $signature = @'
