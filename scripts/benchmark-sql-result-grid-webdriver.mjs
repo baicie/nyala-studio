@@ -40,6 +40,10 @@ import {
 import { createSqlResultGridResultChannel } from './sql-result-grid-result-channel.mjs';
 import { validateObserverFreeSegmentTraceSnapshot } from './sql-result-grid-segment-trace.mjs';
 import {
+	createSameExecutionProfileMetadata,
+	validateSameExecutionProfileRecord
+} from './sql-result-grid-same-execution-profile.mjs';
+import {
 	createInterleavedVariantBenchmarkPlan,
 	INTERLEAVED_EXECUTION_ORDER
 } from './sql-result-grid-interleaved-plan.mjs';
@@ -69,6 +73,9 @@ if (cli.help === 'true') {
   --navigation-timeout-ms <n>  Per-navigation WebDriver deadline (default: 30000)
   --text-churn <true|false>    Count text mutations in trace navigation only (diagnostic, default false)
   --trace-profile <true|false>  Record observer-free scroll timing segments
+  --same-execution-profile <true|false>  Timestamp the existing primary scroll
+    callbacks and validation spans. Requires --instrument-baseline true and
+    disables node-churn measurement. Diagnostic evidence only; never admission.
   --instrument-baseline <true|false>  Instrument the baseline renderer so commit
     work is recorded. Disables floorOnly, which means the presentation floor and
     the renderer commit cost are measured in the same run and the recorded
@@ -131,6 +138,17 @@ if (textChurn && !traceProfile) throw new Error('--text-churn requires --trace-p
 // overhead inside scrollP95Ms; that same guarantee is why an instrumented run
 // cannot produce admission-grade scrollP95Ms.
 const instrumentBaseline = String(cli['instrument-baseline'] ?? 'false') === 'true';
+const sameExecutionProfileValue = String(cli['same-execution-profile'] ?? 'false');
+if (!['true', 'false'].includes(sameExecutionProfileValue)) {
+	throw new Error('--same-execution-profile must be true or false.');
+}
+const sameExecutionProfile = sameExecutionProfileValue === 'true';
+if (sameExecutionProfile && !instrumentBaseline) {
+	throw new Error('--same-execution-profile requires --instrument-baseline true (diagnostic only).');
+}
+if (sameExecutionProfile && traceProfile) {
+	throw new Error('--same-execution-profile requires --trace-profile false; same-execution timing belongs to the primary navigation.');
+}
 const outputPath = resolve(cli.output ?? defaultOutput);
 const screenshotDir = resolve(cli['screenshot-dir'] ?? join(repositoryRoot, 'platform-screenshots'));
 const zeusBundle = cli['zeus-bundle'] ?? '/tmp/nyala-zeus-audit/data-grid-bundle.js';
@@ -435,6 +453,10 @@ async function run() {
 				diagnosticProfile: 'true',
 				floorOnly: String(!instrumentBaseline)
 			};
+			if (sameExecutionProfile) {
+				query.sameExecutionProfile = 'true';
+				query.measureNodeChurn = 'false';
+			}
 			// 交错模式下，页面按变体选择；同一会话内换变体必须换文档。
 			const pageName = interleaved
 				? sanitizePageName(renderer === 'zeus' ? variant.id : zeusVariants[0].id)
@@ -483,6 +505,7 @@ async function run() {
 				},
 				benchmarkServer
 			);
+			if (sameExecutionProfile && record.status === 'ok') validateSameExecutionProfileRecord(record);
 			if (renderer === 'workbench-table') {
 				const bundleSha256 = record.rendererImplementation?.bundleSha256;
 				if (
@@ -1144,7 +1167,11 @@ async function writeEvidence({
 		// scrollP95Ms carries observer overhead and its presentation floor is not
 		// sampled cleanly. Such evidence may answer diagnostic questions about
 		// commit work, but it must never be scored for v7 admission.
-		admissionGrade: !instrumentBaseline && !interleaved && !textChurn && !zeusCss,
+		admissionGrade: !instrumentBaseline && !interleaved && !textChurn && !zeusCss && !sameExecutionProfile,
+		...(sameExecutionProfile ? {
+			diagnostic: true,
+			sameExecutionProfile: createSameExecutionProfileMetadata()
+		} : {}),
 		...(interleaved
 			? {
 					interleavedVariants: zeusVariants.map(variant => variant.id),
@@ -1156,9 +1183,10 @@ async function writeEvidence({
 					)
 				}
 			: {}),
-		...(instrumentBaseline || interleaved || textChurn || zeusCss
+		...(instrumentBaseline || interleaved || textChurn || zeusCss || sameExecutionProfile
 			? {
 					limitations: [
+						...(sameExecutionProfile ? createSameExecutionProfileMetadata().limitations : []),
 						...(textChurn
 							? [
 									'Text-churn diagnostics install a DOM observer in the trace navigation and must not be scored for admission.'

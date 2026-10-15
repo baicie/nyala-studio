@@ -87,6 +87,11 @@ import {
 	SQL_RESULT_GRID_SEGMENT_TRACE_INSTRUMENTATION
 } from './sql-result-grid-segment-trace.mjs';
 import { installSqlResultGridTextChurnObserver } from './sql-result-grid-text-churn.mjs';
+import {
+	createSameExecutionPresentationOptions,
+	createSameExecutionProfileMetadata,
+	validateSameExecutionProfileRecord
+} from './sql-result-grid-same-execution-profile.mjs';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const defaultOutput = join(repositoryRoot, 'docs/sql-mvp-phases/phase-z1-benchmark.json');
@@ -109,7 +114,7 @@ const workloads = [
 const cli = parseArgs(process.argv.slice(2));
 if (cli.help) {
 	process.stdout.write(
-		`Usage: node scripts/benchmark-sql-result-grid.mjs [options]\n\nOptions:\n  -h, --help                    Show this help\n  --repeat <n>                  Runs per workload/renderer (default: 1)\n  --renderer <names>            native,workbench-table,zeus, or all\n  --workload <ids>              Comma-separated workload ids\n  --workbench-table-implementation <mode>\n                                characterization (default) or real\n  --zeus-bundle <path>          Zeus data-grid browser bundle (or NYALA_ZEUS_BUNDLE)\n  --require-zeus <true|false>   Fail unless Zeus produces ok records\n  --diagnostic-profile <bool>   Measure presentation floor and Zeus internals (default: false)\n  --floor-only <bool>           Sample the presentation floor without installing renderer observers (default: false)\n  --jank-trace <true|false>     Diagnostic continuous-scroll jank traces (default: false)\n  --text-churn <true|false>     Enable diagnostic text observer in segment trace only (default: false)\n  --segment-trace <true|false>  Observer-free input/handler/range/commit/paint trace (default: false)\n  --zeus-measure-node-churn <bool>\n                                Diagnostic A/B: count DOM node churn after commit (default: true)\n  --emit-page <path>            Write the standalone benchmark page and exit\n  --output <path>               Output benchmark JSON\n`
+		`Usage: node scripts/benchmark-sql-result-grid.mjs [options]\n\nOptions:\n  -h, --help                    Show this help\n  --repeat <n>                  Runs per workload/renderer (default: 1)\n  --renderer <names>            native,workbench-table,zeus, or all\n  --workload <ids>              Comma-separated workload ids\n  --workbench-table-implementation <mode>\n                                characterization (default) or real\n  --zeus-bundle <path>          Zeus data-grid browser bundle (or NYALA_ZEUS_BUNDLE)\n  --require-zeus <true|false>   Fail unless Zeus produces ok records\n  --diagnostic-profile <bool>   Measure presentation floor and Zeus internals (default: false)\n  --floor-only <bool>           Sample the presentation floor without installing renderer observers (default: false)\n  --same-execution-profile <bool>\n                                Timestamp the existing primary scroll callbacks and validation spans (diagnostic only)\n  --jank-trace <true|false>     Diagnostic continuous-scroll jank traces (default: false)\n  --text-churn <true|false>     Enable diagnostic text observer in segment trace only (default: false)\n  --segment-trace <true|false>  Observer-free input/handler/range/commit/paint trace (default: false)\n  --zeus-measure-node-churn <bool>\n                                Diagnostic A/B: count DOM node churn after commit (default: true)\n  --emit-page <path>            Write the standalone benchmark page and exit\n  --output <path>               Output benchmark JSON\n`
 	);
 	process.exit(0);
 }
@@ -119,9 +124,13 @@ const floorOnly = parseBoolean(cli['floor-only'] ?? 'false', '--floor-only');
 const traceProfile = parseBoolean(cli['trace-profile'] ?? 'false', '--trace-profile');
 const jankTrace = parseBoolean(cli['jank-trace'] ?? 'false', '--jank-trace');
 const segmentTrace = parseBoolean(cli['segment-trace'] ?? 'false', '--segment-trace');
+const sameExecutionProfile = parseBoolean(cli['same-execution-profile'] ?? 'false', '--same-execution-profile');
+if (sameExecutionProfile && (!diagnosticProfile || floorOnly || segmentTrace || jankTrace)) {
+	throw new Error('--same-execution-profile requires --diagnostic-profile true, --floor-only false, --segment-trace false, and --jank-trace false (diagnostic only).');
+}
 const textChurn = parseBoolean(cli['text-churn'] ?? 'false', '--text-churn');
 if (textChurn && !segmentTrace) throw new Error('--text-churn requires --segment-trace true (diagnostic only).');
-const zeusMeasureNodeChurn = parseBoolean(cli['zeus-measure-node-churn'] ?? 'true', '--zeus-measure-node-churn');
+const zeusMeasureNodeChurn = parseBoolean(cli['zeus-measure-node-churn'] ?? 'true', '--zeus-measure-node-churn') && !sameExecutionProfile;
 const selectedRenderers =
 	cli.renderer === 'all' || !cli.renderer ? ['native', 'workbench-table', 'zeus'] : cli.renderer.split(',');
 const supportedRenderers = new Set(['native', 'workbench-table', 'zeus']);
@@ -131,6 +140,9 @@ if (selectedRenderers.some(renderer => !supportedRenderers.has(renderer))) {
 const workbenchTableImplementation = cli['workbench-table-implementation'] ?? 'characterization';
 if (!['characterization', 'real'].includes(workbenchTableImplementation)) {
 	throw new Error('--workbench-table-implementation must be characterization or real');
+}
+if (sameExecutionProfile && selectedRenderers.includes('workbench-table') && workbenchTableImplementation !== 'real') {
+	throw new Error('--same-execution-profile requires --workbench-table-implementation real when measuring workbench-table.');
 }
 const selectedWorkloads = cli.workload
 	? workloads.filter(workload => cli.workload.split(',').includes(workload.id))
@@ -252,6 +264,11 @@ try {
 		executionOrder: EXECUTION_ORDER,
 		pageInstrumentation: textChurn ? 'text-churn-observer-v1' : 'no-global-dom-observer-v2',
 		traceInstrumentation: textChurn ? 'text-churn-observer-v1' : 'no-global-dom-observer-v2',
+		...(sameExecutionProfile ? {
+			diagnostic: true,
+			admissionGrade: false,
+			sameExecutionProfile: createSameExecutionProfileMetadata()
+		} : {}),
 		generatedAt: new Date().toISOString(),
 		provenance: {
 			...createEvidenceProvenance(cli),
@@ -321,6 +338,7 @@ try {
 			'Scroll latency uses one scroll-controller input and a post-presentation-opportunity visible-row completion contract for all renderers; aggregate timings are recomputable from 20 real-displacement samples.',
 			'IPC and format timings measure the existing JSON-shaped result boundary and local cell formatting; no database or Tauri command is invoked.',
 			'Data Grid model/commit diagnostics and WorkbenchTable ListView interval instrumentation are enabled only in diagnostic profiles and add observer overhead; they do not replace admission timings.',
+			...(sameExecutionProfile ? createSameExecutionProfileMetadata().limitations : []),
 			...(jankTrace
 				? [
 						'Continuous-scroll jank traces are diagnostic: they dispatch DevTools-protocol wheel input in Chromium and cannot rewrite v6 admission evidence, flip the Z1 gate, or serve as v7 admission evidence.'
@@ -528,6 +546,7 @@ async function runBrowserBenchmark(
 		floorOnly: String(floorOnly),
 		traceProfile: String(traceProfile),
 		segmentTrace: String(segmentTrace),
+		sameExecutionProfile: String(sameExecutionProfile),
 		textChurn: String(textChurn),
 		measureNodeChurn: String(measureNodeChurn),
 		rows: String(workload.rows),
@@ -556,6 +575,9 @@ async function runBrowserBenchmark(
 		workbenchTableImplementation,
 		workbenchTableBundleSha256: workbenchTableBundle?.sha256
 	});
+	if (sameExecutionProfile && record.status === 'ok') {
+		validateSameExecutionProfileRecord(record, { expectedSampleCount: SCROLL_TARGET_RATIOS.length });
+	}
 	const traced =
 		jankTrace && record.status === 'ok'
 			? await runJankTrace(client, baseUrl, workload, renderer, executionOrdinal)
@@ -914,8 +936,15 @@ const floorOnly = params.get('floorOnly') === 'true';
 const traceProfile = params.get('traceProfile') === 'true';
 	const jankTrace = params.get('jankTrace') === 'true';
 	const jankTraceWorkloadId = params.get('workloadId') || '';
-	const measureNodeChurn = params.get('measureNodeChurn');
+const sameExecutionProfile = params.get('sameExecutionProfile') === 'true';
+if (sameExecutionProfile && (!diagnosticProfile || floorOnly || segmentTrace || jankTrace)) {
+	throw new Error('Same-execution profiling requires diagnosticProfile=true, floorOnly=false, segmentTrace=false, and jankTrace=false.');
+}
+	const measureNodeChurn = sameExecutionProfile ? 'false' : params.get('measureNodeChurn');
 const workbenchTableImplementation = ${JSON.stringify(workbenchTableImplementation)};
+if (sameExecutionProfile && renderer === 'workbench-table' && workbenchTableImplementation !== 'real') {
+	throw new Error('Same-execution profiling requires a real WorkbenchTable implementation.');
+}
 const WORKBENCH_TABLE_IMPLEMENTATION_ID = ${JSON.stringify(WORKBENCH_TABLE_IMPLEMENTATION_ID)};
 const WORKBENCH_TABLE_RUNTIME_PROOF = ${JSON.stringify(WORKBENCH_TABLE_RUNTIME_PROOF)};
 const WORKBENCH_TABLE_CHARACTERIZATION_ID = ${JSON.stringify(WORKBENCH_TABLE_CHARACTERIZATION_ID)};
@@ -961,6 +990,8 @@ const JANK_TRACE_CONTROL_TIMEOUT_MS = 30_000;
 ${isValidVisibleRowIndex.toString()}
 ${maximumVirtualRenderedRows.toString()}
 ${waitForPresentationOpportunity.toString()}
+${createSameExecutionPresentationOptions.toString()}
+${createSameExecutionProfileMetadata.toString()}
 ${createZeusDataGridDiagnosticCollector.toString()}
 ${validateZeusDataGridDiagnosticSnapshot.toString()}
 ${validateWorkbenchTableDiagnosticSnapshot.toString()}
@@ -1029,7 +1060,13 @@ function writeBenchmarkResult(result) {
 			height: window.innerHeight,
 			devicePixelRatio: window.devicePixelRatio
 		},
-		...result
+		...result,
+		...(sameExecutionProfile ? {
+			diagnostic: true,
+			admissionGrade: false,
+			sameExecutionProfile: createSameExecutionProfileMetadata(),
+			limitations: createSameExecutionProfileMetadata().limitations
+		} : {})
 	};
 	const serialized = JSON.stringify(payload);
 	document.getElementById('benchmark-result').textContent = serialized;
@@ -1141,7 +1178,9 @@ async function commitScroll(rendered, targetOffset, sampleIndex) {
 	const startOffset = scrollController.scrollTop;
 	const startedAt = performance.now();
 	scrollController.scrollTop = targetOffset;
-	const inputMs = performance.now() - startedAt;
+	const inputEnd = performance.now();
+	const inputMs = inputEnd - startedAt;
+	const sameExecution = sameExecutionProfile ? { inputStart: startedAt, inputEnd, waits: [] } : undefined;
 	let actualOffset = scrollController.scrollTop;
 	let expectedRowIndex = expectedVisibleRowIndex(actualOffset);
 	let visibleRowIndex = -1;
@@ -1151,15 +1190,30 @@ async function commitScroll(rendered, targetOffset, sampleIndex) {
 	let validationMs = 0;
 	for (; attempts < SCROLL_COMMIT_ATTEMPTS; ) {
 		const presentationStartedAt = diagnosticProfile || traceProfile ? performance.now() : 0;
-		await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
-		if (diagnosticProfile || traceProfile) presentationWaitMs += performance.now() - presentationStartedAt;
+		const waitTiming = sameExecution ? { attempt: attempts + 1, waitStart: presentationStartedAt } : undefined;
+		await waitForPresentationOpportunity(waitTiming
+			? createSameExecutionPresentationOptions(waitTiming, { timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS })
+			: { timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
+		const presentationEndedAt = diagnosticProfile || traceProfile ? performance.now() : 0;
+		if (diagnosticProfile || traceProfile) presentationWaitMs += presentationEndedAt - presentationStartedAt;
+		if (waitTiming) waitTiming.waitEnd = presentationEndedAt;
 		const validationStartedAt = diagnosticProfile || traceProfile ? performance.now() : 0;
 		void scrollController.offsetHeight;
+		if (waitTiming) {
+			waitTiming.offsetHeightStart = validationStartedAt;
+			waitTiming.offsetHeightEnd = performance.now();
+			waitTiming.visibleRowValidationStart = waitTiming.offsetHeightEnd;
+		}
 		actualOffset = scrollController.scrollTop;
 		expectedRowIndex = expectedVisibleRowIndex(actualOffset);
 		visibleRowIndex = getVisibleRowIndex(rendered);
 		rowDelta = Math.abs(visibleRowIndex - expectedRowIndex);
-		if (diagnosticProfile || traceProfile) validationMs += performance.now() - validationStartedAt;
+		const validationEndedAt = diagnosticProfile || traceProfile ? performance.now() : 0;
+		if (diagnosticProfile || traceProfile) validationMs += validationEndedAt - validationStartedAt;
+		if (waitTiming) {
+			waitTiming.visibleRowValidationEnd = validationEndedAt;
+			sameExecution.waits.push(waitTiming);
+		}
 		attempts += 1;
 		if (
 			isValidVisibleRowIndex(visibleRowIndex, rowCount) &&
@@ -1169,8 +1223,11 @@ async function commitScroll(rendered, targetOffset, sampleIndex) {
 			break;
 		}
 	}
-	const totalMs = performance.now() - startedAt;
+	const endTime = performance.now();
+	const totalMs = endTime - startedAt;
+	if (sameExecution) sameExecution.endTime = endTime;
 	return {
+		...(sameExecution ? { sameExecution } : {}),
 		sampleIndex,
 		startOffset,
 		targetOffset,
@@ -1202,8 +1259,18 @@ async function commitScrollWithDiagnostics(rendered, targetOffset, sampleIndex, 
 		// traversal) settle past the microtask boundary before closing the
 		// operation window, so commits correlate to exactly this scroll.
 		await Promise.resolve();
-		if (zeusOperation) rendered.zeusDiagnostics.endOperation(zeusOperation);
-		if (workbenchTableOperation) rendered.diagnostics.endOperation(workbenchTableOperation);
+		if (zeusOperation) {
+			const operation = rendered.zeusDiagnostics.endOperation(zeusOperation);
+			if (sample.sameExecution) sample.sameExecution.rendererOperation = operation;
+		}
+		if (workbenchTableOperation) {
+			const operation = rendered.diagnostics.endOperation(workbenchTableOperation);
+			if (sample.sameExecution) sample.sameExecution.rendererOperation = operation;
+		}
+	}
+	if (sample.sameExecution) {
+		sample.sameExecution.phase = phase;
+		sample.sameExecution.sampleIndex = diagnosticSampleIndex;
 	}
 	return sample;
 }

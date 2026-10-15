@@ -23,6 +23,11 @@ on:
         required: false
         default: 'false'
         type: string
+      same_execution_profile:
+        description: 'Record input, renderer commits and existing presentation wait in the same scroll execution. Requires instrument_baseline=true; diagnostic only.'
+        required: false
+        default: 'false'
+        type: string
       text_churn:
         description: 'Explicit diagnostic DOM observer in trace navigation only; never admission.'
         required: false
@@ -99,13 +104,20 @@ jobs:
           CELL_LAYOUT_VARIANT: ${{ inputs.zeus_cell_layout_variant }}
           ZEUS_VARIANTS: ${{ inputs.zeus_variant }}
           DIAGNOSTIC_RENDERERS: ${{ inputs.diagnostic_renderers }}
+          SAME_EXECUTION_PROFILE: ${{ inputs.same_execution_profile || 'false' }}
+          INSTRUMENT_BASELINE: ${{ inputs.instrument_baseline || 'false' }}
+          TEXT_CHURN: ${{ inputs.text_churn || 'false' }}
         run: |
+          if [ "$SAME_EXECUTION_PROFILE" = true ] && { [ "$INSTRUMENT_BASELINE" != true ] || [ "$TEXT_CHURN" = true ]; }; then
+            echo 'Same-execution profiling requires instrument_baseline=true and text_churn=false.' >&2
+            exit 1
+          fi
           if [ -n "$CELL_LAYOUT_VARIANT" ] && [ -z "$ZEUS_VARIANTS" ]; then
             echo 'Cell layout experiment requires an interleaved variant.' >&2
             exit 1
           fi
-          if [ -n "$DIAGNOSTIC_RENDERERS" ] && [ -z "$ZEUS_VARIANTS" ]; then
-            echo 'Renderer subsets require interleaved diagnostics.' >&2
+          if [ -n "$DIAGNOSTIC_RENDERERS" ] && [ -z "$ZEUS_VARIANTS" ] && [ "$SAME_EXECUTION_PROFILE" != true ]; then
+            echo 'Renderer subsets require interleaved or same-execution diagnostics.' >&2
             exit 1
           fi
           printf '{"name":"nyala-zeus-audit","private":true}\n' > "$AUDIT_DIR/package.json"
@@ -277,7 +289,10 @@ jobs:
           DIAGNOSTIC_RENDERERS: ${{ inputs.diagnostic_renderers }}
           TEXT_CHURN: ${{ inputs.text_churn || 'false' }}
           INSTRUMENT_BASELINE: ${{ inputs.instrument_baseline || 'false' }}
+          SAME_EXECUTION_PROFILE: ${{ inputs.same_execution_profile || 'false' }}
         run: |
+          TRACE_PROFILE=true
+          if [ "$SAME_EXECUTION_PROFILE" = true ]; then TRACE_PROFILE=false; fi
           VARIANT_ARGS=""
           if [ -n "$ZEUS_VARIANTS" ]; then
             OLD_IFS=$IFS
@@ -303,7 +318,8 @@ jobs:
             --zeus-bundle "$RUNNER_TEMP/nyala-zeus-audit/data-grid-bundle.js" \
             $VARIANT_ARGS \
             $CSS_ARGS \
-            --trace-profile true \
+            --trace-profile "$TRACE_PROFILE" \
+            --same-execution-profile "$SAME_EXECUTION_PROFILE" \
             --text-churn "$TEXT_CHURN" \
             --instrument-baseline "$INSTRUMENT_BASELINE" \
             --repository "$GITHUB_REPOSITORY" \
@@ -395,7 +411,10 @@ jobs:
         shell: pwsh
         env:
           BENCHMARK_REPEAT: ${{ inputs.repeat || '5' }}
+          SAME_EXECUTION_PROFILE: ${{ inputs.same_execution_profile || 'false' }}
         run: |
+          $traceProfile = 'true'
+          if ($env:SAME_EXECUTION_PROFILE -eq 'true') { $traceProfile = 'false' }
           $variantArgs = @()
           if ('${{ inputs.zeus_variant }}' -ne '') {
             # The parser takes a single comma-separated token, so the whole list
@@ -424,7 +443,8 @@ jobs:
             --zeus-bundle "$env:RUNNER_TEMP\nyala-zeus-audit\data-grid-bundle.js" `
             @variantArgs `
             @cssArgs `
-            --trace-profile true `
+            --trace-profile "$traceProfile" `
+            --same-execution-profile "$env:SAME_EXECUTION_PROFILE" `
             --text-churn "${{ inputs.text_churn || 'false' }}" `
             --instrument-baseline "${{ inputs.instrument_baseline || 'false' }}" `
             --repository "$env:GITHUB_REPOSITORY" `
@@ -479,7 +499,7 @@ jobs:
           merge-multiple: false
 
       - name: Merge evidence
-        if: ${{ inputs.instrument_baseline != 'true' && inputs.text_churn != 'true' && inputs.zeus_package_version == '' && inputs.zeus_variant == '' && inputs.zeus_css_package_version == '' }}
+        if: ${{ inputs.same_execution_profile != 'true' && inputs.instrument_baseline != 'true' && inputs.text_churn != 'true' && inputs.zeus_package_version == '' && inputs.zeus_variant == '' && inputs.zeus_css_package_version == '' }}
         run: |
           node scripts/merge-sql-result-grid-platform-evidence.mjs \
             --macos "$RUNNER_TEMP/sql-result-grid-evidence/sql-result-grid-macos-webkit/platform-evidence.json" \
@@ -492,7 +512,7 @@ jobs:
       # A version override collects control evidence for a paired comparison.
       # The gate scores one pinned version, so it is skipped for overrides.
       - name: Run fail-closed Z1 gate
-        if: ${{ inputs.instrument_baseline != 'true' && inputs.text_churn != 'true' && inputs.zeus_package_version == '' && inputs.zeus_variant == '' && inputs.zeus_css_package_version == '' }}
+        if: ${{ inputs.same_execution_profile != 'true' && inputs.instrument_baseline != 'true' && inputs.text_churn != 'true' && inputs.zeus_package_version == '' && inputs.zeus_variant == '' && inputs.zeus_css_package_version == '' }}
         env:
           NYALA_EXPECTED_REPOSITORY: ${{ github.repository }}
           NYALA_EXPECTED_SOURCE_REVISION: ${{ github.sha }}

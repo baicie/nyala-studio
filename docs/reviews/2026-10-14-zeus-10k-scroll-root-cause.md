@@ -1,6 +1,22 @@
 # Z1 10k 滚动延迟根因（基于 run38552402643 真实平台证据）
 
-## 结论
+## 当前结论（2026-10-15 复核）
+
+下文是历史解释，不能再作为“Zeus 已无可优化空间”的依据。现有 primary 与
+segmentTrace 来自不同导航，后者还在 rAF 内读取几何与执行 hit test；不能把其
+`dispatchLag`、commit 和 `rafToTask` 相加来分解 primary，也不能把 rAF→task
+全部归为与 renderer 无关的宿主时间。
+
+原生测试启动真实 Tauri WebView 后，整页导航到独立 benchmark；完整 Workbench
+外壳没有参与这段测量。因此“Nyala/Workbench 滚动管线已被证明为根因”也不成立。
+`commit` 的 2–3ms 不含全部后续浏览器工作，不能表示框架只影响总延迟的 5%。
+
+当前没有已验证的生产修复，但这不等于没有可优化点。下一步以同一次滚动中的输入、
+renderer 回调、原有 presentation wait 和可见行校验建立时间线，并校准插桩影响。
+Z1 保持 `NO-GO`，ADR 0005 保持 `Proposed`，不以切换指标代替性能修复。
+计时边界详见[采集器可比性复核](./2026-10-14-collector-comparability-audit.md)。
+
+## 历史解释（不作为当前结论）
 
 Zeus 10k 滚动延迟中，框架自身只占 2–3ms。其余全部是宿主与浏览器调度：
 

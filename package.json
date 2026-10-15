@@ -25,7 +25,7 @@
 		"release:check": "node scripts/release-version.mjs check",
 		"release:prepare": "node scripts/release-version.mjs prepare",
 		"test:release": "node --test scripts/release-version.test.mjs && pnpm run release:check",
-		"test:github-workflows": "node --test scripts/github-workflow-lint.test.mjs",
+		"test:github-workflows": "node --test scripts/github-workflow-lint.test.mjs scripts/sql-result-grid-same-execution-workflow.test.mjs",
 		"test:branding": "node scripts/verify-branding.mjs",
 		"test:icons": "node scripts/verify-icons.mjs",
 		"test:sql-runtime-status": "node scripts/verify-sql-runtime-status.mjs",

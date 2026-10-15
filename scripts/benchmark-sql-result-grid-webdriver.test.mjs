@@ -24,6 +24,38 @@ import { createSqlResultGridResultChannel } from './sql-result-grid-result-chann
 
 const execFileAsync = promisify(execFile);
 
+test('same-execution WebDriver profile rejects missing instrumentation, separate traces, and invalid booleans', async () => {
+	for (const [flags, message] of [
+		[['--same-execution-profile', 'true'], /requires --instrument-baseline true/],
+		[['--same-execution-profile', 'true', '--instrument-baseline', 'true', '--trace-profile', 'true'], /requires --trace-profile false/],
+		[['--same-execution-profile', 'invalid'], /must be true or false/]
+	]) {
+		await assert.rejects(execFileAsync(process.execPath, ['scripts/benchmark-sql-result-grid-webdriver.mjs', ...flags]),
+			error => error.code === 1 && message.test(error.stderr));
+	}
+});
+
+test('same-execution WebDriver evidence stays diagnostic even when collection fails', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-same-execution-webdriver-'));
+	try {
+		const output = join(root, 'evidence.json');
+		await assert.rejects(execFileAsync(process.execPath, [
+			'scripts/benchmark-sql-result-grid-webdriver.mjs', '--same-execution-profile', 'true',
+			'--instrument-baseline', 'true', '--renderer', 'zeus', '--zeus-bundle', join(root, 'missing-bundle.js'),
+			'--output', output, '--screenshot-dir', join(root, 'screenshots')
+		]), error => error.code === 1);
+		const report = JSON.parse(await readFile(output, 'utf8'));
+		assert.equal(report.status, 'blocked');
+		assert.equal(report.diagnostic, true);
+		assert.equal(report.admissionGrade, false);
+		assert.equal(report.sameExecutionProfile.diagnosticOnly, true);
+		assert.equal(report.sameExecutionProfile.admissionGrade, false);
+		assert.match(report.limitations.join(' '), /must not be scored for admission/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test('WebDriver benchmark runner records platform evidence and screenshots', async () => {
 	const source = await import('node:fs/promises').then(fs =>
 		fs.readFile(new URL('./benchmark-sql-result-grid-webdriver.mjs', import.meta.url), 'utf8')
