@@ -44,7 +44,8 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 		new Promise(resolve => {
 			requestAnimationFrame(timestamp => {
 				const rafTime = performance.now();
-				const rafVisibleRowIndex = getVisibleRowIndex(rendered);
+				const visibilityProbe = {};
+				const rafVisibleRowIndex = getVisibleRowIndex(rendered, visibilityProbe);
 				const rafProbeEndTime = performance.now();
 				setTimeout(
 					() =>
@@ -52,6 +53,7 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 							timestamp,
 							rafTime,
 							rafProbeEndTime,
+							visibilityProbe,
 							taskTime: performance.now(),
 							rafVisibleRowIndex,
 							taskVisibleRowIndex: getVisibleRowIndex(rendered)
@@ -77,6 +79,7 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 		let nextPaintRafTime;
 		let nextPaintTaskTime;
 		let nextPaintRafProbeEndTime;
+		let nextPaintVisibilityProbe;
 		let visibleRowIndex = -1;
 		let attempts = 0;
 		for (; attempts < maxFrames; attempts += 1) {
@@ -84,6 +87,7 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 			nextPaintRafTime ??= frame.rafTime;
 			nextPaintTaskTime ??= frame.taskTime;
 			nextPaintRafProbeEndTime ??= frame.rafProbeEndTime;
+			nextPaintVisibilityProbe ??= frame.visibilityProbe;
 			for (const [phaseName, candidate] of [
 				['raf', frame.rafVisibleRowIndex],
 				['task', frame.taskVisibleRowIndex]
@@ -142,6 +146,7 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 			nextPaintRafTime,
 			nextPaintTaskTime,
 			nextPaintRafProbeEndTime,
+			nextPaintVisibilityProbe,
 			commitTransactionIds: zeusCorrelation?.commitTransactionIds ?? workbenchCorrelation?.commitTransactionIds ?? [],
 			primaryCommitTransactionId:
 				zeusCorrelation?.primaryCommitTransactionId ?? workbenchCorrelation?.primaryCommitTransactionId ?? null

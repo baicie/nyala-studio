@@ -1090,17 +1090,21 @@ function getScrollElement(root) {
   return root.querySelector('.bench-scroll, .virtual-scroll, [data-slot="data-grid-viewport"], .monaco-list > .monaco-scrollable-element') || root;
 }
 
-function getVisibleCell(rendered) {
+function getVisibleCell(rendered, probeTiming) {
 	const viewportElement = rendered.viewport ?? rendered.scroll;
+	const rectStart = probeTiming ? performance.now() : 0;
 	const rect = viewportElement.getBoundingClientRect();
+	if (probeTiming) probeTiming.rectMs = performance.now() - rectStart;
 	const x = Math.min(rect.right - 1, rect.left + Math.max(1, Math.min(56, rect.width / 2)));
 	const y = Math.min(rect.bottom - 1, rect.top + (rendered.probeHeaderHeight ?? HEADER_HEIGHT) + ROW_HEIGHT / 2);
+	const hitTestStart = probeTiming ? performance.now() : 0;
 	const cell = document.elementFromPoint(x, y)?.closest?.('td, .virtual-cell, .monaco-table-td, [role="gridcell"]');
+	if (probeTiming) probeTiming.hitTestMs = performance.now() - hitTestStart;
 	return cell && viewportElement.contains(cell) ? cell : null;
 }
 
-function getVisibleRowIndex(rendered) {
-	const cell = getVisibleCell(rendered);
+function getVisibleRowIndex(rendered, probeTiming) {
+	const cell = getVisibleCell(rendered, probeTiming);
 	const row = cell?.closest?.('[data-row-index], .monaco-list-row[data-index]');
 	const index = Number(row?.getAttribute('data-row-index') ?? row?.getAttribute('data-index'));
 	if (!Number.isInteger(index) || cell.textContent?.trim() !== String(index)) return -1;

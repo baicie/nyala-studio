@@ -321,3 +321,25 @@ rAF→task 区间内。10k 与 wide 的 commitStartTime − nextPaintRafTime 中
 完成。但区间仍混有可见性探针、布局/命中测试、后续呈现工作及计时器调度；没有进一步
 分段之前，不可全部命名为 paint 成本。诊断 run 38665852661 用新字段分离探针结束
 时间，证据尚在采集中。
+
+## 原生平台探针分段结果（38665852661）
+
+run 成功完成；macOS、Windows 各 48 条记录均为 ok。每 workload/变体 3 轮，下面为
+phase=sample 的 60 个样本的中位数，单位 ms（不同分量中位数不可直接相加）：
+
+| 平台/workload | Zeus beta.31 probe / after-probe | Zeus beta.32 probe / after-probe | WorkbenchTable probe / after-probe |
+| --- | --- | --- | --- |
+| Windows 10k | 5.0 / 2.1 | 4.8 / 2.0 | 0.1 / 2.1 |
+| Windows wide | 6.5 / 2.15 | 6.5 / 2.1 | 0.1 / 2.0 |
+| macOS 10k | 4 / 11 | 4 / 12 | 0 / 4 |
+| macOS wide | 9 / 12 | 8 / 10 | 0 / 8 |
+
+probe = nextPaintRafProbeEndTime − nextPaintRafTime；after-probe =
+nextPaintTaskTime − nextPaintRafProbeEndTime。macOS 的 0 受时钟精度限制。
+
+Zeus 存在明显的同步可见性读取成本，但不能全部称为纯测量开销。该读取包含
+getBoundingClientRect 与 elementFromPoint，可能执行 DOM 写入后尚未完成的布局和
+命中测试。WorkbenchTable 自身 render 路径已有同步测量，故 commit 区间与 probe
+区间之间可能只是工作迁移。不能把低 commit 数字理解成全部浏览器渲染成本低。
+下一步分离 rect 与 hit-test 耗时，避免未经证实就把整个差额命名为布局。
+三轮诊断结果不计分，不构成 beta.32 性能达标证据。

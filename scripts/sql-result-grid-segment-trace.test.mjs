@@ -40,7 +40,8 @@ test('frame timing exposes synchronous visibility probe work inside the RAF-to-t
 				targetRatios: [[1, 2]],
 				rowCount: 100,
 				expectedVisibleRowIndex: () => 1,
-				getVisibleRowIndex: () => {
+				getVisibleRowIndex: (_rendered, timing) => {
+					if (timing) Object.assign(timing, { rectMs: 5, hitTestMs: 2 });
 					time += 7;
 					return 1;
 				}
@@ -48,6 +49,7 @@ test('frame timing exposes synchronous visibility probe work inside the RAF-to-t
 		);
 		for (const segment of result.segments) {
 			assert.equal(segment.nextPaintRafProbeEndTime - segment.nextPaintRafTime, 7);
+			assert.deepEqual(segment.nextPaintVisibilityProbe, { rectMs: 5, hitTestMs: 2 });
 			assert.ok(segment.nextPaintTaskTime >= segment.nextPaintRafProbeEndTime);
 		}
 	} finally {
