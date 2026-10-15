@@ -48,6 +48,7 @@ import {
 	createInterleavedVariantBenchmarkPlan,
 	INTERLEAVED_EXECUTION_ORDER
 } from './sql-result-grid-interleaved-plan.mjs';
+import { getRecoveryProbeRestartReason, validateRecoveryProbe } from './sql-result-grid-recovery-probe.mjs';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const defaultOutput = join(repositoryRoot, 'platform-evidence.json');
@@ -229,6 +230,7 @@ async function run() {
 	let appHost;
 	let appGeneration = -1;
 	const appRestarts = [];
+	let recoveryProbeBoundaryRestarted = false;
 	let benchmarkServer;
 	let provenance = baseProvenance;
 	let identity = {
@@ -320,10 +322,11 @@ async function run() {
 			return { ...host, generation, logPath, pid: host.child.pid };
 		};
 		if (appBinary) appHost = await launchEmbeddedApp();
-		const restartEmbeddedApp = async sessionState => {
+		const restartEmbeddedApp = async (sessionState, reason = 'navigation-failure') => {
 			const staleSessionId = sessionState.sessionId;
 			const previousHost = appHost;
 			const restart = {
+				reason,
 				previousGeneration: previousHost?.generation,
 				previousProcessId: previousHost?.pid,
 				previousSessionId: staleSessionId,
@@ -388,6 +391,20 @@ async function run() {
 			: createBalancedBenchmarkPlan(selectedWorkloads, selectedRenderers, repeat);
 		const benchmarkStartedAt = Date.now();
 		for (const { workload, renderer, iteration, executionOrdinal, variant } of benchmarkPlan) {
+			const recoveryProbeRestartReason = getRecoveryProbeRestartReason({
+				recoveryProbe,
+				workloadId: workload.id,
+				iteration
+			});
+			if (recoveryProbeRestartReason) {
+				if (recoveryProbeBoundaryRestarted) {
+					throw new Error('Windows recovery probe encountered its phase boundary more than once.');
+				}
+				recoveryProbeBoundaryRestarted = true;
+				if (!(await restartEmbeddedApp(liveSession, recoveryProbeRestartReason))) {
+					throw new Error('Windows recovery probe could not restart the embedded app at its phase boundary.');
+				}
+			}
 			// Each round carries its own navigation, viewport calibration, segment
 			// trace, and result budgets. Without a whole-run budget a degraded
 			// WebView can stretch a platform job far past the point where the
@@ -701,7 +718,8 @@ async function run() {
 			records,
 			screenshots,
 			retriedRounds,
-			appRestarts
+			appRestarts,
+			recoveryProbeValidation: recoveryProbe ? validateRecoveryProbe(records, appRestarts, repeat) : undefined
 		});
 		process.exitCode = 1;
 		return;
@@ -725,24 +743,18 @@ async function run() {
 			(selectedRenderers.includes('zeus') ? zeusVariants.length || 1 : 0)) *
 		repeat;
 	const complete = records.length === expectedRecords;
-	const recoveryProbeNarrowRecords = records.filter(record => record.workloadId === 'narrow-panel');
-	const recoveryProbePassed =
-		!recoveryProbe ||
-		(appRestarts.some(
-			restart => restart.status === 'recovered' && restart.previousProcessId !== restart.nextProcessId
-		) &&
-			recoveryProbeNarrowRecords.length === repeat &&
-			recoveryProbeNarrowRecords.every(record => record.status === 'ok' && record.appGeneration > 0));
+	const recoveryProbeValidation = recoveryProbe ? validateRecoveryProbe(records, appRestarts, repeat) : undefined;
+	const recoveryProbePassed = recoveryProbeValidation?.passed ?? true;
 	const allSuccessful = complete && records.every(record => record.status === 'ok') && recoveryProbePassed;
 	await writeEvidence({
 		status: allSuccessful ? 'ready' : 'blocked',
 		runs: allSuccessful ? repeat : 0,
 		reason: allSuccessful
 			? recoveryProbe
-				? `${label} recovered its embedded app after 10k native rows and completed the narrow-panel workload.`
+				? recoveryProbeValidation.reason
 				: `${label} recorded ${repeat} runs per workload/renderer.`
 			: recoveryProbe && !recoveryProbePassed
-				? `${label} did not verify a whole-app restart followed by a successful narrow-panel workload.`
+				? `${label}: ${recoveryProbeValidation.reason}`
 				: `${label} did not produce ${repeat} successful runs for every workload/renderer.`,
 		label,
 		identity,
@@ -750,7 +762,8 @@ async function run() {
 		records,
 		screenshots,
 		retriedRounds,
-		appRestarts
+		appRestarts,
+		recoveryProbeValidation
 	});
 	if (!allSuccessful) process.exitCode = 1;
 }
@@ -1252,7 +1265,8 @@ async function writeEvidence({
 	records,
 	screenshots,
 	retriedRounds = [],
-	appRestarts = []
+	appRestarts = [],
+	recoveryProbeValidation
 }) {
 	const report = {
 		version: 2,
@@ -1284,6 +1298,7 @@ async function writeEvidence({
 			? {
 					diagnostic: true,
 					recoveryProbe: true,
+					recoveryProbeValidation,
 					limitations: [
 						'This recovery probe measures application restart and post-restart usability only; it must not be scored for admission.'
 					]

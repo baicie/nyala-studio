@@ -27,6 +27,11 @@ import {
 	SCROLL_COMMIT_BOUNDARY
 } from './sql-result-grid-benchmark-contract.mjs';
 import { createSqlResultGridResultChannel } from './sql-result-grid-result-channel.mjs';
+import {
+	getRecoveryProbeRestartReason,
+	RECOVERY_PROBE_PHASE_BOUNDARY_REASON,
+	validateRecoveryProbe
+} from './sql-result-grid-recovery-probe.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -116,6 +121,58 @@ test('Windows recovery probe is fail-closed and cannot be admission evidence', a
 	}
 });
 
+test('Windows recovery probe restarts between workload phases and binds records to each app generation', () => {
+	const restart = {
+		reason: RECOVERY_PROBE_PHASE_BOUNDARY_REASON,
+		status: 'recovered',
+		previousGeneration: 0,
+		nextGeneration: 1,
+		previousProcessId: 7100,
+		nextProcessId: 7101,
+		previousSessionId: 'session-0',
+		nextSessionId: 'session-1',
+		stopConfirmed: true,
+		endpointReleased: true,
+		driverReady: true
+	};
+	const records = [
+		...Array.from({ length: 5 }, () => ({
+			workloadId: '10k-x-50',
+			status: 'ok',
+			appGeneration: 0,
+			appProcessId: 7100
+		})),
+		...Array.from({ length: 5 }, () => ({
+			workloadId: 'narrow-panel',
+			status: 'ok',
+			appGeneration: 1,
+			appProcessId: 7101
+		}))
+	];
+
+	assert.equal(getRecoveryProbeRestartReason({ recoveryProbe: true, workloadId: '10k-x-50', iteration: 1 }), undefined);
+	assert.equal(
+		getRecoveryProbeRestartReason({ recoveryProbe: true, workloadId: 'narrow-panel', iteration: 1 }),
+		RECOVERY_PROBE_PHASE_BOUNDARY_REASON
+	);
+	assert.equal(
+		getRecoveryProbeRestartReason({ recoveryProbe: true, workloadId: 'narrow-panel', iteration: 2 }),
+		undefined
+	);
+	assert.equal(
+		getRecoveryProbeRestartReason({ recoveryProbe: false, workloadId: 'narrow-panel', iteration: 1 }),
+		undefined
+	);
+	assert.equal(validateRecoveryProbe(records, [restart], 5).passed, true);
+
+	const staleNarrowRecords = records.map(record =>
+		record.workloadId === 'narrow-panel' ? { ...record, appGeneration: 0, appProcessId: 7100 } : record
+	);
+	const invalid = validateRecoveryProbe(staleNarrowRecords, [restart], 5);
+	assert.equal(invalid.passed, false);
+	assert.equal(invalid.checks.narrowPhaseAfterRestart, false);
+});
+
 test('WebDriver benchmark runner records platform evidence and screenshots', async () => {
 	const source = await import('node:fs/promises').then(fs =>
 		fs.readFile(new URL('./benchmark-sql-result-grid-webdriver.mjs', import.meta.url), 'utf8')
@@ -157,6 +214,8 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /Platform run exceeded its/);
 	assert.match(source, /restartTauriEmbeddedWebdriver/);
 	assert.match(source, /appRestarts/);
+	assert.match(source, /getRecoveryProbeRestartReason/);
+	assert.match(source, /validateRecoveryProbe/);
 	// Viewport observation is a trivial evaluation and must not consume the
 	// full script budget on every calibration attempt.
 	assert.match(source, /OBSERVE_EVAL_TIMEOUT_MS/);
