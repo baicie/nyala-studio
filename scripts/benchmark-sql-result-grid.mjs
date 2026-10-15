@@ -1476,6 +1476,17 @@ async function main() {
 		width: runMarkerRect.width,
 		height: runMarkerRect.height
 	} : undefined;
+	let cellTextLayout;
+	if (visibleFirstCell && firstCellRect) {
+		const range = document.createRange();
+		range.selectNodeContents(visibleFirstCell);
+		const textRect = range.getBoundingClientRect();
+		const computed = getComputedStyle(visibleFirstCell);
+		cellTextLayout = { display: computed.display, alignContent: computed.alignContent,
+			cellHeight: firstCellRect.height, textHeight: textRect.height,
+			textTopOffset: textRect.top - firstCellRect.top,
+			whiteSpace: computed.whiteSpace, textOverflow: computed.textOverflow };
+	}
 	  const result = {
 	    status: 'ok',
 	    userAgent: navigator.userAgent, formatMs: formatted.formatMs, parseMs, renderMs,
@@ -1492,6 +1503,7 @@ async function main() {
     heapBytes: beforeHeap !== null && afterHeap !== null && afterHeap > beforeHeap ? afterHeap - beforeHeap : null,
 	    renderedRows,
 	    visualProbe: {
+		cellTextLayout,
       rootWidth: root.getBoundingClientRect().width,
       rootHeight: root.getBoundingClientRect().height,
 	      headerText: root.querySelector('th, .virtual-header .virtual-cell, .monaco-table-th, [role="columnheader"]')?.textContent || '',

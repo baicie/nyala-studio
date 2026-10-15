@@ -391,3 +391,25 @@ block 22/40ms；wide 为基线 35/45ms、block 37/43ms，尚无稳定时长收�
 也会改变文本垂直对齐，因此不能当作可发布修复。后续若探索此方向，必须保持对齐语义、
 核实 computed style 与像素结果，并使用真正不同的样式变体做官方配对验证。
 本实验写的是实际 DOM inline style，明确进入被测页面，区别于此前未加载的源 CSS A/B。
+
+## block + 居中：原生同宿主五轮否定端到端收益
+
+本机 Chromium 同页交错八对样本，block+align-content:center 的 LayoutDuration 配对
+比中位数约 0.85–0.88，但波动明显，仅作为筛查。随后在真实本机 WKWebView 使用
+baseline 与确实注入样式的 candidate bundle 交错五轮，带 WorkbenchTable 对照，
+只测 10k/wide，30/30 条 ok。数据在 /tmp/z1-block-native/platform-evidence.json。
+
+| workload | baseline rect / gap / scrollP95 | block-center rect / gap / scrollP95 |
+| --- | --- | --- |
+| 10k | 6 / 13 / 34ms | 5 / 12 / 35ms |
+| wide | 8 / 17 / 34ms | 5 / 18 / 35ms |
+
+这里 rect、gap 先取每条 record 内 sample 中位数再取五轮中位数。新 visualProbe
+记录 computed display/alignContent、Range 文本顶部/高度、nowrap 与 ellipsis。
+此 WKWebView 中 baseline 与候选均 cellHeight=28、textHeight=14、textTopOffset=7，
+说明该场景的居中保持，非生产支持范围的全面保证。
+
+虽然 rect 下降，wide 的 gap 反而增大，且两个 workload 的 scroll p95 均未改善。
+因此不能把匿名 flex 对象减少视为性能修复，不发布该候选，也不将本机证据视为
+官方 admission。新 cellTextLayout 探针仅在所有计时工作结束后的 visualProbe 阶段
+运行，不加入滚动测量路径。
