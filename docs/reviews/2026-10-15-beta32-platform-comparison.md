@@ -343,3 +343,21 @@ getBoundingClientRect 与 elementFromPoint，可能执行 DOM 写入后尚未完
 区间之间可能只是工作迁移。不能把低 commit 数字理解成全部浏览器渲染成本低。
 下一步分离 rect 与 hit-test 耗时，避免未经证实就把整个差额命名为布局。
 三轮诊断结果不计分，不构成 beta.32 性能达标证据。
+
+## rect / hit-test 分离（38667024446）
+
+两个原生平台各 48/48 条 ok，每 workload/变体 60 个 sample。中位数 ms：
+
+| 平台/workload | Zeus beta.31 rect / hit | Zeus beta.32 rect / hit | WorkbenchTable rect / hit |
+| --- | --- | --- | --- |
+| macOS 10k | 3 / 0 | 3 / 0 | 0 / 0 |
+| macOS wide | 8 / 0 | 9 / 0 | 0 / 0 |
+| Windows 10k | 3.4 / 0.8 | 3.3 / 0.7 | 0 / 0.1 |
+| Windows wide | 4.5 / 1.2 | 4.4 / 1.1 | 0 / 0 |
+
+rect 是 viewport.getBoundingClientRect 的墙钟耗时；hit 是 elementFromPoint 加 closest。
+macOS 的 0 受计时精度限制。Zeus 的差异主要在 rect 读取阶段，支持 pending style/layout
+被同步读取触发的解释，不能再全部归为 paint 或纯探针开销。此测量未进一步划分 style
+recalc 与 layout，也没有证明哪个具体生产节点造成代价。下一步应对重排范围、grid
+track 计算与长文本测量做机制明确的单变量实验，不能因 rect 有成本就直接添加同步读取
+把时间搬进 commit，或据此宣称性能改善。beta.31/32 在 10k rect 上无明显改善。
