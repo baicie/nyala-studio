@@ -310,3 +310,14 @@ macOS 同宿主 beta.31 → pinned beta.32（各 5 轮，中位数）：
 了 cell padding、nowrap、ellipsis 等属性；因此 CSS 文件 SHA 只能证明字节被加载，
 不能证明每条产品声明成为 computed style，也不能用于验证被覆盖属性的 CSS 候选。
 完整产品布局与逐变体 computed-style provenance 仍待建立。Z1 改善目标尚未达成。
+
+### commit 与 rAF 的顺序复核
+
+对 run 38640001235 的完整 macOS artifact，逐样本检查 phase=sample 且具有完整
+commit/rAF/task 时间戳的 Zeus 记录：四个 workload、两个变体，各 100 个样本。
+**800/800 个样本的 commitEndTime <= nextPaintRafTime**；没有 commit 完整落在
+rAF→task 区间内。10k 与 wide 的 commitStartTime − nextPaintRafTime 中位数均为
+−2ms。因此这里的 rafToTask 不是“还在等待 Zeus 同步 commit”——commit 已在区间之前
+完成。但区间仍混有可见性探针、布局/命中测试、后续呈现工作及计时器调度；没有进一步
+分段之前，不可全部命名为 paint 成本。诊断 run 38665852661 用新字段分离探针结束
+时间，证据尚在采集中。
