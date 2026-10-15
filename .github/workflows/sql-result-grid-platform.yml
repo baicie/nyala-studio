@@ -23,6 +23,11 @@ on:
         required: false
         default: 'false'
         type: string
+      text_churn:
+        description: 'Explicit diagnostic DOM observer in trace navigation only; never admission.'
+        required: false
+        default: 'false'
+        type: string
       zeus_package_version:
         description: 'data-grid version to measure. Defaults to the version this workflow pins. Overrides collect control evidence and are never gated.'
         required: false
@@ -37,6 +42,10 @@ on:
         type: string
       zeus_cell_layout_variant:
         description: 'Diagnostic only: append block + centered cell CSS to this requested variant id. Requires zeus_variant; never admission.'
+        required: false
+        type: string
+      diagnostic_renderers:
+        description: 'Renderer subset for paired diagnostics, e.g. zeus,workbench-table. Requires zeus_variant; never admission.'
         required: false
         type: string
 
@@ -88,9 +97,15 @@ jobs:
         shell: bash
         env:
           CELL_LAYOUT_VARIANT: ${{ inputs.zeus_cell_layout_variant }}
+          ZEUS_VARIANTS: ${{ inputs.zeus_variant }}
+          DIAGNOSTIC_RENDERERS: ${{ inputs.diagnostic_renderers }}
         run: |
-          if [ -n "$CELL_LAYOUT_VARIANT" ] && [ -z "${{ inputs.zeus_variant }}" ]; then
+          if [ -n "$CELL_LAYOUT_VARIANT" ] && [ -z "$ZEUS_VARIANTS" ]; then
             echo 'Cell layout experiment requires an interleaved variant.' >&2
+            exit 1
+          fi
+          if [ -n "$DIAGNOSTIC_RENDERERS" ] && [ -z "$ZEUS_VARIANTS" ]; then
+            echo 'Renderer subsets require interleaved diagnostics.' >&2
             exit 1
           fi
           printf '{"name":"nyala-zeus-audit","private":true}\n' > "$AUDIT_DIR/package.json"
@@ -258,13 +273,17 @@ jobs:
       - name: Run embedded WKWebView benchmark
         env:
           BENCHMARK_REPEAT: ${{ inputs.repeat || '5' }}
+          ZEUS_VARIANTS: ${{ inputs.zeus_variant }}
+          DIAGNOSTIC_RENDERERS: ${{ inputs.diagnostic_renderers }}
+          TEXT_CHURN: ${{ inputs.text_churn || 'false' }}
+          INSTRUMENT_BASELINE: ${{ inputs.instrument_baseline || 'false' }}
         run: |
           VARIANT_ARGS=""
-          if [ -n "${{ inputs.zeus_variant }}" ]; then
+          if [ -n "$ZEUS_VARIANTS" ]; then
             OLD_IFS=$IFS
             IFS=';'
             VARIANT_ARGS="--zeus-variant pinned=$RUNNER_TEMP/nyala-zeus-audit/data-grid-bundle.js"
-            for pair in ${{ inputs.zeus_variant }}; do
+            for pair in $ZEUS_VARIANTS; do
               id="${pair%%=*}"
               [ -n "$id" ] || continue
               VARIANT_ARGS="$VARIANT_ARGS,$id=$RUNNER_TEMP/nyala-zeus-audit/variant-$id.js"
@@ -278,13 +297,15 @@ jobs:
           node scripts/benchmark-sql-result-grid-webdriver.mjs \
             --app-binary "$GITHUB_WORKSPACE/target/debug/sql-studio-next" \
             --platform macos \
+            --renderer "${{ inputs.diagnostic_renderers || 'all' }}" \
             --repeat "$BENCHMARK_REPEAT" \
             --run-budget-ms 4200000 \
             --zeus-bundle "$RUNNER_TEMP/nyala-zeus-audit/data-grid-bundle.js" \
             $VARIANT_ARGS \
             $CSS_ARGS \
             --trace-profile true \
-            --instrument-baseline "${{ inputs.instrument_baseline || 'false' }}" \
+            --text-churn "$TEXT_CHURN" \
+            --instrument-baseline "$INSTRUMENT_BASELINE" \
             --repository "$GITHUB_REPOSITORY" \
             --source-revision "$GITHUB_SHA" \
             --source-ref "$GITHUB_REF" \
@@ -397,12 +418,14 @@ jobs:
           node scripts/benchmark-sql-result-grid-webdriver.mjs `
             --app-binary "$env:GITHUB_WORKSPACE\target\debug\sql-studio-next.exe" `
             --platform windows `
+            --renderer "${{ inputs.diagnostic_renderers || 'all' }}" `
             --repeat "$env:BENCHMARK_REPEAT" `
             --run-budget-ms 4200000 `
             --zeus-bundle "$env:RUNNER_TEMP\nyala-zeus-audit\data-grid-bundle.js" `
             @variantArgs `
             @cssArgs `
             --trace-profile true `
+            --text-churn "${{ inputs.text_churn || 'false' }}" `
             --instrument-baseline "${{ inputs.instrument_baseline || 'false' }}" `
             --repository "$env:GITHUB_REPOSITORY" `
             --source-revision "$env:GITHUB_SHA" `
@@ -456,7 +479,7 @@ jobs:
           merge-multiple: false
 
       - name: Merge evidence
-        if: ${{ inputs.instrument_baseline != 'true' && inputs.zeus_package_version == '' && inputs.zeus_variant == '' && inputs.zeus_css_package_version == '' }}
+        if: ${{ inputs.instrument_baseline != 'true' && inputs.text_churn != 'true' && inputs.zeus_package_version == '' && inputs.zeus_variant == '' && inputs.zeus_css_package_version == '' }}
         run: |
           node scripts/merge-sql-result-grid-platform-evidence.mjs \
             --macos "$RUNNER_TEMP/sql-result-grid-evidence/sql-result-grid-macos-webkit/platform-evidence.json" \
@@ -469,7 +492,7 @@ jobs:
       # A version override collects control evidence for a paired comparison.
       # The gate scores one pinned version, so it is skipped for overrides.
       - name: Run fail-closed Z1 gate
-        if: ${{ inputs.instrument_baseline != 'true' && inputs.zeus_package_version == '' && inputs.zeus_variant == '' && inputs.zeus_css_package_version == '' }}
+        if: ${{ inputs.instrument_baseline != 'true' && inputs.text_churn != 'true' && inputs.zeus_package_version == '' && inputs.zeus_variant == '' && inputs.zeus_css_package_version == '' }}
         env:
           NYALA_EXPECTED_REPOSITORY: ${{ github.repository }}
           NYALA_EXPECTED_SOURCE_REVISION: ${{ github.sha }}

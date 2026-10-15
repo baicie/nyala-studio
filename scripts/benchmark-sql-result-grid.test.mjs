@@ -1008,10 +1008,7 @@ test('diagnostic benchmark page assigns the beta.4 observer before data and DOM 
 		assert.match(source, /zeusDataGrid/);
 		assert.match(source, /const measureNodeChurn = params\.get\('measureNodeChurn'\)/);
 		assert.match(source, /measureNodeChurn === 'false' \? \{ measureNodeChurn: false \} : undefined/);
-		assert.match(
-			source,
-			/measureNodeChurn: segmentTrace \|\| \(diagnosticProfile && !floorOnly && measureNodeChurn !== 'false'\)/
-		);
+		assert.match(source, /measureNodeChurn: measureNodeChurn === 'true'/);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

@@ -86,6 +86,7 @@ import {
 	SQL_RESULT_GRID_SEGMENT_TRACE_CORRELATION,
 	SQL_RESULT_GRID_SEGMENT_TRACE_INSTRUMENTATION
 } from './sql-result-grid-segment-trace.mjs';
+import { installSqlResultGridTextChurnObserver } from './sql-result-grid-text-churn.mjs';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const defaultOutput = join(repositoryRoot, 'docs/sql-mvp-phases/phase-z1-benchmark.json');
@@ -108,7 +109,7 @@ const workloads = [
 const cli = parseArgs(process.argv.slice(2));
 if (cli.help) {
 	process.stdout.write(
-		`Usage: node scripts/benchmark-sql-result-grid.mjs [options]\n\nOptions:\n  -h, --help                    Show this help\n  --repeat <n>                  Runs per workload/renderer (default: 1)\n  --renderer <names>            native,workbench-table,zeus, or all\n  --workload <ids>              Comma-separated workload ids\n  --workbench-table-implementation <mode>\n                                characterization (default) or real\n  --zeus-bundle <path>          Zeus data-grid browser bundle (or NYALA_ZEUS_BUNDLE)\n  --require-zeus <true|false>   Fail unless Zeus produces ok records\n  --diagnostic-profile <bool>   Measure presentation floor and Zeus internals (default: false)\n  --floor-only <bool>           Sample the presentation floor without installing renderer observers (default: false)\n  --jank-trace <true|false>     Diagnostic continuous-scroll jank traces (default: false)\n  --segment-trace <true|false>  Observer-free input/handler/range/commit/paint trace (default: false)\n  --zeus-measure-node-churn <bool>\n                                Diagnostic A/B: count DOM node churn after commit (default: true)\n  --emit-page <path>            Write the standalone benchmark page and exit\n  --output <path>               Output benchmark JSON\n`
+		`Usage: node scripts/benchmark-sql-result-grid.mjs [options]\n\nOptions:\n  -h, --help                    Show this help\n  --repeat <n>                  Runs per workload/renderer (default: 1)\n  --renderer <names>            native,workbench-table,zeus, or all\n  --workload <ids>              Comma-separated workload ids\n  --workbench-table-implementation <mode>\n                                characterization (default) or real\n  --zeus-bundle <path>          Zeus data-grid browser bundle (or NYALA_ZEUS_BUNDLE)\n  --require-zeus <true|false>   Fail unless Zeus produces ok records\n  --diagnostic-profile <bool>   Measure presentation floor and Zeus internals (default: false)\n  --floor-only <bool>           Sample the presentation floor without installing renderer observers (default: false)\n  --jank-trace <true|false>     Diagnostic continuous-scroll jank traces (default: false)\n  --text-churn <true|false>     Enable diagnostic text observer in segment trace only (default: false)\n  --segment-trace <true|false>  Observer-free input/handler/range/commit/paint trace (default: false)\n  --zeus-measure-node-churn <bool>\n                                Diagnostic A/B: count DOM node churn after commit (default: true)\n  --emit-page <path>            Write the standalone benchmark page and exit\n  --output <path>               Output benchmark JSON\n`
 	);
 	process.exit(0);
 }
@@ -118,6 +119,8 @@ const floorOnly = parseBoolean(cli['floor-only'] ?? 'false', '--floor-only');
 const traceProfile = parseBoolean(cli['trace-profile'] ?? 'false', '--trace-profile');
 const jankTrace = parseBoolean(cli['jank-trace'] ?? 'false', '--jank-trace');
 const segmentTrace = parseBoolean(cli['segment-trace'] ?? 'false', '--segment-trace');
+const textChurn = parseBoolean(cli['text-churn'] ?? 'false', '--text-churn');
+if (textChurn && !segmentTrace) throw new Error('--text-churn requires --segment-trace true (diagnostic only).');
 const zeusMeasureNodeChurn = parseBoolean(cli['zeus-measure-node-churn'] ?? 'true', '--zeus-measure-node-churn');
 const selectedRenderers =
 	cli.renderer === 'all' || !cli.renderer ? ['native', 'workbench-table', 'zeus'] : cli.renderer.split(',');
@@ -247,6 +250,8 @@ try {
 		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
 		scrollCommitBoundary: SCROLL_COMMIT_BOUNDARY,
 		executionOrder: EXECUTION_ORDER,
+		pageInstrumentation: textChurn ? 'text-churn-observer-v1' : 'no-global-dom-observer-v2',
+		traceInstrumentation: textChurn ? 'text-churn-observer-v1' : 'no-global-dom-observer-v2',
 		generatedAt: new Date().toISOString(),
 		provenance: {
 			...createEvidenceProvenance(cli),
@@ -523,6 +528,7 @@ async function runBrowserBenchmark(
 		floorOnly: String(floorOnly),
 		traceProfile: String(traceProfile),
 		segmentTrace: String(segmentTrace),
+		textChurn: String(textChurn),
 		measureNodeChurn: String(measureNodeChurn),
 		rows: String(workload.rows),
 		columns: String(workload.columns),
@@ -897,6 +903,8 @@ const resultEndpoint = params.get('resultEndpoint');
 	const executionOrder = params.get('executionOrder') || '';
 	const executionOrdinal = Number(params.get('executionOrdinal') || 0);
 const segmentTrace = params.get('segmentTrace') === 'true';
+const textChurnEnabled = params.get('textChurn') === 'true';
+if (textChurnEnabled && !segmentTrace) throw new Error('Text churn counting requires a diagnostic segment trace.');
 const diagnosticProfile = params.get('diagnosticProfile') === 'true' || segmentTrace;
 // v7 admission records need the empty-loop presentation floor but must not pay
 // for renderer-side instrumentation, because that overhead would land inside
@@ -961,6 +969,7 @@ ${isJankTraceRecord.toString()}
 ${requireJankTraceClose.toString()}
 ${createJankTraceCollector.toString()}
 ${runObserverFreeSegmentTrace.toString()}
+${installSqlResultGridTextChurnObserver.toString()}
 ${validateObserverFreeSegmentTraceSnapshot.toString()}
 ${createScrollOffsetSampler.toString()}
 ${createTraceScrollOffsets.toString()}
@@ -1001,7 +1010,10 @@ function measureDomNodes() {
 }
 
 function writeBenchmarkResult(result) {
+	textChurnCollector?.dispose();
 	const payload = {
+		pageInstrumentation: textChurnEnabled ? 'text-churn-observer-v1' : 'no-global-dom-observer-v2',
+		traceInstrumentation: textChurnEnabled ? 'text-churn-observer-v1' : 'no-global-dom-observer-v2',
 		runToken,
 		renderer,
 		// 交错采集时，同一 workload/renderer 会在同一会话内用不同 Zeus bundle 变体
@@ -1494,7 +1506,7 @@ async function main() {
 		rendererImplementation: rendered.implementation,
 		diagnostics: diagnosticProfile || traceProfile ? {
 			...(diagnosticProfile ? { presentationFloor } : {}),
-			measureNodeChurn: segmentTrace || (diagnosticProfile && !floorOnly && measureNodeChurn !== 'false'),
+			measureNodeChurn: measureNodeChurn === 'true',
 			floorOnly,
 			traceProfile,
 			...(zeusDataGrid ? { zeusDataGrid } : {}),
@@ -1532,12 +1544,7 @@ async function main() {
 		if (rendered.unavailable) throw new Error('Segment trace renderer is unavailable: ' + rendered.unavailable);
 		void root.offsetHeight;
 		await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
-		if (globalThis.__nyalaTextChurn) {
-			globalThis.__nyalaTextChurn.textWrites = 0;
-			globalThis.__nyalaTextChurn.addedNodes = 0;
-			globalThis.__nyalaTextChurn.removedNodes = 0;
-			globalThis.__nyalaTextChurn.mutations = 0;
-		}
+		textChurnCollector?.reset();
 		const trace = await runObserverFreeSegmentTrace(rendered, {
 			maxFrames: ${SQL_RESULT_GRID_SEGMENT_TRACE_MAX_FRAMES},
 			targetRatios: SCROLL_TARGET_RATIOS,
@@ -1548,12 +1555,16 @@ async function main() {
 			getVisibleRowIndex,
 			expectedVisibleRowIndex
 		});
-		validateObserverFreeSegmentTraceSnapshot(trace, { expectedSampleCount: SCROLL_SAMPLE_COUNT + 2 });
+		if (textChurnEnabled) {
+			trace.observerFree = false;
+			trace.domObserverFree = false;
+			trace.instrumentation = 'text-churn-observer-v1';
+		} else validateObserverFreeSegmentTraceSnapshot(trace, { expectedSampleCount: SCROLL_SAMPLE_COUNT + 2 });
 		writeBenchmarkResult({
 			status: 'ok',
 			segmentTrace: trace,
 			rendererImplementation: rendered.implementation,
-			textChurn: globalThis.__nyalaTextChurn ? { ...globalThis.__nyalaTextChurn } : undefined,
+			textChurn: textChurnCollector?.snapshot(),
 			domNodes: measureDomNodes()
 		});
 	}
@@ -1609,27 +1620,7 @@ async function main() {
 	const startBenchmark = () => (segmentTrace ? runSegmentTrace() : jankTrace ? runJankTrace() : main()).catch(error => {
 		writeBenchmarkResult({ status: 'error', error: formatBenchmarkError(error) });
 	});
-	// Diagnostic-only text churn counter. A pooled virtual list can rebind every
-	// visible cell on each scroll commit, and each text-node write costs the
-	// engine a re-shape of the string. Counting characterData mutations separates
-	// "the renderer rebuilt content" from "the renderer reshaped identical
-	// content", which is not visible in rafToTask alone.
-	globalThis.__nyalaTextChurn = { textWrites: 0, addedNodes: 0, removedNodes: 0, mutations: 0 };
-	globalThis.__nyalaChurnObserver = new MutationObserver(records => {
-		const churn = globalThis.__nyalaTextChurn;
-		for (const record of records) {
-			churn.mutations += 1;
-			if (record.type === 'characterData') churn.textWrites += 1;
-			for (const node of record.addedNodes) if (node.nodeType === 3) churn.addedNodes += 1;
-			for (const node of record.removedNodes) if (node.nodeType === 3) churn.removedNodes += 1;
-		}
-	});
-	globalThis.__nyalaChurnObserver.observe(document.documentElement, {
-		childList: true,
-		subtree: true,
-		characterData: true,
-		characterDataOldValue: false
-	});
+	const textChurnCollector = installSqlResultGridTextChurnObserver({ enabled: textChurnEnabled });
 	if (params.get('deferStart') === 'true') {
 		globalThis.addEventListener('nyala-benchmark-start', startBenchmark, { once: true });
 	} else {

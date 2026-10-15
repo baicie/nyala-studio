@@ -7,16 +7,75 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 
 const execFileAsync = promisify(execFile);
+const BASE_BUNDLE = 'a'.repeat(64);
+const CANDIDATE_BUNDLE = 'b'.repeat(64);
+
+test('historical unlabelled instrumentation cannot be compared with a clean page', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-instrumentation-compare-'));
+	try {
+		const report = await run(
+			root,
+			evidence({ pageInstrumentation: undefined, traceInstrumentation: undefined }),
+			evidence({ provenance: { workflowRunId: 2, zeusBundleSha256: CANDIDATE_BUNDLE } })
+		);
+		assert.equal(report.scored, false);
+		assert.ok(report.identityMismatches.some(value => value.includes('pageInstrumentation')));
+		assert.ok(report.rows.every(row => row.comparable === false));
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('matching but unverified historical pages cannot be scored', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-unverified-page-'));
+	try {
+		const report = await run(
+			root,
+			evidence({ pageInstrumentation: undefined }),
+			evidence({
+				pageInstrumentation: undefined,
+				provenance: { zeusBundleSha256: CANDIDATE_BUNDLE }
+			})
+		);
+		assert.equal(report.scored, false);
+		assert.ok(report.rows.every(row => row.comparable === false));
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+for (const traceInstrumentation of [undefined, 'text-churn-observer-v1']) {
+	test(`diagnostic trace instrumentation ${traceInstrumentation ?? 'missing'} cannot be scored`, async () => {
+		const root = await mkdtemp(join(tmpdir(), 'nyala-trace-instrumentation-'));
+		try {
+			const report = await run(
+				root,
+				evidence({ traceInstrumentation }),
+				evidence({
+					traceInstrumentation,
+					admissionGrade: true,
+					provenance: { workflowRunId: 2, zeusBundleSha256: CANDIDATE_BUNDLE }
+				})
+			);
+			assert.equal(report.scored, false);
+			assert.ok(report.identityMismatches.some(value => value.includes('traceInstrumentation')));
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+}
 
 function evidence(overrides = {}) {
 	return {
 		measurementContractVersion: 7,
 		scrollCommitBoundary: 'post-presentation-opportunity',
 		executionOrder: 'renderer-balanced-rotation-v1',
+		pageInstrumentation: 'no-global-dom-observer-v2',
+		traceInstrumentation: 'no-global-dom-observer-v2',
 		platformName: 'macos',
 		admissionGrade: true,
 		limitations: [],
-		provenance: { workflowRunId: 1, zeusBundleSha256: 'aaa' },
+		provenance: { workflowRunId: 1, zeusBundleSha256: BASE_BUNDLE },
 		summary: {
 			'10k-x-50/zeus': { count: 3, scrollP95Ms: { median: 40, available: true } }
 		},
@@ -47,7 +106,7 @@ test('reports scored deltas when identity matches and bundles differ', async () 
 			root,
 			evidence(),
 			evidence({
-				provenance: { workflowRunId: 2, zeusBundleSha256: 'bbb' },
+				provenance: { workflowRunId: 2, zeusBundleSha256: CANDIDATE_BUNDLE },
 				summary: { '10k-x-50/zeus': { count: 3, scrollP95Ms: { median: 30, available: true } } }
 			})
 		);
@@ -78,7 +137,7 @@ test('an interleaved run keeps each variant in its own summary bucket', async ()
 				zeusBundleSha256: 'pinned',
 				interleavedVariants: [
 					{ id: 'pinned', bundleSha256: 'pinned' },
-					{ id: 'beta-31', bundleSha256: 'bbb' }
+					{ id: 'beta-31', bundleSha256: CANDIDATE_BUNDLE }
 				]
 			},
 			summary: {
@@ -147,9 +206,10 @@ test('surfaces admission-grade and limitation caveats verbatim', async () => {
 		const report = await run(
 			root,
 			evidence({ admissionGrade: false, limitations: ['instrumented baseline'] }),
-			evidence({ provenance: { workflowRunId: 2, zeusBundleSha256: 'bbb' } })
+			evidence({ provenance: { workflowRunId: 2, zeusBundleSha256: CANDIDATE_BUNDLE } })
 		);
 		assert.ok(report.caveats.some(caveat => caveat.includes('diagnostic only')));
+		assert.equal(report.scored, false);
 		assert.ok(report.caveats.some(caveat => caveat.includes('instrumented baseline')));
 	} finally {
 		await rm(root, { recursive: true, force: true });
@@ -181,7 +241,7 @@ test('derives raf-to-task and commit medians that the summary does not carry', a
 			root,
 			evidence({ records: [record()] }),
 			evidence({
-				provenance: { workflowRunId: 2, zeusBundleSha256: 'bbb' },
+				provenance: { workflowRunId: 2, zeusBundleSha256: CANDIDATE_BUNDLE },
 				records: [
 					record({
 						segmentTrace: {
@@ -209,7 +269,7 @@ test('ignores records that did not complete', async () => {
 		const report = await run(
 			root,
 			evidence({ records: [record(), record({ status: 'failed', scroll: { medianMs: 999 } })] }),
-			evidence({ provenance: { workflowRunId: 2, zeusBundleSha256: 'bbb' }, records: [record()] })
+			evidence({ provenance: { workflowRunId: 2, zeusBundleSha256: CANDIDATE_BUNDLE }, records: [record()] })
 		);
 		const row = report.rows.find(entry => entry.key === '10k-x-50/zeus');
 		assert.equal(row.metrics.scrollMedianMs.baselineMedian, 30);
@@ -233,7 +293,7 @@ test('flags control-renderer movement as run drift', async () => {
 			root,
 			withSummary({ zeus: 50, native: 50 }),
 			evidence({
-				provenance: { workflowRunId: 2, zeusBundleSha256: 'bbb' },
+				provenance: { workflowRunId: 2, zeusBundleSha256: CANDIDATE_BUNDLE },
 				summary: {
 					'10k-x-50/zeus': { count: 5, scrollP95Ms: { median: 20, available: true } },
 					'10k-x-50/native': { count: 5, scrollP95Ms: { median: 25, available: true } }
@@ -245,6 +305,7 @@ test('flags control-renderer movement as run drift', async () => {
 				caveat => caveat.includes('control renderer native') && caveat.includes('run-level host or runner drift')
 			)
 		);
+		assert.equal(report.scored, false);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -262,7 +323,7 @@ test('stays quiet when control renderers hold still', async () => {
 				}
 			}),
 			evidence({
-				provenance: { workflowRunId: 2, zeusBundleSha256: 'bbb' },
+				provenance: { workflowRunId: 2, zeusBundleSha256: CANDIDATE_BUNDLE },
 				summary: {
 					'10k-x-50/zeus': { count: 5, scrollP95Ms: { median: 20, available: true } },
 					'10k-x-50/native': { count: 5, scrollP95Ms: { median: 50, available: true } }

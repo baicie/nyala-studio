@@ -4,11 +4,11 @@
 `@zeus-js/runtime-dom@0.1.1-beta.13`）。对照为同一 workflow、同一 instrument 设置下
 `0.1.0-beta.31` 的一次独立复采。
 
-| run | 分支 | bundle SHA256 | 用途 | 判定 |
-| --- | --- | --- | --- | --- |
-| 38605063491 | `mvp` | `9ef85faaa4b9…`（beta.31） | 跨 run 对照，但采集器较旧 | NO-GO |
-| 38609171367 | `codex/collector-comparability-audit` | `9ef85faaa4b9…`（beta.31） | 同采集器机制对照 | 未跑门（版本覆盖） |
-| 38604544592 | `codex/collector-comparability-audit` | `f363cf4391f9…`（beta.32） | 候选 | NO-GO |
+| run         | 分支                                  | bundle SHA256              | 用途                      | 判定               |
+| ----------- | ------------------------------------- | -------------------------- | ------------------------- | ------------------ |
+| 38605063491 | `mvp`                                 | `9ef85faaa4b9…`（beta.31） | 跨 run 对照，但采集器较旧 | NO-GO              |
+| 38609171367 | `codex/collector-comparability-audit` | `9ef85faaa4b9…`（beta.31） | 同采集器机制对照          | 未跑门（版本覆盖） |
+| 38604544592 | `codex/collector-comparability-audit` | `f363cf4391f9…`（beta.32） | 候选                      | NO-GO              |
 
 三个 run 均为 `measurementContractVersion: 7`、同一 `scrollCommitBoundary` 与
 `executionOrder`、`admissionGrade: true`、每 workload/renderer 5 轮、无
@@ -26,13 +26,13 @@ renderer 数字带 observer 开销，已被替换为本次配对复采。
 
 macOS WebKit，scroll p95 中位数：
 
-| workload          | renderer        | beta.31 | beta.32 | 变化    |
-| ----------------- | --------------- | ------- | ------- | ------- |
-| 10k-x-50          | zeus            | 49      | 19      | −61.2%  |
-| 10k-x-50          | native          | 49      | 25      | −49.0%  |
-| 10k-x-50          | workbench-table | 46      | 23      | −50.0%  |
-| wide-columns      | zeus            | 48      | 35      | −27.1%  |
-| wide-columns      | workbench-table | 33      | 18      | −45.5%  |
+| workload     | renderer        | beta.31 | beta.32 | 变化   |
+| ------------ | --------------- | ------- | ------- | ------ |
+| 10k-x-50     | zeus            | 49      | 19      | −61.2% |
+| 10k-x-50     | native          | 49      | 25      | −49.0% |
+| 10k-x-50     | workbench-table | 46      | 23      | −50.0% |
+| wide-columns | zeus            | 48      | 35      | −27.1% |
+| wide-columns | workbench-table | 33      | 18      | −45.5% |
 
 native 与 workbench-table 不加载 Zeus bundle。10k 上两个对照 renderer 与 Zeus 同步
 下移 49–50%，wide-columns 上 workbench-table 的降幅（−45.5%）大于 Zeus（−27.1%）。
@@ -58,12 +58,12 @@ run 38609171367 用**同一份采集器代码**（本分支）测量 beta.31，�
 配对，因此 `textChurn` 计数不受宿主性能影响。`textChurn` 记录测量滚动期间的
 characterData mutation 数：
 
-| workload     | renderer | beta.31 | beta.32 | 变化     |
-| ------------ | -------- | ------- | ------- | -------- |
-| 1k-x-20      | zeus     | 6762    | 6422    | −5.0%    |
-| 10k-x-50     | zeus     | 6762    | 6401    | −5.3%    |
-| wide-columns | zeus     | 6762    | 6422    | −5.0%    |
-| narrow-panel | zeus     | 2415    | 2075    | −14.1%   |
+| workload     | renderer | beta.31 | beta.32 | 变化   |
+| ------------ | -------- | ------- | ------- | ------ |
+| 1k-x-20      | zeus     | 6762    | 6422    | −5.0%  |
+| 10k-x-50     | zeus     | 6762    | 6401    | −5.3%  |
+| wide-columns | zeus     | 6762    | 6422    | −5.0%  |
+| narrow-panel | zeus     | 2415    | 2075    | −14.1% |
 
 macOS 与 Windows 两侧数字完全一致，说明这是确定性的写入次数变化，而非计时噪声。
 `addedNodes` 与 `removedNodes` 在两侧均为 0，确认成本来自复用单元格重绑定既有文本节点，
@@ -81,17 +81,17 @@ run 38618032049 在**同一台 macOS runner、同一个 WebView 会话**内交�
 顺序，各 5 轮，共 80 条 record，全部 `status: ok`。这是本次调查里第一次宿主状态对
 两个 bundle 相同。
 
-| workload | 指标 | beta-31 | beta.32 | 变化 |
-| --- | --- | ---: | ---: | ---: |
-| 10k-x-50 | 文本写入 | 6762 | 6401 | −5.3% |
-| 10k-x-50 | rafToTask 中位 | 16.0ms | 16.0ms | 0% |
-| 10k-x-50 | commit 中位 | 2ms | 2ms | 0% |
-| wide-columns | 文本写入 | 6762 | 6422 | −5.0% |
-| wide-columns | rafToTask 中位 | 26.0ms | 27.0ms | +3.8% |
-| 1k-x-20 | 文本写入 | 6762 | 6422 | −5.0% |
-| 1k-x-20 | rafToTask 中位 | 13.0ms | 14.0ms | +7.7% |
-| narrow-panel | 文本写入 | 2415 | 2075 | −14.1% |
-| narrow-panel | rafToTask 中位 | 6.0ms | 6.0ms | 0% |
+| workload     | 指标           | beta-31 | beta.32 |   变化 |
+| ------------ | -------------- | ------: | ------: | -----: |
+| 10k-x-50     | 文本写入       |    6762 |    6401 |  −5.3% |
+| 10k-x-50     | rafToTask 中位 |  16.0ms |  16.0ms |     0% |
+| 10k-x-50     | commit 中位    |     2ms |     2ms |     0% |
+| wide-columns | 文本写入       |    6762 |    6422 |  −5.0% |
+| wide-columns | rafToTask 中位 |  26.0ms |  27.0ms |  +3.8% |
+| 1k-x-20      | 文本写入       |    6762 |    6422 |  −5.0% |
+| 1k-x-20      | rafToTask 中位 |  13.0ms |  14.0ms |  +7.7% |
+| narrow-panel | 文本写入       |    2415 |    2075 | −14.1% |
+| narrow-panel | rafToTask 中位 |   6.0ms |   6.0ms |     0% |
 
 scroll p95 的中位数在两个变体间同向无差异（10k 37→47、wide-columns 56→49、1k 36→37、
 narrow 21→21），差异方向不一致且量级与 5% 的写入削减不相称。
@@ -107,16 +107,16 @@ narrow 21→21），差异方向不一致且量级与 5% 的写入削减不相�
 run 38620933262 在修复 PowerShell 参数传递后重跑，macOS 与 Windows 两侧都拿到 80 条
 `status: ok` 的 record。两平台的交错结论完全一致：
 
-| workload | 平台 | rafToTask 中位 | commit 中位 | 文本写入 |
-| --- | --- | --- | --- | --- |
-| 10k-x-50 | macOS | 14 → 14（0%） | 2 → 2（0%） | 6762 → 6401（−5.3%） |
-| 10k-x-50 | Windows | 5.4 → 5.4（0%） | 3.1 → 3.1（0%） | 6762 → 6401（−5.3%） |
-| wide-columns | macOS | 26 → 26（0%） | 2 → 2（0%） | 6762 → 6422（−5.0%） |
-| wide-columns | Windows | 8.5 → 8.6（+1.2%） | 3.3 → 3.6（+9.1%） | 6762 → 6422（−5.0%） |
-| 1k-x-20 | macOS | 15 → 14（−6.7%） | 2 → 2（0%） | 6762 → 6422（−5.0%） |
-| 1k-x-20 | Windows | 5.5 → 5.5（0%） | 3.1 → 3.2（+3.2%） | 6762 → 6422（−5.0%） |
-| narrow-panel | macOS | 6 → 5（−16.7%） | 1 → 1（0%） | 2415 → 2075（−14.1%） |
-| narrow-panel | Windows | 2.3 → 2.4（+4.3%） | 1.4 → 1.4（0%） | 2415 → 2075（−14.1%） |
+| workload     | 平台    | rafToTask 中位     | commit 中位        | 文本写入              |
+| ------------ | ------- | ------------------ | ------------------ | --------------------- |
+| 10k-x-50     | macOS   | 14 → 14（0%）      | 2 → 2（0%）        | 6762 → 6401（−5.3%）  |
+| 10k-x-50     | Windows | 5.4 → 5.4（0%）    | 3.1 → 3.1（0%）    | 6762 → 6401（−5.3%）  |
+| wide-columns | macOS   | 26 → 26（0%）      | 2 → 2（0%）        | 6762 → 6422（−5.0%）  |
+| wide-columns | Windows | 8.5 → 8.6（+1.2%） | 3.3 → 3.6（+9.1%） | 6762 → 6422（−5.0%）  |
+| 1k-x-20      | macOS   | 15 → 14（−6.7%）   | 2 → 2（0%）        | 6762 → 6422（−5.0%）  |
+| 1k-x-20      | Windows | 5.5 → 5.5（0%）    | 3.1 → 3.2（+3.2%） | 6762 → 6422（−5.0%）  |
+| narrow-panel | macOS   | 6 → 5（−16.7%）    | 1 → 1（0%）        | 2415 → 2075（−14.1%） |
+| narrow-panel | Windows | 2.3 → 2.4（+4.3%） | 1.4 → 1.4（0%）    | 2415 → 2075（−14.1%） |
 
 Windows 上唯一的正向信号是 narrow-panel 的 rafToTask −16.7%（macOS 同项 −16.7%），
 但该项写入削减也是最大的 14.1%，且窄面板不是 Z1 门的主指标。10k 上两个平台的
@@ -126,12 +126,12 @@ rafToTask 与 commit 都完全没有移动。
 
 同 run 内对照三个 renderer 的 rafToTask 中位（macOS / Windows，ms）：
 
-| workload | zeus | workbench-table | native | zeus DOM 节点 | WBT DOM 节点 |
-| --- | --- | --- | --- | ---: | ---: |
-| 1k-x-20 | 13.6 / 5.6 | 8.4 / 1.8 | 10.6 / 9.7 | 405 | 404 |
-| 10k-x-50 | 15.0 / 5.5 | 4.6 / 2.8 | 16.2 / 20.4 | 405 | 914 |
-| wide-columns | **26.0 / 8.7** | 8.0 / 2.0 | 6.6 / 3.8 | 405 | 404 |
-| narrow-panel | 5.0 / 2.4 | 2.0 / 0.9 | 4.2 / 6.7 | 171 | 404 |
+| workload     | zeus           | workbench-table | native      | zeus DOM 节点 | WBT DOM 节点 |
+| ------------ | -------------- | --------------- | ----------- | ------------: | -----------: |
+| 1k-x-20      | 13.6 / 5.6     | 8.4 / 1.8       | 10.6 / 9.7  |           405 |          404 |
+| 10k-x-50     | 15.0 / 5.5     | 4.6 / 2.8       | 16.2 / 20.4 |           405 |          914 |
+| wide-columns | **26.0 / 8.7** | 8.0 / 2.0       | 6.6 / 3.8   |           405 |          404 |
+| narrow-panel | 5.0 / 2.4      | 2.0 / 0.9       | 4.2 / 6.7   |           171 |          404 |
 
 wide-columns 上 Zeus 与 workbench-table 的 DOM 规模几乎相同（405 vs 404 节点），
 rafToTask 却相差 3.2 倍（macOS 26.0 vs 8.0）。这是本次证据中**唯一仍然可归因于
@@ -295,10 +295,10 @@ POST navigation 30s 超时，证据不完整，已重跑失败 job。不能把 w
 
 macOS 同宿主 beta.31 → pinned beta.32（各 5 轮，中位数）：
 
-| workload | scroll p95 | rafToTask | commit | textWrites |
-| --- | --- | --- | --- | --- |
-| 10k-x-50 | 36 → 40ms | 14 → 14ms | 2 → 2ms | 6762 → 6383 |
-| wide-columns | 41 → 44ms | 22.5 → 21.5ms | 2 → 2ms | 6762 → 6382 |
+| workload     | scroll p95 | rafToTask     | commit  | textWrites  |
+| ------------ | ---------- | ------------- | ------- | ----------- |
+| 10k-x-50     | 36 → 40ms  | 14 → 14ms     | 2 → 2ms | 6762 → 6383 |
+| wide-columns | 41 → 44ms  | 22.5 → 21.5ms | 2 → 2ms | 6762 → 6382 |
 
 10k 未显示改善；wide 的 1ms rafToTask 差异不能凭这 5 轮认定为稳定收益。
 
@@ -328,11 +328,11 @@ run 成功完成；macOS、Windows 各 48 条记录均为 ok。每 workload/变�
 phase=sample 的 60 个样本的中位数，单位 ms（不同分量中位数不可直接相加）：
 
 | 平台/workload | Zeus beta.31 probe / after-probe | Zeus beta.32 probe / after-probe | WorkbenchTable probe / after-probe |
-| --- | --- | --- | --- |
-| Windows 10k | 5.0 / 2.1 | 4.8 / 2.0 | 0.1 / 2.1 |
-| Windows wide | 6.5 / 2.15 | 6.5 / 2.1 | 0.1 / 2.0 |
-| macOS 10k | 4 / 11 | 4 / 12 | 0 / 4 |
-| macOS wide | 9 / 12 | 8 / 10 | 0 / 8 |
+| ------------- | -------------------------------- | -------------------------------- | ---------------------------------- |
+| Windows 10k   | 5.0 / 2.1                        | 4.8 / 2.0                        | 0.1 / 2.1                          |
+| Windows wide  | 6.5 / 2.15                       | 6.5 / 2.1                        | 0.1 / 2.0                          |
+| macOS 10k     | 4 / 11                           | 4 / 12                           | 0 / 4                              |
+| macOS wide    | 9 / 12                           | 8 / 10                           | 0 / 8                              |
 
 probe = nextPaintRafProbeEndTime − nextPaintRafTime；after-probe =
 nextPaintTaskTime − nextPaintRafProbeEndTime。macOS 的 0 受时钟精度限制。
@@ -349,11 +349,11 @@ getBoundingClientRect 与 elementFromPoint，可能执行 DOM 写入后尚未完
 两个原生平台各 48/48 条 ok，每 workload/变体 60 个 sample。中位数 ms：
 
 | 平台/workload | Zeus beta.31 rect / hit | Zeus beta.32 rect / hit | WorkbenchTable rect / hit |
-| --- | --- | --- | --- |
-| macOS 10k | 3 / 0 | 3 / 0 | 0 / 0 |
-| macOS wide | 8 / 0 | 9 / 0 | 0 / 0 |
-| Windows 10k | 3.4 / 0.8 | 3.3 / 0.7 | 0 / 0.1 |
-| Windows wide | 4.5 / 1.2 | 4.4 / 1.1 | 0 / 0 |
+| ------------- | ----------------------- | ----------------------- | ------------------------- |
+| macOS 10k     | 3 / 0                   | 3 / 0                   | 0 / 0                     |
+| macOS wide    | 8 / 0                   | 9 / 0                   | 0 / 0                     |
+| Windows 10k   | 3.4 / 0.8               | 3.3 / 0.7               | 0 / 0.1                   |
+| Windows wide  | 4.5 / 1.2               | 4.4 / 1.1               | 0 / 0                     |
 
 rect 是 viewport.getBoundingClientRect 的墙钟耗时；hit 是 elementFromPoint 加 closest。
 macOS 的 0 受计时精度限制。Zeus 的差异主要在 rect 读取阶段，支持 pending style/layout
@@ -400,9 +400,9 @@ baseline 与确实注入样式的 candidate bundle 交错五轮，带 WorkbenchT
 只测 10k/wide，30/30 条 ok。数据在 /tmp/z1-block-native/platform-evidence.json。
 
 | workload | baseline rect / gap / scrollP95 | block-center rect / gap / scrollP95 |
-| --- | --- | --- |
-| 10k | 6 / 13 / 34ms | 5 / 12 / 35ms |
-| wide | 8 / 17 / 34ms | 5 / 18 / 35ms |
+| -------- | ------------------------------- | ----------------------------------- |
+| 10k      | 6 / 13 / 34ms                   | 5 / 12 / 35ms                       |
+| wide     | 8 / 17 / 34ms                   | 5 / 18 / 35ms                       |
 
 这里 rect、gap 先取每条 record 内 sample 中位数再取五轮中位数。新 visualProbe
 记录 computed display/alignContent、Range 文本顶部/高度、nowrap 与 ellipsis。
@@ -449,3 +449,46 @@ fail closed。它向该变体的真实 JS bundle 附加带 marker 的 cell 样�
 覆盖候选 CSS 字节；默认路径无变化，交错 run 仍不 admission。相同 beta.32 两变体
 用于单独评估 cell 布局机制，visualProbe.cellTextLayout 核对原生平台上的实际 computed
 style 与文本位置。只有官方双平台结果才能决定是否继续产品实现，不能预先宣称收益。
+
+## 仪器审计：此前 observer-free 声明不成立
+
+并行代码审计发现提交 453ec654 加入的 __nyalaChurnObserver 在页面启动时无条件
+observe(document.documentElement,{subtree:true,childList:true,characterData:true})，
+primary、floorOnly、segmentTrace、jankTrace 都会安装。primary 不输出计数却仍承担
+观察器排队/回调；trace 的 observerFree/domObserverFree:true 因此不成立。这里确认的
+是仪器契约违约，尚未量化它对结果的影响，不能宣称它解释全部 Zeus 延迟。
+
+修复后默认不创建该 observer。text-churn 必须显式启用且仅允许诊断 trace 导航；该
+trace 明确 observerFree=false、domObserverFree=false、instrumentation=text-churn-observer-v1，
+整 run 不得 admission。计数器 reset 丢弃前阶段 pending records、snapshot drain、
+dispose disconnect。真实 emit 页面的 VM 启动回归覆盖 floor/trace/jank 默认0构造、
+显式 trace计数1构造、错误模式拒绝，不靠源码匹配证明“无观察器”。
+
+新页面/报告声明 pageInstrumentation=no-global-dom-observer-v2；对比器禁止与缺失或
+不同标记的历史证据混比。门禁补充顶层与raw record仪器状态、平台 admissionGrade 的
+fail-closed检查。保留原指标/阈值/contract版本，不给旧证据补写干净标记。
+
+计时边界也需修正解释：primary 在 rAF→task 等待之后强制 offsetHeight 并验证，trace
+额外先setTimeout，且在rAF内部读取rect/hit。trace的3–9ms不能直接称为primary额外
+探针开销。官方 Windows split 10k 的primary validation pooled p95约0.2ms，trace
+rect pooled p95约4.7ms，说明两阶段不能直接相减归因。floor是空循环参考，不是相同
+滚动路径的严格下界；primary是逐次大幅垂直跳转，也不能单独证明连续真实wheel收益。
+
+38669420084 的 CSS 候选仍使用旧全局observer，故只保留为有观察器的诊断结果；其
+macOS 48/48 ok，10k scrollP95 pinned49→candidate37ms、1k32→42ms、wide52→46ms。
+这些点估计尚不能作为发布依据，须在修正后的仪器上重新配对，且不能与旧run混算。
+
+修复验证：text-churn helper 与实际 emit 页面启动回归13/13通过；gate新增20项拒绝
+测试在旧verifier全红、修复后转绿，gate suite84/84通过。真实 Chromium默认三轮六条
+记录全部ok、无textChurn且DOM-observer-free；显式模式六条全部ok，Zeus计数6401、
+observerFree=false。原生WKWebView单轮也验证 primary=cleanv2、trace=text-churn-v1、
+admissionGrade=false，计数6401。这里只验证仪器行为，不宣称性能收益。
+
+旧候选run的Windows仅22条ok后navigation/session timeout，没有完整wide/narrow数据，
+不得与完整macOS结果拼成成功。修正后配对筛查显式使用Zeus+WorkbenchTable子集，
+避免native约50万节点导致宿主失响应；该子集要求交错诊断且不可作完整Z1 admission。
+
+另修正对比工具：先前admissionGrade=false与control漂移只写caveat却未真正令scored=false。
+现在必须两边明确admissionGrade=true、干净仪器标记、bundle身份存在且不同、无重大
+control漂移才可计分；缺失标记的旧历史两边互比也不得计分。仍输出机械delta供诊断，
+不输出性能改善宣称。

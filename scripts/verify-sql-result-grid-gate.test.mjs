@@ -63,6 +63,8 @@ function createSyntheticBenchmark() {
 	return {
 		version: 1,
 		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
+		pageInstrumentation: 'no-global-dom-observer-v2',
+		traceInstrumentation: 'no-global-dom-observer-v2',
 		scrollCommitBoundary: SCROLL_COMMIT_BOUNDARY,
 		executionOrder: EXECUTION_ORDER,
 		browser: '/private/tmp/nyala-secret/synthetic-gate-fixture',
@@ -170,6 +172,9 @@ async function createPlatformEvidence(root, identity) {
 	return {
 		version: 2,
 		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
+		pageInstrumentation: 'no-global-dom-observer-v2',
+		traceInstrumentation: 'no-global-dom-observer-v2',
+		admissionGrade: true,
 		scrollCommitBoundary: SCROLL_COMMIT_BOUNDARY,
 		executionOrder: EXECUTION_ORDER,
 		generatedAt: '2026-08-16T00:00:00.000Z',
@@ -197,6 +202,8 @@ function createPlatformRecord(platformName, workload, renderer, iteration, execu
 		runToken: fixtureRunToken(platformName, workload.id, renderer, iteration),
 		renderer,
 		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
+		pageInstrumentation: 'no-global-dom-observer-v2',
+		traceInstrumentation: 'no-global-dom-observer-v2',
 		scrollCommitBoundary: SCROLL_COMMIT_BOUNDARY,
 		executionOrder: EXECUTION_ORDER,
 		executionOrdinal,
@@ -1184,6 +1191,62 @@ test('Z1.3 verifier rejects a raw record from a legacy measurement contract', as
 		/Chromium benchmark.*record measurement contract version is 2.*expected 7/i
 	);
 });
+
+for (const pageInstrumentation of [undefined, 'text-churn-observer-v1', 'no-global-dom-observer-v1']) {
+	const instrumentationLabel = pageInstrumentation ?? 'missing';
+	for (const target of ['report', 'record']) {
+		test(`Z1.3 verifier rejects Chromium ${target} page instrumentation ${instrumentationLabel}`, async () => {
+			await assertBenchmarkRejected(
+				'nyala-z1-benchmark-page-instrumentation-test-',
+				benchmark => {
+					const evidence = target === 'report' ? benchmark : benchmark.records[0];
+					evidence.pageInstrumentation = pageInstrumentation;
+				},
+				/Chromium benchmark.*page instrumentation.*expected no-global-dom-observer-v2/i
+			);
+		});
+	}
+}
+
+for (const platform of ['macosWebKit', 'windowsWebView2']) {
+	for (const admissionGrade of [undefined, false, 'true']) {
+		test(`Z1.3 verifier rejects ${platform} admission grade ${String(admissionGrade)}`, async () => {
+			await assertPlatformEvidenceRejected(
+				'nyala-z1-platform-admission-grade-test-',
+				evidence => {
+					evidence[platform].admissionGrade = admissionGrade;
+				},
+				/admission grade.*expected true/i
+			);
+		});
+	}
+	for (const pageInstrumentation of [undefined, 'text-churn-observer-v1']) {
+		for (const target of ['report', 'record']) {
+			test(`Z1.3 verifier rejects ${platform} ${target} page instrumentation ${String(pageInstrumentation)}`, async () => {
+				await assertPlatformEvidenceRejected(
+					'nyala-z1-platform-page-instrumentation-test-',
+					evidence => {
+						const entry = evidence[platform];
+						const value = target === 'report' ? entry : entry.records[0];
+						value.pageInstrumentation = pageInstrumentation;
+					},
+					/page instrumentation.*expected no-global-dom-observer-v2/i
+				);
+			});
+		}
+	}
+	for (const traceInstrumentation of [undefined, 'text-churn-observer-v1']) {
+		test(`Z1.3 verifier rejects ${platform} trace instrumentation ${String(traceInstrumentation)}`, async () => {
+			await assertPlatformEvidenceRejected(
+				'nyala-z1-platform-trace-instrumentation-test-',
+				evidence => {
+					evidence[platform].traceInstrumentation = traceInstrumentation;
+				},
+				/trace instrumentation.*expected no-global-dom-observer-v2/i
+			);
+		});
+	}
+}
 
 test('Z1.3 verifier rejects a raw record with another scroll commit boundary', async () => {
 	await assertBenchmarkRejected(

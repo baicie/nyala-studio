@@ -110,7 +110,7 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.equal(EXECUTION_ORDER, 'renderer-balanced-rotation-v1');
 	assert.match(source, /measurementContractVersion:\s*MEASUREMENT_CONTRACT_VERSION/);
 	assert.match(source, /scrollCommitBoundary:\s*SCROLL_COMMIT_BOUNDARY/);
-	assert.match(source, /executionOrder:\s*EXECUTION_ORDER/);
+	assert.match(source, /executionOrder:\s*(?:EXECUTION_ORDER|interleaved \? INTERLEAVED_EXECUTION_ORDER)/);
 	assert.match(source, /createBalancedBenchmarkPlan/);
 	assert.match(source, /executionOrdinal/);
 	assert.match(source, /convergeWindowRectForCssViewport/);
@@ -166,6 +166,8 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 		source,
 		/async function runBenchmarkRound\(\{ workload, renderer, iteration, executionOrdinal, variant \}\)/
 	);
+	assert.match(source, /executionOrder: effectiveExecutionOrder/);
+	assert.doesNotMatch(source, /executionOrder: EXECUTION_ORDER,\s*\n\s*executionOrdinal/);
 });
 
 test('benchmark page posts completed results to the runner channel', async () => {

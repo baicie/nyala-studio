@@ -51,6 +51,8 @@ const expectedWorkloads = new Map(
 	].map(workload => [workload.id, workload])
 );
 const expectedRenderers = ['native', 'workbench-table', 'zeus'];
+const expectedPageInstrumentation = 'no-global-dom-observer-v2';
+const expectedTraceInstrumentation = 'no-global-dom-observer-v2';
 const expectedZeusPackage = {
 	name: '@zeus-web/data-grid',
 	version: '0.1.0-beta.32',
@@ -137,6 +139,8 @@ const report = {
 	input: displayPath(inputPath),
 	benchmark: {
 		measurementContractVersion: benchmark.measurementContractVersion,
+		pageInstrumentation: benchmark.pageInstrumentation,
+		traceInstrumentation: benchmark.traceInstrumentation,
 		scrollCommitBoundary: benchmark.scrollCommitBoundary,
 		executionOrder: benchmark.executionOrder,
 		workbenchTableImplementation: benchmark.workbenchTableImplementation,
@@ -290,6 +294,22 @@ function validateBenchmarkEvidence(report, expected) {
 				report.measurementContractVersion === MEASUREMENT_CONTRACT_VERSION
 					? `Chromium benchmark measurement contract version ${MEASUREMENT_CONTRACT_VERSION} verified`
 					: `Chromium benchmark measurement contract version is ${report.measurementContractVersion ?? 'missing'}, expected ${MEASUREMENT_CONTRACT_VERSION}`
+		},
+		{
+			id: 'chromium-benchmark-page-instrumentation',
+			passed: report.pageInstrumentation === expectedPageInstrumentation,
+			reason:
+				report.pageInstrumentation === expectedPageInstrumentation
+					? `Chromium benchmark page instrumentation ${expectedPageInstrumentation} verified`
+					: `Chromium benchmark page instrumentation is ${report.pageInstrumentation ?? 'missing'}, expected ${expectedPageInstrumentation}`
+		},
+		{
+			id: 'chromium-benchmark-trace-instrumentation',
+			passed: report.traceInstrumentation === expectedTraceInstrumentation,
+			reason:
+				report.traceInstrumentation === expectedTraceInstrumentation
+					? `Chromium benchmark trace instrumentation ${expectedTraceInstrumentation} verified`
+					: `Chromium benchmark trace instrumentation is ${report.traceInstrumentation ?? 'missing'}, expected ${expectedTraceInstrumentation}`
 		},
 		{
 			id: 'chromium-benchmark-scroll-commit-boundary',
@@ -564,6 +584,30 @@ function displayPath(path) {
 async function validatePlatformEvidence(evidence, evidenceRoot) {
 	const checks = [];
 	checks.push({
+		id: `${evidence.label}-admission-grade`,
+		passed: evidence.admissionGrade === true,
+		reason:
+			evidence.admissionGrade === true
+				? `${evidence.label}: admission grade verified`
+				: `${evidence.label}: admission grade is ${evidence.admissionGrade ?? 'missing'}, expected true`
+	});
+	checks.push({
+		id: `${evidence.label}-page-instrumentation`,
+		passed: evidence.pageInstrumentation === expectedPageInstrumentation,
+		reason:
+			evidence.pageInstrumentation === expectedPageInstrumentation
+				? `${evidence.label}: page instrumentation ${expectedPageInstrumentation} verified`
+				: `${evidence.label}: page instrumentation is ${evidence.pageInstrumentation ?? 'missing'}, expected ${expectedPageInstrumentation}`
+	});
+	checks.push({
+		id: `${evidence.label}-trace-instrumentation`,
+		passed: evidence.traceInstrumentation === expectedTraceInstrumentation,
+		reason:
+			evidence.traceInstrumentation === expectedTraceInstrumentation
+				? `${evidence.label}: trace instrumentation ${expectedTraceInstrumentation} verified`
+				: `${evidence.label}: trace instrumentation is ${evidence.traceInstrumentation ?? 'missing'}, expected ${expectedTraceInstrumentation}`
+	});
+	checks.push({
 		id: `${evidence.label}-schema-version`,
 		passed: evidence.version === 2,
 		reason:
@@ -666,6 +710,16 @@ function validateRawRecords(evidence, { expectedRuns, runCount, requireScreensho
 		if (record.measurementContractVersion !== MEASUREMENT_CONTRACT_VERSION) {
 			errors.push(
 				`${tuple} record measurement contract version is ${record.measurementContractVersion ?? 'missing'}; expected ${MEASUREMENT_CONTRACT_VERSION}`
+			);
+		}
+		if (record.pageInstrumentation !== expectedPageInstrumentation) {
+			errors.push(
+				`${tuple} record page instrumentation is ${record.pageInstrumentation ?? 'missing'}; expected ${expectedPageInstrumentation}`
+			);
+		}
+		if (record.traceInstrumentation !== expectedTraceInstrumentation) {
+			errors.push(
+				`${tuple} record trace instrumentation is ${record.traceInstrumentation ?? 'missing'}; expected ${expectedTraceInstrumentation}`
 			);
 		}
 		if (record.scrollCommitBoundary !== SCROLL_COMMIT_BOUNDARY) {

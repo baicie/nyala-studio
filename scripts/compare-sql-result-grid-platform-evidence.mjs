@@ -12,7 +12,13 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-const IDENTITY_KEYS = ['measurementContractVersion', 'scrollCommitBoundary', 'executionOrder'];
+const IDENTITY_KEYS = [
+	'measurementContractVersion',
+	'scrollCommitBoundary',
+	'executionOrder',
+	'pageInstrumentation',
+	'traceInstrumentation'
+];
 
 // Metrics that only exist on the raw records, not in the summary object. Without
 // these the Zeus-side commit and raf-to-task costs are invisible, which is the
@@ -25,6 +31,7 @@ const METRICS = ['scrollP95Ms', 'scrollMaxMs', 'presentationFloorP95Ms'];
 
 /** Control-renderer scrollP95Ms movement above this is treated as run drift. */
 const CONTROL_DRIFT_REPORT_PERCENT = 10;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 const cli = parseArgs(process.argv.slice(2));
 if (!cli.baseline || !cli.candidate) {
@@ -77,6 +84,17 @@ function compare(baselineFile, candidateFile) {
 			identityMismatches.push(`${key}: ${JSON.stringify(base[key])} -> ${JSON.stringify(cand[key])}`);
 		}
 	}
+	for (const [label, value] of [
+		['baseline', base],
+		['candidate', cand]
+	]) {
+		if (value.pageInstrumentation !== 'no-global-dom-observer-v2') {
+			identityMismatches.push(`pageInstrumentation: ${label} does not prove a clean page`);
+		}
+		if (value.traceInstrumentation !== 'no-global-dom-observer-v2') {
+			identityMismatches.push(`traceInstrumentation: ${label} does not prove a clean trace`);
+		}
+	}
 	if (base.platformName !== cand.platformName) {
 		identityMismatches.push(
 			`platformName: ${JSON.stringify(base.platformName)} -> ${JSON.stringify(cand.platformName)}`
@@ -85,6 +103,7 @@ function compare(baselineFile, candidateFile) {
 
 	const baseBundle = base.provenance?.zeusBundleSha256 ?? null;
 	const candBundle = cand.provenance?.zeusBundleSha256 ?? null;
+	const validBundles = SHA256_PATTERN.test(baseBundle ?? '') && SHA256_PATTERN.test(candBundle ?? '');
 	const sameBundle = baseBundle !== null && baseBundle === candBundle;
 
 	const keys = [...new Set([...Object.keys(base.summary), ...Object.keys(cand.summary)])].sort();
@@ -131,7 +150,15 @@ function compare(baselineFile, candidateFile) {
 		});
 	}
 
-	const scored = identityMismatches.length === 0 && !sameBundle;
+	const controlDriftCaveats = controlRendererCaveats(rows);
+	const scored =
+		identityMismatches.length === 0 &&
+		!sameBundle &&
+		Boolean(baseBundle && candBundle) &&
+		validBundles &&
+		base.admissionGrade === true &&
+		cand.admissionGrade === true &&
+		controlDriftCaveats.length === 0;
 	const caveats = [];
 	if (sameBundle) {
 		caveats.push(
@@ -141,12 +168,16 @@ function compare(baselineFile, candidateFile) {
 	if (identityMismatches.length > 0) {
 		caveats.push(`Measurement identity differs: ${identityMismatches.join('; ')}.`);
 	}
-	if (base.admissionGrade === false || cand.admissionGrade === false) {
+	if (base.admissionGrade !== true || cand.admissionGrade !== true) {
 		caveats.push(
 			`At least one run is diagnostic only (admissionGrade=false: baseline=${base.admissionGrade}, candidate=${cand.admissionGrade}); it must not be scored for gate admission.`
 		);
 	}
-	caveats.push(...controlRendererCaveats(rows));
+	if (!validBundles)
+		caveats.push(
+			'Bundle identity is missing or is not a 64-character lowercase SHA-256 digest; this report must not be scored.'
+		);
+	caveats.push(...controlDriftCaveats);
 	for (const file of [baselineFile, candidateFile]) {
 		for (const limitation of file.value.limitations ?? []) {
 			caveats.push(`[${file.path}] ${limitation}`);

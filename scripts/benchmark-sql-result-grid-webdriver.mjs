@@ -67,6 +67,7 @@ if (cli.help === 'true') {
   --script-timeout-ms <n> WebDriver script budget (default: 120000)
   --run-budget-ms <n> Whole-platform-run budget (default: 1800000)
   --navigation-timeout-ms <n>  Per-navigation WebDriver deadline (default: 30000)
+  --text-churn <true|false>    Count text mutations in trace navigation only (diagnostic, default false)
   --trace-profile <true|false>  Record observer-free scroll timing segments
   --instrument-baseline <true|false>  Instrument the baseline renderer so commit
     work is recorded. Disables floorOnly, which means the presentation floor and
@@ -123,6 +124,8 @@ const navigationTimeoutMs = parseBoundedPositiveInteger(
 // shows exactly how much retrying a platform needed.
 const maxRoundAttempts = parseBoundedPositiveInteger(cli['max-round-attempts'] ?? '3', '--max-round-attempts', 10);
 const traceProfile = String(cli['trace-profile'] ?? 'false') === 'true';
+const textChurn = String(cli['text-churn'] ?? 'false') === 'true';
+if (textChurn && !traceProfile) throw new Error('--text-churn requires --trace-profile true (diagnostic only).');
 // The baseline renderer is only instrumented when the caller asks for commit
 // work. floorOnly exists so the presentation floor is sampled without observer
 // overhead inside scrollP95Ms; that same guarantee is why an instrumented run
@@ -496,7 +499,7 @@ async function run() {
 				workloadId: workload.id,
 				renderer,
 				iteration,
-				executionOrder: EXECUTION_ORDER,
+				executionOrder: effectiveExecutionOrder,
 				executionOrdinal,
 				viewportCalibration
 			};
@@ -550,6 +553,7 @@ async function run() {
 							executionOrdinal,
 							zeusVariant: variant ? variant.id : null,
 							workload,
+							textChurn,
 							workbenchTableBundleSha256: provenance.workbenchTableBundleSha256
 						}
 					);
@@ -953,6 +957,7 @@ async function runObserverFreeSegmentTraceNavigation(
 		segmentTrace: 'true',
 		diagnosticProfile: 'true',
 		measureNodeChurn: 'false',
+		textChurn: String(expected.textChurn === true),
 		rows: String(expected.workload.rows),
 		columns: String(expected.workload.columns),
 		wide: String(expected.workload.wide),
@@ -994,7 +999,16 @@ async function runObserverFreeSegmentTraceNavigation(
 			`Observer-free segment trace failed for ${expected.workload.id}/${expected.renderer}: ${String(reason).split('\n')[0]}`
 		);
 	}
-	validateObserverFreeSegmentTraceSnapshot(record.segmentTrace, { expectedSampleCount: 22 });
+	if (expected.textChurn) {
+		if (
+			record.segmentTrace.observerFree !== false ||
+			record.segmentTrace.domObserverFree !== false ||
+			record.segmentTrace.instrumentation !== 'text-churn-observer-v1' ||
+			!record.textChurn
+		) {
+			throw new Error('Text churn diagnostic must declare its observer and carry counters.');
+		}
+	} else validateObserverFreeSegmentTraceSnapshot(record.segmentTrace, { expectedSampleCount: 22 });
 	// `textChurn` is diagnostic-only evidence collected during the same measured
 	// scroll. It travels with the trace so a caller can attribute host frame cost
 	// to renderer text rewrites instead of guessing from timing alone.
@@ -1117,6 +1131,8 @@ async function writeEvidence({
 		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
 		scrollCommitBoundary: SCROLL_COMMIT_BOUNDARY,
 		executionOrder: interleaved ? INTERLEAVED_EXECUTION_ORDER : EXECUTION_ORDER,
+		pageInstrumentation: 'no-global-dom-observer-v2',
+		traceInstrumentation: textChurn ? 'text-churn-observer-v1' : 'no-global-dom-observer-v2',
 		generatedAt: new Date().toISOString(),
 		label,
 		status,
@@ -1128,7 +1144,7 @@ async function writeEvidence({
 		// scrollP95Ms carries observer overhead and its presentation floor is not
 		// sampled cleanly. Such evidence may answer diagnostic questions about
 		// commit work, but it must never be scored for v7 admission.
-		admissionGrade: !instrumentBaseline && !interleaved,
+		admissionGrade: !instrumentBaseline && !interleaved && !textChurn && !zeusCss,
 		...(interleaved
 			? {
 					interleavedVariants: zeusVariants.map(variant => variant.id),
@@ -1140,9 +1156,17 @@ async function writeEvidence({
 					)
 				}
 			: {}),
-		...(instrumentBaseline || interleaved
+		...(instrumentBaseline || interleaved || textChurn || zeusCss
 			? {
 					limitations: [
+						...(textChurn
+							? [
+									'Text-churn diagnostics install a DOM observer in the trace navigation and must not be scored for admission.'
+								]
+							: []),
+						...(zeusCss
+							? ['Product CSS evidence uses a diagnostic page layout and must not be scored for admission.']
+							: []),
 						...(instrumentBaseline
 							? [
 									'This run instrumented the baseline renderer, so scrollP95Ms carries observer overhead and the presentation floor was not sampled without instrumentation.',
