@@ -413,3 +413,24 @@ baseline 与确实注入样式的 candidate bundle 交错五轮，带 WorkbenchT
 因此不能把匿名 flex 对象减少视为性能修复，不发布该候选，也不将本机证据视为
 官方 admission。新 cellTextLayout 探针仅在所有计时工作结束后的 visualProbe 阶段
 运行，不加入滚动测量路径。
+
+## 输入路径核对与否定实验
+
+官方 run 38667024446 的 10k sample：Zeus 从 inputEnd 到原生 scroll event 中位数
+macOS 16ms、Windows 14.8ms，eventDispatch→handlerStart 约 0，handlerStart→commitStart
+约 0；生产 scheduleUpdateRange 已对无 pending update 的 scroll 同步 updateRange。
+没有证据支持再移除一层 Zeus RAF 排队。
+
+WorkbenchTable adapter 的 scrollTop setter 调用 table.scrollTop（内部同步滚动模型），
+无原生 scroll event；Zeus adapter 写原生 DOM scrollTop，而 Zeus 公共 scrollToOffset
+会 setScrollOffset 后同步 updateRange。这是不同输入路径，但不能仅凭此断言不公平或
+认定是门禁失败根因。
+
+临时生成两个页面，只对一个使用公共 scrollToOffset 的适配器，配对相同 beta.32
+bundle，本机 WKWebView 五轮 10k/wide + WorkbenchTable 对照，30/30 ok。页面生成后
+已撤销全部实验代码。artifact: /tmp/z1-input-native/platform-evidence.json。
+公共 API 的 setter 中位数约 2.5–3ms，原生 setter 约 0；trace 的 inputStart→首个
+post-rAF task：10k 原生约 48.5ms、API 41ms，wide 原生约 52ms、API 43ms。但 primary
+scroll p95 完全未改善：10k 两者约 34ms，wide 两者约 35ms。trace 与 primary 是不同
+阶段的观测，不可用前者的下降冒充后者收益。此本机 run 的时序也不代表官方 60Hz 门。
+因此不改门禁输入、不修改生产 API、不发布候选；输入路径假设仍未解释 primary 门。
