@@ -5,12 +5,56 @@ import {
 	SQL_RESULT_GRID_SEGMENT_TRACE_CORRELATION,
 	SQL_RESULT_GRID_SEGMENT_TRACE_INSTRUMENTATION,
 	SQL_RESULT_GRID_SEGMENT_TRACE_VERSION,
+	runObserverFreeSegmentTrace,
 	validateObserverFreeSegmentTraceSnapshot
 } from './sql-result-grid-segment-trace.mjs';
 import {
 	createWorkbenchTableDiagnosticCollector,
 	validateWorkbenchTableDiagnosticSnapshot
 } from './sql-result-grid-workbench-table-diagnostics.mjs';
+
+test('frame timing exposes synchronous visibility probe work inside the RAF-to-task interval', async t => {
+	let time = 100;
+	t.mock.method(performance, 'now', () => time);
+	t.mock.method(globalThis, 'setTimeout', callback => {
+		queueMicrotask(callback);
+		return 0;
+	});
+	const originalRaf = Object.getOwnPropertyDescriptor(globalThis, 'requestAnimationFrame');
+	globalThis.requestAnimationFrame = callback => {
+		queueMicrotask(() => callback(time));
+		return 0;
+	};
+	try {
+		const scroll = {
+			scrollTop: 0,
+			scrollHeight: 1000,
+			clientHeight: 100,
+			addEventListener() {},
+			removeEventListener() {}
+		};
+		const result = await runObserverFreeSegmentTrace(
+			{ scroll },
+			{
+				maxFrames: 1,
+				targetRatios: [[1, 2]],
+				rowCount: 100,
+				expectedVisibleRowIndex: () => 1,
+				getVisibleRowIndex: () => {
+					time += 7;
+					return 1;
+				}
+			}
+		);
+		for (const segment of result.segments) {
+			assert.equal(segment.nextPaintRafProbeEndTime - segment.nextPaintRafTime, 7);
+			assert.ok(segment.nextPaintTaskTime >= segment.nextPaintRafProbeEndTime);
+		}
+	} finally {
+		if (originalRaf) Object.defineProperty(globalThis, 'requestAnimationFrame', originalRaf);
+		else delete globalThis.requestAnimationFrame;
+	}
+});
 
 test('observer-free trace listens on the renderer viewport when the scroll adapter is not a DOM node', async () => {
 	const source = await readFile(new URL('./sql-result-grid-segment-trace.mjs', import.meta.url), 'utf8');
