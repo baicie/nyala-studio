@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import {
@@ -11,7 +13,11 @@ import {
 	createEmbeddedWebdriverSession,
 	evaluateViaDirectEval,
 	identifyEmbeddedWebview,
+	launchTauriEmbeddedWebdriver,
 	parseLoopbackDriverUrl,
+	restartTauriEmbeddedWebdriver,
+	waitForWebdriverStatus,
+	waitForWebdriverUnavailable,
 	wrapDirectEvalExpression,
 	webdriverRequest
 } from './tauri-embedded-webdriver.mjs';
@@ -27,11 +33,16 @@ const execFileAsync = promisify(execFile);
 test('same-execution WebDriver profile rejects missing instrumentation, separate traces, and invalid booleans', async () => {
 	for (const [flags, message] of [
 		[['--same-execution-profile', 'true'], /requires --instrument-baseline true/],
-		[['--same-execution-profile', 'true', '--instrument-baseline', 'true', '--trace-profile', 'true'], /requires --trace-profile false/],
+		[
+			['--same-execution-profile', 'true', '--instrument-baseline', 'true', '--trace-profile', 'true'],
+			/requires --trace-profile false/
+		],
 		[['--same-execution-profile', 'invalid'], /must be true or false/]
 	]) {
-		await assert.rejects(execFileAsync(process.execPath, ['scripts/benchmark-sql-result-grid-webdriver.mjs', ...flags]),
-			error => error.code === 1 && message.test(error.stderr));
+		await assert.rejects(
+			execFileAsync(process.execPath, ['scripts/benchmark-sql-result-grid-webdriver.mjs', ...flags]),
+			error => error.code === 1 && message.test(error.stderr)
+		);
 	}
 });
 
@@ -39,17 +50,66 @@ test('same-execution WebDriver evidence stays diagnostic even when collection fa
 	const root = await mkdtemp(join(tmpdir(), 'nyala-same-execution-webdriver-'));
 	try {
 		const output = join(root, 'evidence.json');
-		await assert.rejects(execFileAsync(process.execPath, [
-			'scripts/benchmark-sql-result-grid-webdriver.mjs', '--same-execution-profile', 'true',
-			'--instrument-baseline', 'true', '--renderer', 'zeus', '--zeus-bundle', join(root, 'missing-bundle.js'),
-			'--output', output, '--screenshot-dir', join(root, 'screenshots')
-		]), error => error.code === 1);
+		await assert.rejects(
+			execFileAsync(process.execPath, [
+				'scripts/benchmark-sql-result-grid-webdriver.mjs',
+				'--same-execution-profile',
+				'true',
+				'--instrument-baseline',
+				'true',
+				'--renderer',
+				'zeus',
+				'--zeus-bundle',
+				join(root, 'missing-bundle.js'),
+				'--output',
+				output,
+				'--screenshot-dir',
+				join(root, 'screenshots')
+			]),
+			error => error.code === 1
+		);
 		const report = JSON.parse(await readFile(output, 'utf8'));
 		assert.equal(report.status, 'blocked');
 		assert.equal(report.diagnostic, true);
 		assert.equal(report.admissionGrade, false);
 		assert.equal(report.sameExecutionProfile.diagnosticOnly, true);
 		assert.equal(report.sameExecutionProfile.admissionGrade, false);
+		assert.match(report.limitations.join(' '), /must not be scored for admission/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('Windows recovery probe is fail-closed and cannot be admission evidence', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-recovery-probe-'));
+	const output = join(root, 'evidence.json');
+	try {
+		await assert.rejects(
+			execFileAsync(process.execPath, [
+				'scripts/benchmark-sql-result-grid-webdriver.mjs',
+				'--app-binary',
+				join(root, 'missing-nyala.exe'),
+				'--platform',
+				'windows',
+				'--renderer',
+				'native',
+				'--workload',
+				'10k-x-50,narrow-panel',
+				'--repeat',
+				'5',
+				'--recovery-probe',
+				'true',
+				'--output',
+				output,
+				'--screenshot-dir',
+				join(root, 'screenshots')
+			])
+		);
+		const report = JSON.parse(await readFile(output, 'utf8'));
+		assert.equal(report.status, 'blocked');
+		assert.equal(report.recoveryProbe, true);
+		assert.equal(report.diagnostic, true);
+		assert.equal(report.admissionGrade, false);
 		assert.match(report.limitations.join(' '), /must not be scored for admission/);
 	} finally {
 		await rm(root, { recursive: true, force: true });
@@ -95,6 +155,8 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /sleepWithinDeadline/);
 	assert.match(source, /run-budget-ms/);
 	assert.match(source, /Platform run exceeded its/);
+	assert.match(source, /restartTauriEmbeddedWebdriver/);
+	assert.match(source, /appRestarts/);
 	// Viewport observation is a trivial evaluation and must not consume the
 	// full script budget on every calibration attempt.
 	assert.match(source, /OBSERVE_EVAL_TIMEOUT_MS/);
@@ -130,7 +192,7 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /const instrumentBaseline = String\(cli\['instrument-baseline'\]/);
 	// An instrumented run must declare itself inadmissible so a diagnostic run
 	// can never be mistaken for v7 admission evidence.
-	assert.match(source, /admissionGrade:\s*!instrumentBaseline/);
+	assert.match(source, /admissionGrade:\s*!recoveryProbe &&[\s\S]{0,100}!instrumentBaseline/);
 	// The gate recomputes the summary from raw records and compares it with
 	// isDeepStrictEqual, so the producer must aggregate presentationFloorP95Ms
 	// with exactly the same shape or every platform run fails summary integrity.
@@ -460,6 +522,106 @@ test('WebDriver requests abort within their bounded transport budget', async () 
 	}
 });
 
+test('embedded recovery restarts the app, waits for readiness, and opens a usable new session', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-embedded-recovery-test-'));
+	const reservation = createServer();
+	const hosts = [];
+	let generation = 0;
+	let statusPolls = 0;
+	let deletedSessions = 0;
+	let navigationSession;
+	await new Promise((resolveListen, rejectListen) => {
+		reservation.once('error', rejectListen);
+		reservation.listen(0, '127.0.0.1', resolveListen);
+	});
+	const address = reservation.address();
+	assert.ok(address && typeof address !== 'string');
+	await new Promise(resolveClose => reservation.close(resolveClose));
+	const driverUrl = `http://127.0.0.1:${address.port}`;
+	const spawnProcess = () => {
+		generation += 1;
+		const appGeneration = generation;
+		let ready = false;
+		const server = createServer((request, response) => {
+			response.setHeader('content-type', 'application/json');
+			if (request.method === 'GET' && request.url === '/status') {
+				statusPolls += 1;
+				response.end(JSON.stringify({ value: { ready } }));
+			} else if (request.method === 'POST' && request.url === '/session') {
+				response.end(
+					JSON.stringify({
+						value: {
+							sessionId: `session-${appGeneration}`,
+							capabilities: { platformName: 'windows', browserName: 'msedge' }
+						}
+					})
+				);
+			} else if (request.method === 'DELETE' && request.url.startsWith('/session/')) {
+				deletedSessions += 1;
+				response.end(JSON.stringify({ value: null }));
+			} else if (request.method === 'POST' && request.url === `/session/session-${appGeneration}/url`) {
+				navigationSession = `session-${appGeneration}`;
+				response.end(JSON.stringify({ value: null }));
+			} else {
+				response.end(JSON.stringify({ value: null }));
+			}
+		});
+		server.listen(Number(new URL(driverUrl).port), '127.0.0.1');
+		setTimeout(() => {
+			ready = true;
+		}, 80);
+		const child = new EventEmitter();
+		child.pid = 7000 + appGeneration;
+		child.exitCode = null;
+		child.signalCode = null;
+		child.stdout = new PassThrough();
+		child.stderr = new PassThrough();
+		child.kill = signal => {
+			if (child.exitCode !== null || child.signalCode !== null) return false;
+			child.signalCode = signal;
+			server.closeAllConnections();
+			server.close(() => child.emit('close', null, signal));
+			return true;
+		};
+		return child;
+	};
+	const launch = () =>
+		launchTauriEmbeddedWebdriver({
+			appBinary: process.execPath,
+			driverUrl,
+			dataDir: root,
+			timeoutMs: 2_000,
+			spawnProcess
+		});
+	try {
+		const oldHost = await launch();
+		hosts.push(oldHost);
+		const oldSession = await createEmbeddedWebdriverSession(driverUrl, { timeoutMs: 1_000, retryDelayMs: 5 });
+		const restarted = await restartTauriEmbeddedWebdriver({
+			appHost: oldHost,
+			driverUrl,
+			sessionId: oldSession.sessionId,
+			scriptTimeoutMs: 2_000,
+			timeoutMs: 2_000,
+			launchApp: launch
+		});
+		hosts.push(restarted.appHost);
+		assert.notEqual(restarted.previousProcessId, restarted.nextProcessId);
+		assert.equal(restarted.previousSessionId, 'session-1');
+		assert.equal(restarted.nextSessionId, 'session-2');
+		assert.equal(restarted.status.value.ready, true);
+		assert.ok(statusPolls >= 4, `expected health probes before and after readiness, saw ${statusPolls}`);
+		assert.equal(deletedSessions, 1);
+		await webdriverRequest(driverUrl, `/session/${restarted.nextSessionId}/url`, 'POST', {
+			url: 'http://127.0.0.1/small'
+		});
+		assert.equal(navigationSession, restarted.nextSessionId);
+	} finally {
+		for (const host of hosts.reverse()) await host.stop().catch(() => undefined);
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test('embedded launch failure writes a blocked manifest', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'nyala-embedded-webdriver-test-'));
 	try {
@@ -764,6 +926,17 @@ test('platform workflow can interleave bundle variants inside one WebView sessio
 	// the single-version admission gate.
 	const gateGuards = source.match(/inputs\.zeus_package_version == '' && inputs\.zeus_variant == ''/g) ?? [];
 	assert.equal(gateGuards.length, 2, 'both the merge and the gate must be skipped for an interleaved run');
+});
+
+test('platform workflow exposes an isolated Windows app recovery probe', async () => {
+	const source = await import('node:fs/promises').then(fs =>
+		fs.readFile(new URL('../.github/workflows/sql-result-grid-platform.yml', import.meta.url), 'utf8')
+	);
+	assert.match(source, /windows_recovery_probe:/);
+	assert.match(source, /10k-x-50,narrow-panel/);
+	assert.match(source, /--recovery-probe "\$recoveryProbe"/);
+	assert.match(source, /if: \$\{\{ always\(\) && !inputs\.windows_recovery_probe \}\}/);
+	assert.match(source, /!inputs\.native_wheel_smoke && !inputs\.windows_recovery_probe/);
 });
 
 test('benchmark page loads product CSS only when a stylesheet is named', async () => {

@@ -1,12 +1,14 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { createConnection, createServer } from 'node:net';
 import { dirname, resolve } from 'node:path';
+import { promisify } from 'node:util';
 
 const defaultTimeoutMs = 60_000;
 const defaultRequestTimeoutMs = 30_000;
 const maxCapturedLogCharacters = 500_000;
+const execFileAsync = promisify(execFile);
 
 export async function launchTauriEmbeddedWebdriver({
 	appBinary,
@@ -14,14 +16,16 @@ export async function launchTauriEmbeddedWebdriver({
 	dataDir,
 	logPath,
 	runNonce,
-	timeoutMs = defaultTimeoutMs
+	timeoutMs = defaultTimeoutMs,
+	spawnProcess = spawn,
+	terminateProcess = terminateTauriProcess
 }) {
 	const application = resolve(appBinary);
 	if (dataDir) {
 		await mkdir(resolve(dataDir), { recursive: true });
 	}
 
-	const child = spawn(application, [], {
+	const child = spawnProcess(application, [], {
 		env: createTauriWebdriverEnvironment({ driverUrl, dataDir, runNonce }),
 		stdio: ['ignore', 'pipe', 'pipe'],
 		windowsHide: false
@@ -30,6 +34,7 @@ export async function launchTauriEmbeddedWebdriver({
 	let stdout = '';
 	let stderr = '';
 	let stopped = false;
+	let stopMethod;
 	let spawnError;
 	child.stdout.setEncoding('utf8');
 	child.stderr.setEncoding('utf8');
@@ -51,25 +56,36 @@ export async function launchTauriEmbeddedWebdriver({
 	}
 
 	async function stop() {
-		if (stopped) return;
+		if (stopped) return stopMethod;
 		stopped = true;
-		if (child.pid && child.exitCode === null && child.signalCode === null && child.kill('SIGTERM')) {
-			const closed = await waitForChildClose(childClosed, 5_000);
-			if (!closed && child.exitCode === null && child.signalCode === null && child.kill('SIGKILL')) {
-				await waitForChildClose(childClosed, 2_000);
+		try {
+			if (child.pid && child.exitCode === null && child.signalCode === null) {
+				stopMethod = await terminateProcess(child, 'SIGTERM');
+				let closed = await waitForChildClose(childClosed, 5_000);
+				if (!closed && child.exitCode === null && child.signalCode === null) {
+					stopMethod = await terminateProcess(child, 'SIGKILL');
+					closed = await waitForChildClose(childClosed, 2_000);
+				}
+				if (!closed || (child.exitCode === null && child.signalCode === null)) {
+					throw new Error(`Nyala process ${child.pid} did not exit after termination.`);
+				}
 			}
+		} finally {
+			await writeLog();
 		}
-		await writeLog();
+		return stopMethod;
 	}
 
 	try {
 		await waitForWebdriverStatus(driverUrl, timeoutMs, () => {
 			if (spawnError) throw spawnError;
-			if (child.exitCode !== null) {
-				throw new Error(`Nyala exited with code ${child.exitCode}. ${stderr.slice(-1_000)}`.trim());
+			if (child.exitCode !== null || child.signalCode !== null) {
+				throw new Error(
+					`Nyala exited with code ${child.exitCode ?? 'unknown'}${child.signalCode ? ` (${child.signalCode})` : ''}. ${stderr.slice(-1_000)}`.trim()
+				);
 			}
 		});
-		return { child, stop, writeLog };
+		return { child, pid: child.pid, stop, writeLog };
 	} catch (error) {
 		await stop();
 		throw error;
@@ -166,6 +182,71 @@ export async function createEmbeddedWebdriverSession(
 	throw new Error(
 		`Timed out waiting for embedded WebDriver main window${lastError ? `: ${lastError instanceof Error ? lastError.message : String(lastError)}` : ''}`
 	);
+}
+
+export async function restartTauriEmbeddedWebdriver({
+	appHost,
+	driverUrl,
+	sessionId,
+	scriptTimeoutMs,
+	timeoutMs = defaultTimeoutMs,
+	launchApp = launchTauriEmbeddedWebdriver
+}) {
+	if (!appHost?.child || typeof appHost.stop !== 'function') {
+		throw new Error('Embedded WebDriver restart requires a live Tauri app host.');
+	}
+	if (typeof launchApp !== 'function') throw new Error('Embedded WebDriver restart requires an app launcher.');
+	if (!Number.isInteger(scriptTimeoutMs) || scriptTimeoutMs < 1) {
+		throw new Error(`Embedded WebDriver script timeout must be a positive integer, got ${scriptTimeoutMs}`);
+	}
+
+	const previousProcessId = appHost.child.pid;
+	let nextAppHost;
+	if (sessionId) {
+		await webdriverRequest(driverUrl, `/session/${sessionId}`, 'DELETE', undefined, { timeoutMs: 1_000 }).catch(
+			() => undefined
+		);
+	}
+	const stopMethod = await appHost.stop();
+	if (appHost.child.exitCode === null && appHost.child.signalCode === null) {
+		throw new Error(`Nyala process ${previousProcessId ?? 'unknown'} is still running after stop.`);
+	}
+	await waitForWebdriverUnavailable(driverUrl);
+
+	try {
+		nextAppHost = await launchApp();
+		const nextProcessId = nextAppHost?.child?.pid;
+		if (!nextAppHost?.child || typeof nextAppHost.stop !== 'function') {
+			throw new Error('Embedded WebDriver app launcher returned an invalid host.');
+		}
+		if (previousProcessId !== undefined && nextProcessId === previousProcessId) {
+			throw new Error(`Embedded WebDriver restart reused app process id ${nextProcessId}.`);
+		}
+		const status = await waitForWebdriverStatus(driverUrl, timeoutMs, () => {
+			if (nextAppHost.child.exitCode !== null || nextAppHost.child.signalCode !== null) {
+				throw new Error(`Restarted Nyala process ${nextProcessId ?? 'unknown'} exited before WebDriver became ready.`);
+			}
+		});
+		const session = await createEmbeddedWebdriverSession(driverUrl, { timeoutMs });
+		await webdriverRequest(driverUrl, `/session/${session.sessionId}/timeouts`, 'POST', {
+			implicit: 0,
+			pageLoad: scriptTimeoutMs,
+			script: scriptTimeoutMs
+		});
+		return {
+			appHost: nextAppHost,
+			session,
+			stopMethod,
+			previousProcessId,
+			nextProcessId,
+			previousSessionId: sessionId,
+			nextSessionId: session.sessionId,
+			status
+		};
+	} catch (error) {
+		await nextAppHost?.stop().catch(() => undefined);
+		throw error;
+	}
 }
 
 export function identifyEmbeddedWebview(capabilities, expectedPlatform, hostPlatform = process.platform) {
@@ -446,22 +527,80 @@ export function parseLoopbackDriverUrl(value) {
 	return { url: endpoint.toString().replace(/\/$/, ''), port };
 }
 
-async function waitForWebdriverStatus(driverUrl, timeoutMs, inspectProcess) {
+export async function waitForWebdriverStatus(driverUrl, timeoutMs, inspectProcess) {
 	const deadline = Date.now() + timeoutMs;
 	let lastReason = 'server did not respond';
 	while (Date.now() < deadline) {
 		inspectProcess();
 		try {
-			await webdriverRequest(driverUrl, '/status', 'GET', undefined, {
+			const payload = await webdriverRequest(driverUrl, '/status', 'GET', undefined, {
 				timeoutMs: Math.max(1, Math.min(defaultRequestTimeoutMs, deadline - Date.now()))
 			});
-			return;
+			if (payload.value?.ready !== true) {
+				throw new Error(`Embedded WebDriver is not ready: ${JSON.stringify(payload).slice(0, 500)}`);
+			}
+			return payload;
 		} catch (error) {
 			lastReason = error instanceof Error ? error.message : String(error);
 		}
 		await delay(100);
 	}
 	throw new Error(`Timed out waiting for embedded WebDriver: ${lastReason}`);
+}
+
+export async function waitForWebdriverUnavailable(driverUrl, { timeoutMs = 5_000, requestTimeoutMs = 250 } = {}) {
+	if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+		throw new Error(`Embedded WebDriver unavailable timeout must be a positive integer, got ${timeoutMs}`);
+	}
+	if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1) {
+		throw new Error(
+			`Embedded WebDriver unavailable request timeout must be a positive integer, got ${requestTimeoutMs}`
+		);
+	}
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const listening = await isLoopbackPortListening(driverUrl, requestTimeoutMs);
+		if (!listening) return;
+		await delay(Math.min(50, Math.max(1, deadline - Date.now())));
+	}
+	throw new Error(`Embedded WebDriver endpoint remained available after ${timeoutMs}ms.`);
+}
+
+function isLoopbackPortListening(driverUrl, timeoutMs) {
+	const endpoint = new URL(driverUrl);
+	const host = endpoint.hostname.replace(/^\[|\]$/g, '');
+	const port = Number(endpoint.port || 80);
+	return new Promise(resolveProbe => {
+		const socket = createConnection({ host, port });
+		let settled = false;
+		const finish = listening => {
+			if (settled) return;
+			settled = true;
+			socket.destroy();
+			resolveProbe(listening);
+		};
+		socket.setTimeout(timeoutMs, () => finish(true));
+		socket.once('connect', () => finish(true));
+		socket.once('error', error => finish(error.code !== 'ECONNREFUSED'));
+	});
+}
+
+async function terminateTauriProcess(child, signal) {
+	if (process.platform === 'win32') {
+		try {
+			await execFileAsync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
+			return 'taskkill-process-tree';
+		} catch (error) {
+			if (child.exitCode !== null || child.signalCode !== null) return 'already-exited';
+			throw new Error(
+				`Unable to terminate Nyala process tree ${child.pid}: ${error instanceof Error ? error.message : String(error)}`
+			);
+		}
+	}
+	if (!child.kill(signal) && child.exitCode === null && child.signalCode === null) {
+		throw new Error(`Unable to send ${signal} to Nyala process ${child.pid}.`);
+	}
+	return `child-${signal.toLowerCase()}`;
 }
 
 function appendBounded(current, chunk) {

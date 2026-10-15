@@ -15,6 +15,7 @@ import {
 	evaluateViaDirectEval,
 	identifyEmbeddedWebview,
 	launchTauriEmbeddedWebdriver,
+	restartTauriEmbeddedWebdriver,
 	unwrapWebdriverValue,
 	webdriverRequest
 } from './tauri-embedded-webdriver.mjs';
@@ -73,6 +74,7 @@ if (cli.help === 'true') {
   --navigation-timeout-ms <n>  Per-navigation WebDriver deadline (default: 30000)
   --text-churn <true|false>    Count text mutations in trace navigation only (diagnostic, default false)
   --trace-profile <true|false>  Record observer-free scroll timing segments
+  --recovery-probe <true|false> Exercise Windows app recovery after 10k native rows; diagnostic only
   --same-execution-profile <true|false>  Timestamp the existing primary scroll
     callbacks and validation spans. Requires --instrument-baseline true and
     disables node-churn measurement. Diagnostic evidence only; never admission.
@@ -147,7 +149,9 @@ if (sameExecutionProfile && !instrumentBaseline) {
 	throw new Error('--same-execution-profile requires --instrument-baseline true (diagnostic only).');
 }
 if (sameExecutionProfile && traceProfile) {
-	throw new Error('--same-execution-profile requires --trace-profile false; same-execution timing belongs to the primary navigation.');
+	throw new Error(
+		'--same-execution-profile requires --trace-profile false; same-execution timing belongs to the primary navigation.'
+	);
 }
 const outputPath = resolve(cli.output ?? defaultOutput);
 const screenshotDir = resolve(cli['screenshot-dir'] ?? join(repositoryRoot, 'platform-screenshots'));
@@ -173,6 +177,9 @@ const workloads = [
 const renderers = ['native', 'workbench-table', 'zeus'];
 const selectedWorkloads = selectValues(cli.workload, workloads, 'workload');
 const selectedRenderers = selectValues(cli.renderer, renderers, 'renderer');
+const recoveryProbeValue = String(cli['recovery-probe'] ?? 'false');
+if (!['true', 'false'].includes(recoveryProbeValue)) throw new Error('--recovery-probe must be true or false.');
+const recoveryProbe = recoveryProbeValue === 'true';
 const baseProvenance = createEvidenceProvenance(cli);
 
 if (!appBinary && !['safari', 'edge'].includes(browser)) {
@@ -180,6 +187,19 @@ if (!appBinary && !['safari', 'edge'].includes(browser)) {
 }
 if (appBinary && !['macos', 'windows'].includes(platform)) {
 	throw new Error(`--platform must be macos or windows for embedded evidence, got ${platform || 'empty'}`);
+}
+if (recoveryProbe) {
+	if (!appBinary || platform !== 'windows') {
+		throw new Error('--recovery-probe requires an embedded Windows app binary.');
+	}
+	if (
+		repeat !== 5 ||
+		selectedRenderers.length !== 1 ||
+		selectedRenderers[0] !== 'native' ||
+		selectedWorkloads.map(workload => workload.id).join(',') !== '10k-x-50,narrow-panel'
+	) {
+		throw new Error('--recovery-probe requires --renderer native --workload 10k-x-50,narrow-panel --repeat 5.');
+	}
 }
 if (zeusCss && !(await exists(resolve(zeusCss)))) {
 	throw new Error(`Unable to load Zeus product CSS at ${zeusCss}`);
@@ -207,6 +227,8 @@ async function run() {
 	};
 	let temporaryRoot;
 	let appHost;
+	let appGeneration = -1;
+	const appRestarts = [];
 	let benchmarkServer;
 	let provenance = baseProvenance;
 	let identity = {
@@ -280,21 +302,87 @@ async function run() {
 		}
 		benchmarkServer = await serveBenchmarkPages(pages);
 
-		if (appBinary) {
-			appHost = await launchTauriEmbeddedWebdriver({
+		const appDataDir = cli['app-data-dir'] ?? join(temporaryRoot, 'app-data');
+		const appLogPath = cli['app-log'];
+		const launchEmbeddedApp = async ({ overrideLogPath } = {}) => {
+			const generation = appGeneration + 1;
+			const logPath =
+				overrideLogPath ??
+				(appLogPath ? (generation === 0 ? appLogPath : `${appLogPath}.restart-${generation}.log`) : undefined);
+			const host = await launchTauriEmbeddedWebdriver({
 				appBinary,
 				driverUrl,
-				dataDir: cli['app-data-dir'] ?? join(temporaryRoot, 'app-data'),
-				logPath: cli['app-log'],
+				dataDir: appDataDir,
+				logPath,
 				timeoutMs: startupTimeoutMs
 			});
-		}
+			appGeneration = generation;
+			return { ...host, generation, logPath, pid: host.child.pid };
+		};
+		if (appBinary) appHost = await launchEmbeddedApp();
+		const restartEmbeddedApp = async sessionState => {
+			const staleSessionId = sessionState.sessionId;
+			const previousHost = appHost;
+			const restart = {
+				previousGeneration: previousHost?.generation,
+				previousProcessId: previousHost?.pid,
+				previousSessionId: staleSessionId,
+				startedAt: new Date().toISOString(),
+				status: 'failed'
+			};
+			sessionState.sessionId = undefined;
+			try {
+				const nextGeneration = appGeneration + 1;
+				const logPath = appLogPath ? `${appLogPath}.restart-${nextGeneration}.log` : undefined;
+				const restarted = await restartTauriEmbeddedWebdriver({
+					appHost: previousHost,
+					driverUrl,
+					sessionId: staleSessionId,
+					scriptTimeoutMs,
+					timeoutMs: startupTimeoutMs,
+					launchApp: () => launchEmbeddedApp({ overrideLogPath: logPath })
+				});
+				appHost = restarted.appHost;
+				sessionState.sessionId = restarted.nextSessionId;
+				identity = {
+					...identifyEmbeddedWebview(restarted.session.capabilities, platform),
+					appGeneration: appHost.generation,
+					appProcessId: appHost.pid
+				};
+				restart.nextGeneration = appHost.generation;
+				restart.nextProcessId = restarted.nextProcessId;
+				restart.nextSessionId = restarted.nextSessionId;
+				restart.driverReady = restarted.status.value.ready;
+				restart.stopConfirmed = true;
+				restart.stopMethod = restarted.stopMethod;
+				restart.endpointReleased = true;
+				restart.status = 'recovered';
+				restart.completedAt = new Date().toISOString();
+				appRestarts.push(restart);
+				process.stderr.write(
+					`${label}: restarted embedded app generation ${restart.previousGeneration ?? 'unknown'} -> ${restart.nextGeneration} (pid ${restart.previousProcessId ?? 'unknown'} -> ${restart.nextProcessId ?? 'unknown'}).\n`
+				);
+				return true;
+			} catch (error) {
+				restart.error = error instanceof Error ? error.message : String(error);
+				restart.completedAt = new Date().toISOString();
+				appRestarts.push(restart);
+				process.stderr.write(`${label}: embedded app restart failed: ${restart.error}\n`);
+				return false;
+			}
+		};
 		const session = appBinary
 			? await createEmbeddedWebdriverSession(driverUrl, { timeoutMs: startupTimeoutMs })
 			: await createExternalSession(driverUrl, browser);
 		liveSession.sessionId = session.sessionId;
 		await setSessionTimeouts(driverUrl, liveSession.sessionId, scriptTimeoutMs);
-		if (appBinary) identity = identifyEmbeddedWebview(session.capabilities, platform);
+		if (appBinary) {
+			identity = {
+				...identifyEmbeddedWebview(session.capabilities, platform),
+				appGeneration: appHost.generation,
+				appProcessId: appHost.pid
+			};
+		}
 		const benchmarkPlan = interleaved
 			? createInterleavedVariantBenchmarkPlan(zeusVariants, selectedWorkloads, selectedRenderers, repeat)
 			: createBalancedBenchmarkPlan(selectedWorkloads, selectedRenderers, repeat);
@@ -350,7 +438,7 @@ async function run() {
 					if (
 						isNavigationFailure(error) &&
 						attempt >= 2 &&
-						!(await recycleSessionAfterNavigationFailures(liveSession))
+						!(await recycleSessionAfterNavigationFailures(liveSession, appBinary ? restartEmbeddedApp : undefined))
 					) {
 						if (attempt > 1) recordRoundRetryHistory(attempt);
 						throw error;
@@ -524,6 +612,7 @@ async function run() {
 				iteration,
 				executionOrder: effectiveExecutionOrder,
 				executionOrdinal,
+				...(appHost ? { appGeneration: appHost.generation, appProcessId: appHost.pid } : {}),
 				viewportCalibration
 			};
 			const visualReady = validateVisualProbe(record, workload);
@@ -611,7 +700,8 @@ async function run() {
 			provenance,
 			records,
 			screenshots,
-			retriedRounds
+			retriedRounds,
+			appRestarts
 		});
 		process.exitCode = 1;
 		return;
@@ -635,19 +725,32 @@ async function run() {
 			(selectedRenderers.includes('zeus') ? zeusVariants.length || 1 : 0)) *
 		repeat;
 	const complete = records.length === expectedRecords;
-	const allSuccessful = complete && records.every(record => record.status === 'ok');
+	const recoveryProbeNarrowRecords = records.filter(record => record.workloadId === 'narrow-panel');
+	const recoveryProbePassed =
+		!recoveryProbe ||
+		(appRestarts.some(
+			restart => restart.status === 'recovered' && restart.previousProcessId !== restart.nextProcessId
+		) &&
+			recoveryProbeNarrowRecords.length === repeat &&
+			recoveryProbeNarrowRecords.every(record => record.status === 'ok' && record.appGeneration > 0));
+	const allSuccessful = complete && records.every(record => record.status === 'ok') && recoveryProbePassed;
 	await writeEvidence({
 		status: allSuccessful ? 'ready' : 'blocked',
 		runs: allSuccessful ? repeat : 0,
 		reason: allSuccessful
-			? `${label} recorded ${repeat} runs per workload/renderer.`
-			: `${label} did not produce ${repeat} successful runs for every workload/renderer.`,
+			? recoveryProbe
+				? `${label} recovered its embedded app after 10k native rows and completed the narrow-panel workload.`
+				: `${label} recorded ${repeat} runs per workload/renderer.`
+			: recoveryProbe && !recoveryProbePassed
+				? `${label} did not verify a whole-app restart followed by a successful narrow-panel workload.`
+				: `${label} did not produce ${repeat} successful runs for every workload/renderer.`,
 		label,
 		identity,
 		provenance,
 		records,
 		screenshots,
-		retriedRounds
+		retriedRounds,
+		appRestarts
 	});
 	if (!allSuccessful) process.exitCode = 1;
 }
@@ -819,7 +922,8 @@ function isNavigationFailure(error) {
  * @param {{sessionId?: string}} session the run's live session state; updated in place.
  * @returns {Promise<boolean>} whether a fresh session is now in use.
  */
-async function recycleSessionAfterNavigationFailures(session) {
+async function recycleSessionAfterNavigationFailures(session, restartEmbeddedApp) {
+	if (typeof restartEmbeddedApp === 'function') return restartEmbeddedApp(session);
 	const staleSessionId = session.sessionId;
 	session.sessionId = undefined;
 	try {
@@ -1147,7 +1251,8 @@ async function writeEvidence({
 	provenance,
 	records,
 	screenshots,
-	retriedRounds = []
+	retriedRounds = [],
+	appRestarts = []
 }) {
 	const report = {
 		version: 2,
@@ -1167,11 +1272,36 @@ async function writeEvidence({
 		// scrollP95Ms carries observer overhead and its presentation floor is not
 		// sampled cleanly. Such evidence may answer diagnostic questions about
 		// commit work, but it must never be scored for v7 admission.
-		admissionGrade: !instrumentBaseline && !interleaved && !textChurn && !zeusCss && !sameExecutionProfile,
-		...(sameExecutionProfile ? {
-			diagnostic: true,
-			sameExecutionProfile: createSameExecutionProfileMetadata()
-		} : {}),
+		admissionGrade:
+			!recoveryProbe &&
+			appRestarts.length === 0 &&
+			!instrumentBaseline &&
+			!interleaved &&
+			!textChurn &&
+			!zeusCss &&
+			!sameExecutionProfile,
+		...(recoveryProbe
+			? {
+					diagnostic: true,
+					recoveryProbe: true,
+					limitations: [
+						'This recovery probe measures application restart and post-restart usability only; it must not be scored for admission.'
+					]
+				}
+			: appRestarts.length > 0
+				? {
+						diagnostic: true,
+						limitations: [
+							'This run restarted the embedded app and includes a WebView lifecycle transition; it must not be scored for admission.'
+						]
+					}
+				: {}),
+		...(sameExecutionProfile
+			? {
+					diagnostic: true,
+					sameExecutionProfile: createSameExecutionProfileMetadata()
+				}
+			: {}),
 		...(interleaved
 			? {
 					interleavedVariants: zeusVariants.map(variant => variant.id),
@@ -1213,7 +1343,8 @@ async function writeEvidence({
 		summary: summarize(records),
 		records,
 		screenshots,
-		retriedRounds
+		retriedRounds,
+		appRestarts
 	};
 	await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 	process.stdout.write(`Wrote ${outputPath}\n`);

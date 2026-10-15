@@ -18,6 +18,11 @@ on:
         required: false
         default: 'windows-2022'
         type: string
+      windows_recovery_probe:
+        description: 'Run only the 10k native -> narrow-panel Windows app recovery probe; skips macOS and the Z1 gate.'
+        required: false
+        default: false
+        type: boolean
       instrument_baseline:
         description: 'Instrument the baseline renderer to capture commit work (diagnostic evidence only, never v7 admission)'
         required: false
@@ -232,7 +237,7 @@ jobs:
   macos-webkit:
     name: macOS WKWebView benchmark and screenshots
     needs: prepare-zeus
-    if: always()
+    if: ${{ always() && !inputs.windows_recovery_probe }}
     runs-on: ${{ inputs.macos_runner }}
     timeout-minutes: 120
     steps:
@@ -448,6 +453,17 @@ jobs:
         run: |
           $traceProfile = 'true'
           if ($env:SAME_EXECUTION_PROFILE -eq 'true') { $traceProfile = 'false' }
+          $renderer = "${{ inputs.diagnostic_renderers || 'all' }}"
+          $workload = 'all'
+          $repeat = $env:BENCHMARK_REPEAT
+          $recoveryProbe = 'false'
+          if ('${{ inputs.windows_recovery_probe }}' -eq 'true') {
+            $renderer = 'native'
+            $workload = '10k-x-50,narrow-panel'
+            $repeat = '5'
+            $traceProfile = 'false'
+            $recoveryProbe = 'true'
+          }
           $variantArgs = @()
           if ('${{ inputs.zeus_variant }}' -ne '') {
             # The parser takes a single comma-separated token, so the whole list
@@ -470,8 +486,10 @@ jobs:
           node scripts/benchmark-sql-result-grid-webdriver.mjs `
             --app-binary "$env:GITHUB_WORKSPACE\target\debug\sql-studio-next.exe" `
             --platform windows `
-            --renderer "${{ inputs.diagnostic_renderers || 'all' }}" `
-            --repeat "$env:BENCHMARK_REPEAT" `
+            --renderer "$renderer" `
+            --workload "$workload" `
+            --repeat "$repeat" `
+            --recovery-probe "$recoveryProbe" `
             --run-budget-ms 4200000 `
             --zeus-bundle "$env:RUNNER_TEMP\nyala-zeus-audit\data-grid-bundle.js" `
             @variantArgs `
@@ -502,7 +520,7 @@ jobs:
   aggregate-gate:
     name: Aggregate platform evidence and run Z1 gate
     needs: [macos-webkit, windows-webview2]
-    if: ${{ always() && !inputs.native_wheel_smoke }}
+    if: ${{ always() && !inputs.native_wheel_smoke && !inputs.windows_recovery_probe }}
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
