@@ -45,11 +45,13 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 			requestAnimationFrame(timestamp => {
 				const rafTime = performance.now();
 				const rafVisibleRowIndex = getVisibleRowIndex(rendered);
+				const rafProbeEndTime = performance.now();
 				setTimeout(
 					() =>
 						resolve({
 							timestamp,
 							rafTime,
+							rafProbeEndTime,
 							taskTime: performance.now(),
 							rafVisibleRowIndex,
 							taskVisibleRowIndex: getVisibleRowIndex(rendered)
@@ -74,12 +76,14 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 		let firstVisiblePhase;
 		let nextPaintRafTime;
 		let nextPaintTaskTime;
+		let nextPaintRafProbeEndTime;
 		let visibleRowIndex = -1;
 		let attempts = 0;
 		for (; attempts < maxFrames; attempts += 1) {
 			const frame = await waitForFrame();
 			nextPaintRafTime ??= frame.rafTime;
 			nextPaintTaskTime ??= frame.taskTime;
+			nextPaintRafProbeEndTime ??= frame.rafProbeEndTime;
 			for (const [phaseName, candidate] of [
 				['raf', frame.rafVisibleRowIndex],
 				['task', frame.taskVisibleRowIndex]
@@ -137,6 +141,7 @@ export async function runObserverFreeSegmentTrace(rendered, options = {}) {
 			firstVisiblePhase,
 			nextPaintRafTime,
 			nextPaintTaskTime,
+			nextPaintRafProbeEndTime,
 			commitTransactionIds: zeusCorrelation?.commitTransactionIds ?? workbenchCorrelation?.commitTransactionIds ?? [],
 			primaryCommitTransactionId:
 				zeusCorrelation?.primaryCommitTransactionId ?? workbenchCorrelation?.primaryCommitTransactionId ?? null
