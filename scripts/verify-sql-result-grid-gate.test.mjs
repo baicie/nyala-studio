@@ -1192,6 +1192,70 @@ test('Z1.3 verifier rejects a raw record from a legacy measurement contract', as
 	);
 });
 
+const sameExecutionDiagnosticCases = [
+	[
+		'report profile',
+		value => {
+			value.sameExecutionProfile = { version: 1, diagnosticOnly: true };
+		}
+	],
+	[
+		'record profile',
+		value => {
+			value.records[0].sameExecutionProfile = { version: 1, diagnosticOnly: true };
+		}
+	],
+	[
+		'record false profile',
+		value => {
+			value.records[0].sameExecutionProfile = false;
+		}
+	],
+	[
+		'record marker',
+		value => {
+			value.records[0].sameExecution = false;
+		}
+	],
+	[
+		'sample timing',
+		value => {
+			value.records[0].scroll.samples[0].sameExecution = { phase: 'scroll' };
+		}
+	],
+	[
+		'null sample timing',
+		value => {
+			value.records[0].scroll.samples[0].sameExecution = null;
+		}
+	]
+];
+
+for (const [label, mutate] of sameExecutionDiagnosticCases) {
+	test(`Z1.3 verifier rejects Chromium same-execution ${label}`, async () => {
+		await assertBenchmarkRejected(
+			'nyala-z1-benchmark-same-execution-test-',
+			benchmark => {
+				benchmark.admissionGrade = true;
+				mutate(benchmark);
+			},
+			/Chromium benchmark.*same-execution diagnostics.*must not be scored for admission/i
+		);
+	});
+	for (const platform of ['macosWebKit', 'windowsWebView2']) {
+		test(`Z1.3 verifier rejects ${platform} same-execution ${label} despite admission grade true`, async () => {
+			await assertPlatformEvidenceRejected(
+				'nyala-z1-platform-same-execution-test-',
+				evidence => {
+					assert.equal(evidence[platform].admissionGrade, true);
+					mutate(evidence[platform]);
+				},
+				/same-execution diagnostics.*must not be scored for admission/i
+			);
+		});
+	}
+}
+
 for (const pageInstrumentation of [undefined, 'text-churn-observer-v1', 'no-global-dom-observer-v1']) {
 	const instrumentationLabel = pageInstrumentation ?? 'missing';
 	for (const target of ['report', 'record']) {

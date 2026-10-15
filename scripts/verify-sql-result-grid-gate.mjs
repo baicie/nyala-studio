@@ -678,6 +678,9 @@ function validatePlatformRecords(evidence) {
 function validateRawRecords(evidence, { expectedRuns, runCount, requireScreenshots }) {
 	const errors = [];
 	const records = Array.isArray(evidence.records) ? evidence.records : [];
+	if (hasSameExecutionDiagnostics(evidence)) {
+		errors.push('same-execution diagnostics are diagnostic-only and must not be scored for admission');
+	}
 	const expectedRecordCount = expectedWorkloads.size * expectedRenderers.length * expectedRuns;
 	const expectedPlan = createBalancedBenchmarkPlan([...expectedWorkloads.values()], expectedRenderers, expectedRuns);
 	if (runCount !== expectedRuns) errors.push(`runs=${String(runCount)}; expected exactly ${expectedRuns}`);
@@ -698,6 +701,9 @@ function validateRawRecords(evidence, { expectedRuns, runCount, requireScreensho
 			continue;
 		}
 		const tuple = `${record.workloadId}/${record.renderer}/${record.iteration}`;
+		if (hasSameExecutionDiagnostics(record)) {
+			errors.push(`${tuple} same-execution diagnostics are diagnostic-only and must not be scored for admission`);
+		}
 		if (tuples.has(tuple)) errors.push(`duplicate iteration tuple ${tuple}`);
 		tuples.add(tuple);
 		if (!isRunToken(record.runToken)) {
@@ -792,6 +798,19 @@ function validateRawRecords(evidence, { expectedRuns, runCount, requireScreensho
 		records,
 		summary: errors.length === 0 ? summarizeRecords(records) : {}
 	};
+}
+
+function hasSameExecutionDiagnostics(value) {
+	return Boolean(
+		value &&
+		typeof value === 'object' &&
+		(Object.hasOwn(value, 'sameExecutionProfile') ||
+			Object.hasOwn(value, 'sameExecution') ||
+			(Array.isArray(value.scroll?.samples) &&
+				value.scroll.samples.some(
+					sample => sample && typeof sample === 'object' && Object.hasOwn(sample, 'sameExecution')
+				)))
+	);
 }
 
 function isRunToken(value) {

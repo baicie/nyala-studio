@@ -200,6 +200,66 @@ test('marks rows incomparable when measurement identity differs', async () => {
 	}
 });
 
+const sameExecutionDiagnosticCases = [
+	[
+		'report profile',
+		value => {
+			value.sameExecutionProfile = { version: 1, diagnosticOnly: true };
+		}
+	],
+	[
+		'record profile',
+		value => {
+			value.records[0].sameExecutionProfile = { version: 1, diagnosticOnly: true };
+		}
+	],
+	[
+		'record false profile',
+		value => {
+			value.records[0].sameExecutionProfile = false;
+		}
+	],
+	[
+		'record marker',
+		value => {
+			value.records[0].sameExecution = false;
+		}
+	],
+	[
+		'sample timing',
+		value => {
+			value.records[0].scroll.samples = [{ sameExecution: { phase: 'scroll' } }];
+		}
+	],
+	[
+		'null sample timing',
+		value => {
+			value.records[0].scroll.samples = [{ sameExecution: null }];
+		}
+	]
+];
+
+for (const [label, mutate] of sameExecutionDiagnosticCases) {
+	for (const side of ['baseline', 'candidate']) {
+		test(`same-execution ${side} ${label} cannot be scored despite admission grade true`, async () => {
+			const root = await mkdtemp(join(tmpdir(), 'nyala-same-execution-compare-'));
+			try {
+				const baseline = evidence({ records: [record()] });
+				const candidate = evidence({
+					provenance: { workflowRunId: 2, zeusBundleSha256: CANDIDATE_BUNDLE },
+					records: [record()]
+				});
+				mutate(side === 'baseline' ? baseline : candidate);
+				const report = await run(root, baseline, candidate);
+				assert.equal(report.scored, false);
+				assert.ok(report.caveats.some(caveat => /same-execution.*diagnostic only/i.test(caveat)));
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		});
+	}
+}
+
 test('surfaces admission-grade and limitation caveats verbatim', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'nyala-compare-evidence-'));
 	try {

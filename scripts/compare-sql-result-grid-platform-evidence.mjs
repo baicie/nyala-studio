@@ -77,6 +77,16 @@ async function load(filePath) {
 function compare(baselineFile, candidateFile) {
 	const base = baselineFile.value;
 	const cand = candidateFile.value;
+	const sameExecutionDiagnosticRuns = [
+		['baseline', base],
+		['candidate', cand]
+	]
+		.filter(
+			([, value]) =>
+				hasSameExecutionDiagnostics(value) ||
+				(Array.isArray(value.records) && value.records.some(hasSameExecutionDiagnostics))
+		)
+		.map(([label]) => label);
 
 	const identityMismatches = [];
 	for (const key of IDENTITY_KEYS) {
@@ -158,6 +168,7 @@ function compare(baselineFile, candidateFile) {
 		validBundles &&
 		base.admissionGrade === true &&
 		cand.admissionGrade === true &&
+		sameExecutionDiagnosticRuns.length === 0 &&
 		controlDriftCaveats.length === 0;
 	const caveats = [];
 	if (sameBundle) {
@@ -171,6 +182,11 @@ function compare(baselineFile, candidateFile) {
 	if (base.admissionGrade !== true || cand.admissionGrade !== true) {
 		caveats.push(
 			`At least one run is diagnostic only (admissionGrade=false: baseline=${base.admissionGrade}, candidate=${cand.admissionGrade}); it must not be scored for gate admission.`
+		);
+	}
+	if (sameExecutionDiagnosticRuns.length > 0) {
+		caveats.push(
+			`Same-execution profiling in ${sameExecutionDiagnosticRuns.join(' and ')} is diagnostic only; it must not be scored for gate admission.`
 		);
 	}
 	if (!validBundles)
@@ -205,6 +221,19 @@ function compare(baselineFile, candidateFile) {
 		caveats,
 		rows
 	};
+}
+
+function hasSameExecutionDiagnostics(value) {
+	return Boolean(
+		value &&
+		typeof value === 'object' &&
+		(Object.hasOwn(value, 'sameExecutionProfile') ||
+			Object.hasOwn(value, 'sameExecution') ||
+			(Array.isArray(value.scroll?.samples) &&
+				value.scroll.samples.some(
+					sample => sample && typeof sample === 'object' && Object.hasOwn(sample, 'sameExecution')
+				)))
+	);
 }
 
 function medianOf(summaryEntry, metric) {
