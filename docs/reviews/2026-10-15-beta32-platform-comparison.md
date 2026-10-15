@@ -286,3 +286,27 @@ header 钉回 28px，并补上 viewport 的 `--zw-data-grid-height`。本机以�
 这条再次印证本记录的主线：**每一次「性能异常」都要先问测量装置是否还成立**。
 CSS 装置从「不存在」到「存在但嵌套」到「存在但行高冲突」，两次失败都发生在装置层，
 都与 Zeus 的性能无关。
+
+## 复核更新：run 38640001235
+
+macOS 完整 80/80 条 `ok`；Windows 已完成的 38 条全部 `ok`，随后 WebDriver
+POST navigation 30s 超时，证据不完整，已重跑失败 job。不能把 workflow 总失败等同于
+布局验证失败。
+
+macOS 同宿主 beta.31 → pinned beta.32（各 5 轮，中位数）：
+
+| workload | scroll p95 | rafToTask | commit | textWrites |
+| --- | --- | --- | --- | --- |
+| 10k-x-50 | 36 → 40ms | 14 → 14ms | 2 → 2ms | 6762 → 6383 |
+| wide-columns | 41 → 44ms | 22.5 → 21.5ms | 2 → 2ms | 6762 → 6382 |
+
+10k 未显示改善；wide 的 1ms rafToTask 差异不能凭这 5 轮认定为稳定收益。
+
+修正前文的归因强度：行高冲突是有代码依据且修正后原生 macOS 全部通过的解释，但
+未单独隔离每条 CSS 的影响，不能声称已证明每个平台内部失败机制。此前“Chromium
+采样恰好落在行内、原生更严格”的叙述没有观测证据，应撤回。
+
+本模式仍是“加载产品 CSS、保留 benchmark 几何和部分视觉覆盖”的混合页面。它覆盖
+了 cell padding、nowrap、ellipsis 等属性；因此 CSS 文件 SHA 只能证明字节被加载，
+不能证明每条产品声明成为 computed style，也不能用于验证被覆盖属性的 CSS 候选。
+完整产品布局与逐变体 computed-style provenance 仍待建立。Z1 改善目标尚未达成。
