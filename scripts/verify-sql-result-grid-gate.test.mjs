@@ -1256,6 +1256,64 @@ for (const [label, mutate] of sameExecutionDiagnosticCases) {
 	}
 }
 
+const runtimeCounterDiagnosticCases = [
+	[
+		'report marker',
+		value => {
+			value.diagnosticOnly = true;
+			value.runtimeCounterInstrumentation = 'zeus-runtime-counter-hook-v1';
+		}
+	],
+	[
+		'record marker',
+		value => {
+			value.records[0].diagnosticOnly = true;
+			value.records[0].runtimeCounterInstrumentation = 'zeus-runtime-counter-hook-v1';
+		}
+	],
+	[
+		'record diagnostics payload',
+		value => {
+			value.records[0].diagnostics = { runtimeCounters: { instrumentation: 'zeus-runtime-counter-hook-v1' } };
+		}
+	],
+	[
+		'sample counters',
+		value => {
+			value.records[0].scroll.samples[0].runtimeCounters = {
+				before: { effects: 0 },
+				after: { effects: 1 },
+				delta: { effects: 1 }
+			};
+		}
+	]
+];
+
+for (const [label, mutate] of runtimeCounterDiagnosticCases) {
+	test(`Z1.3 verifier rejects Chromium runtime counter ${label}`, async () => {
+		await assertBenchmarkRejected(
+			'nyala-z1-benchmark-runtime-counter-test-',
+			benchmark => {
+				benchmark.admissionGrade = true;
+				mutate(benchmark);
+			},
+			/runtime counter diagnostics.*must not be scored for admission/i
+		);
+	});
+	for (const platform of ['macosWebKit', 'windowsWebView2']) {
+		test(`Z1.3 verifier rejects ${platform} runtime counter ${label} despite admission grade true`, async () => {
+			await assertPlatformEvidenceRejected(
+				'nyala-z1-platform-runtime-counter-test-',
+				evidence => {
+					assert.equal(evidence[platform].admissionGrade, true);
+					mutate(evidence[platform]);
+				},
+				/runtime counter diagnostics.*must not be scored for admission/i
+			);
+		});
+	}
+}
+
 for (const pageInstrumentation of [undefined, 'text-churn-observer-v1', 'no-global-dom-observer-v1']) {
 	const instrumentationLabel = pageInstrumentation ?? 'missing';
 	for (const target of ['report', 'record']) {

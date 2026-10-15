@@ -678,9 +678,8 @@ function validatePlatformRecords(evidence) {
 function validateRawRecords(evidence, { expectedRuns, runCount, requireScreenshots }) {
 	const errors = [];
 	const records = Array.isArray(evidence.records) ? evidence.records : [];
-	if (hasSameExecutionDiagnostics(evidence)) {
-		errors.push('same-execution diagnostics are diagnostic-only and must not be scored for admission');
-	}
+	const reportDiagnosticReason = getAdmissionUnsafeDiagnosticReason(evidence);
+	if (reportDiagnosticReason) errors.push(reportDiagnosticReason);
 	const expectedRecordCount = expectedWorkloads.size * expectedRenderers.length * expectedRuns;
 	const expectedPlan = createBalancedBenchmarkPlan([...expectedWorkloads.values()], expectedRenderers, expectedRuns);
 	if (runCount !== expectedRuns) errors.push(`runs=${String(runCount)}; expected exactly ${expectedRuns}`);
@@ -701,9 +700,8 @@ function validateRawRecords(evidence, { expectedRuns, runCount, requireScreensho
 			continue;
 		}
 		const tuple = `${record.workloadId}/${record.renderer}/${record.iteration}`;
-		if (hasSameExecutionDiagnostics(record)) {
-			errors.push(`${tuple} same-execution diagnostics are diagnostic-only and must not be scored for admission`);
-		}
+		const recordDiagnosticReason = getAdmissionUnsafeDiagnosticReason(record);
+		if (recordDiagnosticReason) errors.push(`${tuple} ${recordDiagnosticReason}`);
 		if (tuples.has(tuple)) errors.push(`duplicate iteration tuple ${tuple}`);
 		tuples.add(tuple);
 		if (!isRunToken(record.runToken)) {
@@ -810,6 +808,36 @@ function hasSameExecutionDiagnostics(value) {
 				value.scroll.samples.some(
 					sample => sample && typeof sample === 'object' && Object.hasOwn(sample, 'sameExecution')
 				)))
+	);
+}
+
+/**
+ * Diagnostic instrumentation changes the measured page or adds work around
+ * each scroll sample. It can explain a renderer's behavior, but it cannot be
+ * used as admission evidence even if a caller accidentally sets
+ * `admissionGrade: true` after collecting it.
+ */
+function getAdmissionUnsafeDiagnosticReason(value) {
+	if (hasSameExecutionDiagnostics(value)) {
+		return 'same-execution diagnostics are diagnostic-only and must not be scored for admission';
+	}
+	if (hasRuntimeCounterDiagnostics(value)) {
+		return 'runtime counter diagnostics are diagnostic-only and must not be scored for admission';
+	}
+	return undefined;
+}
+
+function hasRuntimeCounterDiagnostics(value) {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+	return Boolean(
+		value.diagnosticOnly === true ||
+		Object.hasOwn(value, 'runtimeCounterInstrumentation') ||
+		(value.diagnostics &&
+			typeof value.diagnostics === 'object' &&
+			Object.hasOwn(value.diagnostics, 'runtimeCounters')) ||
+		(value.scroll && typeof value.scroll === 'object' && Object.hasOwn(value.scroll, 'runtimeCounters')) ||
+		(Array.isArray(value.scroll?.samples) &&
+			value.scroll.samples.some(sample => sample && Object.hasOwn(sample, 'runtimeCounters')))
 	);
 }
 
