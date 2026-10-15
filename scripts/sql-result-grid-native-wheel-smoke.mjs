@@ -349,6 +349,8 @@ using System.Runtime.InteropServices;
 public static class NyalaWheelNative {
     public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    [StructLayout(LayoutKind.Sequential)] public struct GUITHREADINFO { public uint cbSize; public uint flags; public IntPtr hwndActive; public IntPtr hwndFocus; public IntPtr hwndCapture; public IntPtr hwndMenuOwner; public IntPtr hwndMoveSize; public IntPtr hwndCaret; public RECT rcCaret; }
     [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
     [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION { [FieldOffset(0)] public MOUSEINPUT mi; }
     [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public INPUTUNION U; }
@@ -356,6 +358,14 @@ public static class NyalaWheelNative {
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll", SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool GetCursorPos(out POINT point);
+    [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT point);
+    [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll", CharSet=CharSet.Auto)] public static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder className, int maxCount);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool ScreenToClient(IntPtr hwnd, ref POINT point);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool GetGUIThreadInfo(uint threadId, ref GUITHREADINFO info);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int command);
     [DllImport("user32.dll", SetLastError=true)] public static extern bool ClientToScreen(IntPtr hwnd, ref POINT point);
@@ -368,6 +378,38 @@ public static class NyalaWheelNative {
 }
 '@
 Add-Type -TypeDefinition $signature
+function Get-WindowProbe([IntPtr]$windowHandle) {
+    if ($windowHandle -eq [IntPtr]::Zero) {
+        return [ordered]@{ handle = '0x0'; processId = 0; threadId = 0; className = ''; windowRect = $null; clientRect = $null }
+    }
+    [uint32]$windowProcessId = 0
+    $windowThreadId = [NyalaWheelNative]::GetWindowThreadProcessId($windowHandle, [ref]$windowProcessId)
+    $className = New-Object System.Text.StringBuilder 256
+    [void][NyalaWheelNative]::GetClassName($windowHandle, $className, $className.Capacity)
+    $windowRect = New-Object NyalaWheelNative+RECT
+    $clientRect = New-Object NyalaWheelNative+RECT
+    [void][NyalaWheelNative]::GetWindowRect($windowHandle, [ref]$windowRect)
+    [void][NyalaWheelNative]::GetClientRect($windowHandle, [ref]$clientRect)
+    return [ordered]@{
+        handle = ('0x{0:X}' -f $windowHandle.ToInt64())
+        processId = $windowProcessId
+        threadId = $windowThreadId
+        className = $className.ToString()
+        windowRect = @{ left = $windowRect.Left; top = $windowRect.Top; right = $windowRect.Right; bottom = $windowRect.Bottom }
+        clientRect = @{ left = $clientRect.Left; top = $clientRect.Top; right = $clientRect.Right; bottom = $clientRect.Bottom }
+    }
+}
+function Get-GuiThreadProbe([uint32]$threadId) {
+    $threadInfo = New-Object NyalaWheelNative+GUITHREADINFO
+    $threadInfo.cbSize = [uint32][Runtime.InteropServices.Marshal]::SizeOf([type][NyalaWheelNative+GUITHREADINFO])
+    $available = [NyalaWheelNative]::GetGUIThreadInfo($threadId, [ref]$threadInfo)
+    return [ordered]@{
+        available = $available
+        activeWindow = Get-WindowProbe $threadInfo.hwndActive
+        focusWindow = Get-WindowProbe $threadInfo.hwndFocus
+        captureWindow = Get-WindowProbe $threadInfo.hwndCapture
+    }
+}
 $dpiContext = [NyalaWheelNative]::SetThreadDpiAwarenessContext([IntPtr](-4))
 if ($dpiContext -eq [IntPtr]::Zero) {
     [ordered]@{ posted = $false; reason = 'dpi-awareness-context-failed'; win32Error = [Runtime.InteropServices.Marshal]::GetLastWin32Error() } | ConvertTo-Json -Compress
@@ -406,6 +448,7 @@ if ($foregroundPid -ne $ProcessId) {
 $point = New-Object NyalaWheelNative+POINT
 $point.X = [int][Math]::Round($ClientX * $DevicePixelRatio)
 $point.Y = [int][Math]::Round($ClientY * $DevicePixelRatio)
+$requestedClientPoint = @{ x = $point.X; y = $point.Y }
 if (-not [NyalaWheelNative]::ClientToScreen($script:targetWindow, [ref]$point)) {
     [ordered]@{ posted = $false; reason = 'client-to-screen-failed'; win32Error = [Runtime.InteropServices.Marshal]::GetLastWin32Error() } | ConvertTo-Json -Compress
     exit 3
@@ -414,6 +457,22 @@ if (-not [NyalaWheelNative]::SetCursorPos($point.X, $point.Y)) {
     [ordered]@{ posted = $false; reason = 'cursor-position-failed'; win32Error = [Runtime.InteropServices.Marshal]::GetLastWin32Error() } | ConvertTo-Json -Compress
     exit 3
 }
+$cursorPoint = New-Object NyalaWheelNative+POINT
+$cursorRead = [NyalaWheelNative]::GetCursorPos([ref]$cursorPoint)
+$pointWindow = [NyalaWheelNative]::WindowFromPoint($cursorPoint)
+$pointRootWindow = [NyalaWheelNative]::GetAncestor($pointWindow, 2)
+$pointRootOwnerWindow = [NyalaWheelNative]::GetAncestor($pointWindow, 3)
+$targetProbe = Get-WindowProbe $script:targetWindow
+$foregroundProbe = Get-WindowProbe $foreground
+$pointProbe = Get-WindowProbe $pointWindow
+$pointRootProbe = Get-WindowProbe $pointRootWindow
+$pointRootOwnerProbe = Get-WindowProbe $pointRootOwnerWindow
+$targetPoint = New-Object NyalaWheelNative+POINT
+$targetPoint.X = $cursorPoint.X
+$targetPoint.Y = $cursorPoint.Y
+$targetPointInClient = [NyalaWheelNative]::ScreenToClient($script:targetWindow, [ref]$targetPoint)
+$targetGuiThread = Get-GuiThreadProbe $targetProbe.threadId
+$pointGuiThread = Get-GuiThreadProbe $pointProbe.threadId
 $input = New-Object NyalaWheelNative+INPUT
 $input.type = 0
 $input.U.mi.mouseData = [BitConverter]::ToUInt32([BitConverter]::GetBytes([int32]$Delta), 0)
@@ -428,6 +487,20 @@ $lastError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
     foregroundPid = $foregroundPid
     windowDpi = [NyalaWheelNative]::GetDpiForWindow($script:targetWindow)
     screenPoint = @{ x = $point.X; y = $point.Y }
+    diagnostics = [ordered]@{
+        requestedClientPoint = $requestedClientPoint
+        requestedScreenPoint = @{ x = $point.X; y = $point.Y }
+        cursorRead = $cursorRead
+        actualCursor = @{ x = $cursorPoint.X; y = $cursorPoint.Y }
+        targetPointInClient = @{ converted = $targetPointInClient; x = $targetPoint.X; y = $targetPoint.Y }
+        targetWindow = $targetProbe
+        foregroundWindow = $foregroundProbe
+        windowAtPoint = $pointProbe
+        rootWindowAtPoint = $pointRootProbe
+        rootOwnerAtPoint = $pointRootOwnerProbe
+        targetGuiThread = $targetGuiThread
+        pointGuiThread = $pointGuiThread
+    }
     delta = $Delta
     inserted = $inserted
     win32Error = $lastError
