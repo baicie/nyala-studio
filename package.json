@@ -45,7 +45,7 @@
 		"capture:sql-agent-workbench-native": "node scripts/capture-sql-agent-workbench-webdriver.mjs",
 		"test:sql-result-grid-benchmark": "node --test scripts/benchmark-sql-result-grid.test.mjs scripts/profile-sql-result-grid-feasibility.test.mjs scripts/sql-result-grid-cdp-client.test.mjs scripts/sql-result-grid-workbench-table-bundle.test.mjs scripts/sql-result-grid-jank-trace.test.mjs scripts/sql-result-grid-segment-trace.test.mjs",
 		"test:sql-result-grid-scroll-browser": "node --test scripts/sql-result-grid-scroll-browser.test.mjs",
-		"test:sql-result-grid-webdriver": "node --test scripts/benchmark-sql-result-grid-webdriver.test.mjs",
+		"test:sql-result-grid-webdriver": "node --test scripts/benchmark-sql-result-grid-webdriver.test.mjs scripts/sql-result-grid-native-wheel-smoke.test.mjs",
 		"test:sql-result-grid-visual": "node --test scripts/capture-sql-result-grid-visual.test.mjs",
 		"test:sql-agent-workbench-visual": "node --test scripts/serve-frontend-dist.test.mjs scripts/capture-sql-agent-workbench.test.mjs scripts/capture-sql-agent-workbench-webdriver.test.mjs",
 		"create:sql-agent-checkpoint-w-attestation": "node scripts/create-sql-agent-checkpoint-w-attestation.mjs",

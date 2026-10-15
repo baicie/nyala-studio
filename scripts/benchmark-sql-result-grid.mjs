@@ -126,11 +126,14 @@ const jankTrace = parseBoolean(cli['jank-trace'] ?? 'false', '--jank-trace');
 const segmentTrace = parseBoolean(cli['segment-trace'] ?? 'false', '--segment-trace');
 const sameExecutionProfile = parseBoolean(cli['same-execution-profile'] ?? 'false', '--same-execution-profile');
 if (sameExecutionProfile && (!diagnosticProfile || floorOnly || segmentTrace || jankTrace)) {
-	throw new Error('--same-execution-profile requires --diagnostic-profile true, --floor-only false, --segment-trace false, and --jank-trace false (diagnostic only).');
+	throw new Error(
+		'--same-execution-profile requires --diagnostic-profile true, --floor-only false, --segment-trace false, and --jank-trace false (diagnostic only).'
+	);
 }
 const textChurn = parseBoolean(cli['text-churn'] ?? 'false', '--text-churn');
 if (textChurn && !segmentTrace) throw new Error('--text-churn requires --segment-trace true (diagnostic only).');
-const zeusMeasureNodeChurn = parseBoolean(cli['zeus-measure-node-churn'] ?? 'true', '--zeus-measure-node-churn') && !sameExecutionProfile;
+const zeusMeasureNodeChurn =
+	parseBoolean(cli['zeus-measure-node-churn'] ?? 'true', '--zeus-measure-node-churn') && !sameExecutionProfile;
 const selectedRenderers =
 	cli.renderer === 'all' || !cli.renderer ? ['native', 'workbench-table', 'zeus'] : cli.renderer.split(',');
 const supportedRenderers = new Set(['native', 'workbench-table', 'zeus']);
@@ -142,7 +145,9 @@ if (!['characterization', 'real'].includes(workbenchTableImplementation)) {
 	throw new Error('--workbench-table-implementation must be characterization or real');
 }
 if (sameExecutionProfile && selectedRenderers.includes('workbench-table') && workbenchTableImplementation !== 'real') {
-	throw new Error('--same-execution-profile requires --workbench-table-implementation real when measuring workbench-table.');
+	throw new Error(
+		'--same-execution-profile requires --workbench-table-implementation real when measuring workbench-table.'
+	);
 }
 const selectedWorkloads = cli.workload
 	? workloads.filter(workload => cli.workload.split(',').includes(workload.id))
@@ -264,11 +269,13 @@ try {
 		executionOrder: EXECUTION_ORDER,
 		pageInstrumentation: textChurn ? 'text-churn-observer-v1' : 'no-global-dom-observer-v2',
 		traceInstrumentation: textChurn ? 'text-churn-observer-v1' : 'no-global-dom-observer-v2',
-		...(sameExecutionProfile ? {
-			diagnostic: true,
-			admissionGrade: false,
-			sameExecutionProfile: createSameExecutionProfileMetadata()
-		} : {}),
+		...(sameExecutionProfile
+			? {
+					diagnostic: true,
+					admissionGrade: false,
+					sameExecutionProfile: createSameExecutionProfileMetadata()
+				}
+			: {}),
 		generatedAt: new Date().toISOString(),
 		provenance: {
 			...createEvidenceProvenance(cli),
@@ -926,6 +933,7 @@ const resultEndpoint = params.get('resultEndpoint');
 	const executionOrdinal = Number(params.get('executionOrdinal') || 0);
 const segmentTrace = params.get('segmentTrace') === 'true';
 const textChurnEnabled = params.get('textChurn') === 'true';
+const nativeWheelSmoke = params.get('nativeWheelSmoke') === 'true';
 if (textChurnEnabled && !segmentTrace) throw new Error('Text churn counting requires a diagnostic segment trace.');
 const diagnosticProfile = params.get('diagnosticProfile') === 'true' || segmentTrace;
 // v7 admission records need the empty-loop presentation floor but must not pay
@@ -1688,7 +1696,88 @@ async function main() {
 		writeBenchmarkResult({ status: 'error', error: formatBenchmarkError(error) });
 	});
 	const textChurnCollector = installSqlResultGridTextChurnObserver({ enabled: textChurnEnabled });
-	if (params.get('deferStart') === 'true') {
+	if (nativeWheelSmoke) {
+		const nativeWheelState = {
+			status: 'idle',
+			wheelEvents: [],
+			scrollEvents: [],
+			rendered: undefined,
+			viewport: undefined,
+			initial: undefined,
+			viewportRect: undefined,
+			screenX: undefined,
+			screenY: undefined,
+			devicePixelRatio: undefined,
+			error: undefined
+		};
+		const readNativeWheelState = () => {
+			const rendered = nativeWheelState.rendered;
+			return {
+				status: nativeWheelState.status,
+				...(nativeWheelState.error ? { error: nativeWheelState.error } : {}),
+				wheelEvents: nativeWheelState.wheelEvents,
+				scrollEvents: nativeWheelState.scrollEvents,
+				scrollTop: rendered ? rendered.scroll.scrollTop : null,
+				visibleRowIndex: rendered ? getVisibleRowIndex(rendered) : null,
+				initialScrollTop: nativeWheelState.initial?.scrollTop ?? null,
+				initialVisibleRowIndex: nativeWheelState.initial?.visibleRowIndex ?? null,
+				viewportRect: nativeWheelState.viewportRect ?? null,
+				screenX: nativeWheelState.screenX ?? null,
+				screenY: nativeWheelState.screenY ?? null,
+				devicePixelRatio: nativeWheelState.devicePixelRatio ?? null
+			};
+		};
+		globalThis.__nyalaNativeWheelSmokeRead = readNativeWheelState;
+		globalThis.__nyalaNativeWheelSmokeStart = () => {
+			if (nativeWheelState.status !== 'idle') return true;
+			nativeWheelState.status = 'rendering';
+			document.addEventListener('wheel', event => {
+				nativeWheelState.wheelEvents.push({
+					isTrusted: event.isTrusted,
+					deltaY: event.deltaY,
+					timeStamp: event.timeStamp,
+					clientX: event.clientX,
+					clientY: event.clientY,
+					targetClass: String(event.target?.className ?? event.target?.tagName ?? ''),
+					pathContainsViewport: Boolean(nativeWheelState.viewport && event.composedPath().includes(nativeWheelState.viewport))
+				});
+			}, true);
+			void (async () => {
+				try {
+					const root = await prepareBenchmarkRoot();
+					const result = await renderBenchmarkGrid(root);
+					const rendered = result.rendered;
+					const viewport = rendered.viewport ?? rendered.scroll;
+					rendered.scroll.scrollTop = 0;
+					await waitForPresentationOpportunity({ timeoutMs: 5_000 });
+					const rect = viewport.getBoundingClientRect();
+					nativeWheelState.rendered = rendered;
+					nativeWheelState.viewport = viewport;
+					viewport.addEventListener('scroll', () =>
+						nativeWheelState.scrollEvents.push({ scrollTop: rendered.scroll.scrollTop, timeStamp: performance.now() })
+					);
+					nativeWheelState.initial = {
+						scrollTop: rendered.scroll.scrollTop,
+						visibleRowIndex: getVisibleRowIndex(rendered)
+					};
+					nativeWheelState.viewportRect = {
+						left: rect.left,
+						top: rect.top,
+						width: rect.width,
+						height: rect.height
+					};
+					nativeWheelState.screenX = window.screenX;
+					nativeWheelState.screenY = window.screenY;
+					nativeWheelState.devicePixelRatio = window.devicePixelRatio;
+					nativeWheelState.status = 'ready';
+				} catch (error) {
+					nativeWheelState.status = 'error';
+					nativeWheelState.error = formatBenchmarkError(error);
+				}
+			})();
+			return true;
+		};
+	} else if (params.get('deferStart') === 'true') {
 		globalThis.addEventListener('nyala-benchmark-start', startBenchmark, { once: true });
 	} else {
 		startBenchmark();

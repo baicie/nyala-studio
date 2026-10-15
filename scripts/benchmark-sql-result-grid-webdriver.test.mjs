@@ -711,6 +711,21 @@ test('native platform workflow bundles the auto-registering Zeus entry', async (
 	assert.doesNotMatch(source, /if-no-files-found: warn/);
 });
 
+test('native wheel smoke failures fail the platform jobs while evidence uploads always run', async () => {
+	const source = await import('node:fs/promises').then(fs =>
+		fs.readFile(new URL('../.github/workflows/sql-result-grid-platform.yml', import.meta.url), 'utf8')
+	);
+	const smokeSteps = source.match(/- name: Run diagnostic native wheel smoke[\s\S]*?(?=\n      - name:)/g) ?? [];
+	assert.equal(smokeSteps.length, 2);
+	assert.match(smokeSteps[0], /if: \$\{\{ inputs\.native_wheel_smoke \}\}/);
+	assert.match(smokeSteps[0], /--platform macos/);
+	assert.match(smokeSteps[1], /if: \$\{\{ inputs\.native_wheel_smoke \}\}/);
+	assert.match(smokeSteps[1], /--platform windows/);
+	for (const step of smokeSteps) assert.doesNotMatch(step, /continue-on-error:/);
+	assert.match(source, /- name: Upload macOS evidence, screenshots, and app log\n        if: always\(\)/);
+	assert.match(source, /- name: Upload Windows evidence, screenshots, and app log\n        if: always\(\)/);
+});
+
 test('platform workflow can measure a control data-grid version without scoring the gate', async () => {
 	const source = await import('node:fs/promises').then(fs =>
 		fs.readFile(new URL('../.github/workflows/sql-result-grid-platform.yml', import.meta.url), 'utf8')

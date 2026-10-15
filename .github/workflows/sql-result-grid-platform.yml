@@ -53,6 +53,11 @@ on:
         description: 'Renderer subset for paired diagnostics, e.g. zeus,workbench-table. Requires zeus_variant; never admission.'
         required: false
         type: string
+      native_wheel_smoke:
+        description: 'Build the Zeus fixture and verify OS-native wheel delivery on both embedded WebViews; skips performance benchmarking and the Z1 gate.'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -191,6 +196,7 @@ jobs:
             --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Run revision-bound Chromium characterization
+        if: ${{ !inputs.native_wheel_smoke }}
         run: |
           node scripts/benchmark-sql-result-grid.mjs \
             --renderer all \
@@ -282,7 +288,18 @@ jobs:
       - name: Verify native binary
         run: test -x "$GITHUB_WORKSPACE/target/debug/sql-studio-next"
 
+      - name: Run diagnostic native wheel smoke
+        if: ${{ inputs.native_wheel_smoke }}
+        run: |
+          node scripts/sql-result-grid-native-wheel-smoke.mjs \
+            --platform macos \
+            --app-binary "$GITHUB_WORKSPACE/target/debug/sql-studio-next" \
+            --zeus-bundle "$RUNNER_TEMP/nyala-zeus-audit/data-grid-bundle.js" \
+            --output "$EVIDENCE_DIR/native-wheel-smoke.json" \
+            --app-log "$EVIDENCE_DIR/native-wheel-smoke-app.log"
+
       - name: Run embedded WKWebView benchmark
+        if: ${{ !inputs.native_wheel_smoke }}
         env:
           BENCHMARK_REPEAT: ${{ inputs.repeat || '5' }}
           ZEUS_VARIANTS: ${{ inputs.zeus_variant }}
@@ -407,7 +424,23 @@ jobs:
             throw "Nyala debug binary was not created at $binary"
           }
 
+      - name: Run diagnostic native wheel smoke
+        if: ${{ inputs.native_wheel_smoke }}
+        shell: pwsh
+        run: |
+          $binary = Join-Path $env:GITHUB_WORKSPACE 'target\debug\sql-studio-next.exe'
+          $bundle = Join-Path $env:RUNNER_TEMP 'nyala-zeus-audit\data-grid-bundle.js'
+          $output = Join-Path $env:EVIDENCE_DIR 'native-wheel-smoke.json'
+          $log = Join-Path $env:EVIDENCE_DIR 'native-wheel-smoke-app.log'
+          node scripts/sql-result-grid-native-wheel-smoke.mjs `
+            --platform windows `
+            --app-binary $binary `
+            --zeus-bundle $bundle `
+            --output $output `
+            --app-log $log
+
       - name: Run embedded WebView2 benchmark
+        if: ${{ !inputs.native_wheel_smoke }}
         shell: pwsh
         env:
           BENCHMARK_REPEAT: ${{ inputs.repeat || '5' }}
@@ -469,7 +502,7 @@ jobs:
   aggregate-gate:
     name: Aggregate platform evidence and run Z1 gate
     needs: [macos-webkit, windows-webview2]
-    if: always()
+    if: ${{ always() && !inputs.native_wheel_smoke }}
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
