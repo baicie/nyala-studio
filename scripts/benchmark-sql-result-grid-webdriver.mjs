@@ -79,6 +79,8 @@ if (cli.help === 'true') {
   --same-execution-profile <true|false>  Timestamp the existing primary scroll
     callbacks and validation spans. Requires --instrument-baseline true and
     disables node-churn measurement. Diagnostic evidence only; never admission.
+  --runtime-counters <true|false>  Read Zeus runtime counters around every scroll
+    sample. Requires the Zeus renderer. Diagnostic evidence only; never admission.
   --instrument-baseline <true|false>  Instrument the baseline renderer so commit
     work is recorded. Disables floorOnly, which means the presentation floor and
     the renderer commit cost are measured in the same run and the recorded
@@ -154,6 +156,11 @@ if (sameExecutionProfile && traceProfile) {
 		'--same-execution-profile requires --trace-profile false; same-execution timing belongs to the primary navigation.'
 	);
 }
+const runtimeCountersValue = String(cli['runtime-counters'] ?? 'false');
+if (!['true', 'false'].includes(runtimeCountersValue)) {
+	throw new Error('--runtime-counters must be true or false.');
+}
+const runtimeCounters = runtimeCountersValue === 'true';
 const outputPath = resolve(cli.output ?? defaultOutput);
 const screenshotDir = resolve(cli['screenshot-dir'] ?? join(repositoryRoot, 'platform-screenshots'));
 const zeusBundle = cli['zeus-bundle'] ?? '/tmp/nyala-zeus-audit/data-grid-bundle.js';
@@ -178,6 +185,9 @@ const workloads = [
 const renderers = ['native', 'workbench-table', 'zeus'];
 const selectedWorkloads = selectValues(cli.workload, workloads, 'workload');
 const selectedRenderers = selectValues(cli.renderer, renderers, 'renderer');
+if (runtimeCounters && !selectedRenderers.includes('zeus')) {
+	throw new Error('--runtime-counters requires --renderer zeus (or a renderer list containing zeus).');
+}
 const recoveryProbeValue = String(cli['recovery-probe'] ?? 'false');
 if (!['true', 'false'].includes(recoveryProbeValue)) throw new Error('--recovery-probe must be true or false.');
 const recoveryProbe = recoveryProbeValue === 'true';
@@ -558,6 +568,10 @@ async function run() {
 				diagnosticProfile: 'true',
 				floorOnly: String(!instrumentBaseline)
 			};
+			if (runtimeCounters && renderer === 'zeus') {
+				query.runtimeCounters = 'true';
+				query.zeusDiag = '1';
+			}
 			if (sameExecutionProfile) {
 				query.sameExecutionProfile = 'true';
 				query.measureNodeChurn = 'false';
@@ -1280,6 +1294,13 @@ async function writeEvidence({
 		status,
 		runs,
 		reason,
+		...(runtimeCounters
+			? {
+				diagnostic: true,
+				diagnosticOnly: true,
+				runtimeCounterInstrumentation: 'zeus-runtime-counter-hook-v1'
+			}
+			: {}),
 		...identity,
 		provenance,
 		// An instrumented-baseline run installs renderer observers, so its
@@ -1293,7 +1314,8 @@ async function writeEvidence({
 			!interleaved &&
 			!textChurn &&
 			!zeusCss &&
-			!sameExecutionProfile,
+			!sameExecutionProfile &&
+			!runtimeCounters,
 		...(recoveryProbe
 			? {
 					diagnostic: true,
@@ -1328,10 +1350,13 @@ async function writeEvidence({
 					)
 				}
 			: {}),
-		...(instrumentBaseline || interleaved || textChurn || zeusCss || sameExecutionProfile
+		...(instrumentBaseline || interleaved || textChurn || zeusCss || sameExecutionProfile || runtimeCounters
 			? {
 					limitations: [
 						...(sameExecutionProfile ? createSameExecutionProfileMetadata().limitations : []),
+						...(runtimeCounters
+							? ['Runtime counter snapshots run around each Zeus scroll sample and must not be scored for admission.']
+							: []),
 						...(textChurn
 							? [
 									'Text-churn diagnostics install a DOM observer in the trace navigation and must not be scored for admission.'

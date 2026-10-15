@@ -54,6 +54,10 @@ on:
         description: 'Diagnostic only: append block + centered cell CSS to this requested variant id. Requires zeus_variant; never admission.'
         required: false
         type: string
+      zeus_fixed_capacity_variant:
+        description: 'Diagnostic only: reduce the fixed row capacity in this requested variant id. Requires zeus_variant; never admission.'
+        required: false
+        type: string
       diagnostic_renderers:
         description: 'Renderer subset for paired diagnostics, e.g. zeus,workbench-table. Requires zeus_variant; never admission.'
         required: false
@@ -112,6 +116,7 @@ jobs:
         shell: bash
         env:
           CELL_LAYOUT_VARIANT: ${{ inputs.zeus_cell_layout_variant }}
+          FIXED_CAPACITY_VARIANT: ${{ inputs.zeus_fixed_capacity_variant }}
           ZEUS_VARIANTS: ${{ inputs.zeus_variant }}
           DIAGNOSTIC_RENDERERS: ${{ inputs.diagnostic_renderers }}
           SAME_EXECUTION_PROFILE: ${{ inputs.same_execution_profile || 'false' }}
@@ -124,6 +129,10 @@ jobs:
           fi
           if [ -n "$CELL_LAYOUT_VARIANT" ] && [ -z "$ZEUS_VARIANTS" ]; then
             echo 'Cell layout experiment requires an interleaved variant.' >&2
+            exit 1
+          fi
+          if [ -n "$FIXED_CAPACITY_VARIANT" ] && [ -z "$ZEUS_VARIANTS" ]; then
+            echo 'Fixed capacity experiment requires an interleaved variant.' >&2
             exit 1
           fi
           if [ -n "$DIAGNOSTIC_RENDERERS" ] && [ -z "$ZEUS_VARIANTS" ] && [ "$SAME_EXECUTION_PROFILE" != true ]; then
@@ -150,6 +159,7 @@ jobs:
           if [ -n "${{ inputs.zeus_variant }}" ]; then
             old_ifs=$IFS
             IFS=';'
+            fixed_capacity_applied=false
             for pair in ${{ inputs.zeus_variant }}; do
               id="${pair%%=*}"
               version="${pair#*=}"
@@ -165,12 +175,20 @@ jobs:
                 node --input-type=module -e 'import {readFile,writeFile} from "node:fs/promises"; import {appendBlockCellLayout} from "./scripts/sql-result-grid-cell-layout-variant.mjs"; const p=process.argv[1]; await writeFile(p,appendBlockCellLayout(await readFile(p,"utf8")));' "$AUDIT_DIR/variant-$id.js"
                 cell_layout_applied=true
               fi
+              if [ -n "$FIXED_CAPACITY_VARIANT" ] && [ "$id" = "$FIXED_CAPACITY_VARIANT" ]; then
+                node scripts/sql-result-grid-fixed-capacity-variant.mjs "$AUDIT_DIR/variant-$id.js"
+                fixed_capacity_applied=true
+              fi
               npm view "@zeus-web/data-grid@$version" version --json > "$AUDIT_DIR/variant-$id.registry.json"
             done
             IFS=$old_ifs
           fi
           if [ -n "$CELL_LAYOUT_VARIANT" ] && [ "${cell_layout_applied:-false}" != true ]; then
             echo 'Requested cell layout variant was not built.' >&2
+            exit 1
+          fi
+          if [ -n "$FIXED_CAPACITY_VARIANT" ] && [ "${fixed_capacity_applied:-false}" != true ]; then
+            echo 'Requested fixed capacity variant was not built.' >&2
             exit 1
           fi
 

@@ -945,6 +945,10 @@ const traceProfile = params.get('traceProfile') === 'true';
 	const jankTrace = params.get('jankTrace') === 'true';
 	const jankTraceWorkloadId = params.get('workloadId') || '';
 const sameExecutionProfile = params.get('sameExecutionProfile') === 'true';
+const runtimeCountersEnabled = params.get('runtimeCounters') === 'true';
+if (runtimeCountersEnabled && renderer !== 'zeus') {
+	throw new Error('Runtime counter sampling requires the Zeus renderer.');
+}
 if (sameExecutionProfile && (!diagnosticProfile || floorOnly || segmentTrace || jankTrace)) {
 	throw new Error('Same-execution profiling requires diagnosticProfile=true, floorOnly=false, segmentTrace=false, and jankTrace=false.');
 }
@@ -1074,6 +1078,17 @@ function writeBenchmarkResult(result) {
 			admissionGrade: false,
 			sameExecutionProfile: createSameExecutionProfileMetadata(),
 			limitations: createSameExecutionProfileMetadata().limitations
+		} : {}),
+		...(runtimeCountersEnabled ? {
+			diagnostic: true,
+			diagnosticOnly: true,
+			admissionGrade: false,
+			runtimeCounterInstrumentation: 'zeus-runtime-counter-hook-v1',
+			limitations: [
+				...(sameExecutionProfile ? createSameExecutionProfileMetadata().limitations : []),
+				...(result.limitations ?? []),
+				'Runtime counter snapshots run around each Zeus scroll sample and must not be scored for admission.'
+			]
 		} : {})
 	};
 	const serialized = JSON.stringify(payload);
@@ -1283,6 +1298,41 @@ async function commitScrollWithDiagnostics(rendered, targetOffset, sampleIndex, 
 	return sample;
 }
 
+function snapshotZeusRuntimeCounters() {
+	if (!runtimeCountersEnabled) return undefined;
+	const hook = globalThis.__ZEUS_RUNTIME_COUNTERS__;
+	if (typeof hook?.snapshot !== 'function') {
+		throw new Error('Zeus runtime counter hook globalThis.__ZEUS_RUNTIME_COUNTERS__.snapshot() is unavailable.');
+	}
+	const snapshot = hook.snapshot();
+	if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+		throw new Error('Zeus runtime counter snapshot must be an object of numeric counters.');
+	}
+	const entries = Object.entries(snapshot);
+	if (entries.length === 0 || entries.some(([, value]) => !Number.isFinite(value))) {
+		throw new Error('Zeus runtime counter snapshot must contain finite numeric counters.');
+	}
+	return Object.fromEntries(entries);
+}
+
+function diffZeusRuntimeCounters(before, after) {
+	const beforeKeys = Object.keys(before).sort();
+	const afterKeys = Object.keys(after).sort();
+	if (beforeKeys.length !== afterKeys.length || beforeKeys.some((key, index) => key !== afterKeys[index])) {
+		throw new Error('Zeus runtime counter fields changed during a scroll sample.');
+	}
+	return Object.fromEntries(beforeKeys.map(key => [key, after[key] - before[key]]));
+}
+
+function startZeusRuntimeCounters() {
+	if (!runtimeCountersEnabled) return;
+	const hook = globalThis.__ZEUS_RUNTIME_COUNTERS__;
+	if (typeof hook?.start !== 'function') {
+		throw new Error('Zeus runtime counter hook globalThis.__ZEUS_RUNTIME_COUNTERS__.start() is unavailable.');
+	}
+	hook.start();
+}
+
 function summarizeSamples(samples, field) {
 	const values = samples.map(sample => sample[field]);
 	const sorted = [...values].sort((left, right) => left - right);
@@ -1312,20 +1362,47 @@ async function measurePresentationFloor() {
 
 async function measureScroll(rendered) {
 	const samples = [];
+	const runtimeCounterDiagnostics = runtimeCountersEnabled
+		? {
+				instrumentation: 'zeus-runtime-counter-hook-v1',
+				initial: snapshotZeusRuntimeCounters(),
+				preposition: undefined,
+				reset: undefined
+			}
+		: undefined;
 	const maxOffset = Math.max(0, rendered.scroll.scrollHeight - rendered.scroll.clientHeight);
 	if (maxOffset <= SCROLL_OFFSET_TOLERANCE * 2) {
 		throw new Error('Scroll workload does not expose enough range for displacement samples.');
 	}
 	await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
 	void rendered.scroll.offsetHeight;
+	const prepositionBefore = runtimeCountersEnabled ? snapshotZeusRuntimeCounters() : undefined;
 	const preposition = await commitScrollWithDiagnostics(rendered, maxOffset, -1, 'preposition');
+	if (runtimeCountersEnabled) {
+		const prepositionAfter = snapshotZeusRuntimeCounters();
+		runtimeCounterDiagnostics.preposition = {
+			before: prepositionBefore,
+			after: prepositionAfter,
+			delta: diffZeusRuntimeCounters(prepositionBefore, prepositionAfter)
+		};
+	}
 	if (!preposition.committed) {
 		throw new Error('Scroll workload could not preposition at its maximum offset.');
 	}
 	for (let sampleIndex = 0; sampleIndex < SCROLL_SAMPLE_COUNT; sampleIndex += 1) {
 		const [numerator, denominator] = SCROLL_TARGET_RATIOS[sampleIndex];
 		const targetOffset = maxOffset * numerator / denominator;
+		const runtimeCountersBefore = runtimeCountersEnabled ? snapshotZeusRuntimeCounters() : undefined;
 		const sample = await commitScrollWithDiagnostics(rendered, targetOffset, sampleIndex, 'sample');
+		if (runtimeCountersEnabled) {
+			const runtimeCountersAfter = snapshotZeusRuntimeCounters();
+			const counters = {
+				before: runtimeCountersBefore,
+				after: runtimeCountersAfter,
+				delta: diffZeusRuntimeCounters(runtimeCountersBefore, runtimeCountersAfter)
+			};
+			sample.runtimeCounters = counters;
+		}
 		if (!sample.committed) {
 			throw new Error(
 				'Scroll sample ' + sampleIndex + ' did not commit: expected row ' + sample.expectedRowIndex +
@@ -1350,7 +1427,8 @@ async function measureScroll(rendered) {
 		inputP95Ms: input.p95,
 		settleMedianMs: settle.median,
 		settleP95Ms: settle.p95,
-		samples
+		samples,
+		...(runtimeCounterDiagnostics ? { runtimeCounters: runtimeCounterDiagnostics } : {})
 	};
 }
 
@@ -1514,7 +1592,16 @@ async function main() {
 	void root.offsetHeight;
 	const scroll = await measureScroll(rendered);
 	const presentationFloor = diagnosticProfile ? await measurePresentationFloor() : undefined;
+	const runtimeCountersBeforeReset = runtimeCountersEnabled ? snapshotZeusRuntimeCounters() : undefined;
 	const reset = await commitScrollWithDiagnostics(rendered, 0, -1, 'reset');
+	if (runtimeCountersEnabled) {
+		const runtimeCountersAfterReset = snapshotZeusRuntimeCounters();
+		scroll.runtimeCounters.reset = {
+			before: runtimeCountersBeforeReset,
+			after: runtimeCountersAfterReset,
+			delta: diffZeusRuntimeCounters(runtimeCountersBeforeReset, runtimeCountersAfterReset)
+		};
+	}
 	if (!reset.committed) throw new Error('Renderer did not reset to its first visible row.');
 	await waitForPresentationOpportunity({ timeoutMs: PRESENTATION_OPPORTUNITY_TIMEOUT_MS });
 	void root.offsetHeight;
@@ -1579,13 +1666,14 @@ async function main() {
 	    userAgent: navigator.userAgent, formatMs: formatted.formatMs, parseMs, renderMs,
 	    scroll, domNodes, fixtureBytes,
 		rendererImplementation: rendered.implementation,
-		diagnostics: diagnosticProfile || traceProfile ? {
+		diagnostics: diagnosticProfile || traceProfile || runtimeCountersEnabled ? {
 			...(diagnosticProfile ? { presentationFloor } : {}),
 			measureNodeChurn: measureNodeChurn === 'true',
 			floorOnly,
 			traceProfile,
 			...(zeusDataGrid ? { zeusDataGrid } : {}),
-			...(workbenchTableDiagnostics ? { workbenchTable: workbenchTableDiagnostics } : {})
+			...(workbenchTableDiagnostics ? { workbenchTable: workbenchTableDiagnostics } : {}),
+			...(runtimeCountersEnabled ? { runtimeCounters: scroll.runtimeCounters } : {})
 		} : undefined,
     heapBytes: beforeHeap !== null && afterHeap !== null && afterHeap > beforeHeap ? afterHeap - beforeHeap : null,
 	    renderedRows,
@@ -1692,18 +1780,36 @@ async function main() {
 			vsyncMs: null
 		};
 	}
-	const startBenchmark = () => (segmentTrace ? runSegmentTrace() : jankTrace ? runJankTrace() : main()).catch(error => {
-		writeBenchmarkResult({ status: 'error', error: formatBenchmarkError(error) });
-	});
+	const startBenchmark = () => {
+		try {
+			startZeusRuntimeCounters();
+		} catch (error) {
+			writeBenchmarkResult({ status: 'error', error: formatBenchmarkError(error) });
+			return;
+		}
+		return (segmentTrace ? runSegmentTrace() : jankTrace ? runJankTrace() : main()).catch(error => {
+			writeBenchmarkResult({ status: 'error', error: formatBenchmarkError(error) });
+		});
+	};
 	const textChurnCollector = installSqlResultGridTextChurnObserver({ enabled: textChurnEnabled });
 	if (nativeWheelSmoke) {
 		const nativeWheelState = {
 			status: 'idle',
 			wheelEvents: [],
 			scrollEvents: [],
+			timeline: [],
 			rendered: undefined,
 			viewport: undefined,
 			initial: undefined,
+			diagnostics: undefined,
+			diagnosticComplete: false,
+			nextGestureId: 1,
+			armed: false,
+			activeGestureId: undefined,
+			measuredGestureId: undefined,
+			diagnosticsOperation: undefined,
+			frameOpportunityScheduled: false,
+			afterFrameTaskComplete: false,
 			viewportRect: undefined,
 			screenX: undefined,
 			screenY: undefined,
@@ -1717,6 +1823,12 @@ async function main() {
 				...(nativeWheelState.error ? { error: nativeWheelState.error } : {}),
 				wheelEvents: nativeWheelState.wheelEvents,
 				scrollEvents: nativeWheelState.scrollEvents,
+				timeline: nativeWheelState.timeline
+					.map((event, sequence) => ({ ...event, sequence }))
+					.sort((left, right) => left.at - right.at || left.sequence - right.sequence),
+				diagnostics: nativeWheelState.diagnostics ?? null,
+				diagnosticComplete: nativeWheelState.diagnosticComplete,
+				afterFrameTaskComplete: nativeWheelState.afterFrameTaskComplete,
 				scrollTop: rendered ? rendered.scroll.scrollTop : null,
 				visibleRowIndex: rendered ? getVisibleRowIndex(rendered) : null,
 				initialScrollTop: nativeWheelState.initial?.scrollTop ?? null,
@@ -1728,20 +1840,52 @@ async function main() {
 			};
 		};
 		globalThis.__nyalaNativeWheelSmokeRead = readNativeWheelState;
+		globalThis.__nyalaNativeWheelSmokeArm = () => {
+			if (nativeWheelState.status !== 'ready' || nativeWheelState.armed || !nativeWheelState.rendered) return false;
+			nativeWheelState.activeGestureId = nativeWheelState.nextGestureId++;
+			nativeWheelState.diagnosticsOperation = nativeWheelState.rendered.zeusDiagnostics?.beginOperation(
+				'native-wheel',
+				0
+			);
+			nativeWheelState.armed = true;
+			return true;
+		};
 		globalThis.__nyalaNativeWheelSmokeStart = () => {
 			if (nativeWheelState.status !== 'idle') return true;
 			nativeWheelState.status = 'rendering';
 			document.addEventListener('wheel', event => {
+				const receivedAt = performance.now();
+				const pathContainsViewport = Boolean(nativeWheelState.viewport && event.composedPath().includes(nativeWheelState.viewport));
+				const eligible =
+					event.isTrusted === true &&
+					pathContainsViewport &&
+					nativeWheelState.armed &&
+					nativeWheelState.activeGestureId !== undefined &&
+					nativeWheelState.measuredGestureId === undefined;
+				const gestureId = eligible ? nativeWheelState.activeGestureId : undefined;
 				nativeWheelState.wheelEvents.push({
+					...(gestureId === undefined ? {} : { gestureId }),
 					isTrusted: event.isTrusted,
 					deltaY: event.deltaY,
 					timeStamp: event.timeStamp,
+					receivedAt,
 					clientX: event.clientX,
 					clientY: event.clientY,
 					targetClass: String(event.target?.className ?? event.target?.tagName ?? ''),
-					pathContainsViewport: Boolean(nativeWheelState.viewport && event.composedPath().includes(nativeWheelState.viewport))
+					pathContainsViewport
 				});
-			}, true);
+				nativeWheelState.timeline.push({
+					kind: 'wheel',
+					...(gestureId === undefined ? {} : { gestureId }),
+					at: receivedAt,
+					eventTimeStamp: event.timeStamp,
+					isTrusted: event.isTrusted,
+					deltaY: event.deltaY,
+					scrollTop: nativeWheelState.rendered?.scroll.scrollTop ?? null
+				});
+				if (!eligible) return;
+				nativeWheelState.measuredGestureId = gestureId;
+			}, { capture: true, passive: true });
 			void (async () => {
 				try {
 					const root = await prepareBenchmarkRoot();
@@ -1753,9 +1897,89 @@ async function main() {
 					const rect = viewport.getBoundingClientRect();
 					nativeWheelState.rendered = rendered;
 					nativeWheelState.viewport = viewport;
-					viewport.addEventListener('scroll', () =>
-						nativeWheelState.scrollEvents.push({ scrollTop: rendered.scroll.scrollTop, timeStamp: performance.now() })
-					);
+					document.addEventListener('scroll', event => {
+						if (event.target !== viewport) return;
+						const at = performance.now();
+						const scrollTop = rendered.scroll.scrollTop;
+						const gestureId = nativeWheelState.armed ? nativeWheelState.activeGestureId : undefined;
+						nativeWheelState.scrollEvents.push({
+							...(gestureId === undefined ? {} : { gestureId }),
+							scrollTop,
+							timeStamp: event.timeStamp,
+							receivedAt: at
+						});
+						nativeWheelState.timeline.push({
+							kind: 'scroll',
+							...(gestureId === undefined ? {} : { gestureId }),
+							at,
+							eventTimeStamp: event.timeStamp,
+							scrollTop
+						});
+						if (gestureId === undefined) return;
+						const operation = nativeWheelState.diagnosticsOperation;
+						if (nativeWheelState.frameOpportunityScheduled) return;
+						nativeWheelState.frameOpportunityScheduled = true;
+						requestAnimationFrame(frameTimeStamp => {
+							const rafAt = performance.now();
+							let correlation;
+							if (operation) {
+								correlation = rendered.zeusDiagnostics.endOperation(operation);
+								nativeWheelState.diagnosticsOperation = undefined;
+								const snapshot = rendered.zeusDiagnostics.snapshot();
+								const commitById = new Map(snapshot.commits.map(commit => [commit.transactionId, commit]));
+								for (const transactionId of correlation.commitTransactionIds) {
+									const commit = commitById.get(transactionId);
+									if (!commit) continue;
+									nativeWheelState.timeline.push({
+										kind: 'renderer-commit',
+										gestureId,
+										at: commit.commitEndTime,
+										transactionId,
+										inputTime: commit.inputTime,
+										handlerStartTime: commit.handlerStartTime,
+										rangeStartTime: commit.rangeStartTime,
+										rangeCalculatedTime: commit.rangeCalculatedTime,
+										commitStartTime: commit.commitStartTime,
+										signalPublishStartTime: commit.signalPublishStartTime,
+										signalPublishEndTime: commit.signalPublishEndTime,
+										commitEndTime: commit.commitEndTime,
+										firstRowIndex: commit.firstRowIndex,
+										lastRowIndex: commit.lastRowIndex
+									});
+								}
+								nativeWheelState.diagnostics = {
+									gestureId,
+									operation: correlation,
+									snapshot
+								};
+							}
+							nativeWheelState.timeline.push({
+								kind: 'raf',
+								gestureId,
+								at: rafAt,
+								frameTimeStamp,
+								scrollTop: rendered.scroll.scrollTop
+							});
+							nativeWheelState.timeline.push({
+								kind: 'renderer-diagnostics-end',
+								gestureId,
+								at: performance.now(),
+								commitTransactionIds: correlation?.commitTransactionIds ?? []
+							});
+							nativeWheelState.diagnosticComplete = true;
+							setTimeout(() => {
+								nativeWheelState.timeline.push({
+									kind: 'after-frame-task',
+									gestureId,
+									at: performance.now(),
+									scrollTop: rendered.scroll.scrollTop,
+									visibleRowIndex: getVisibleRowIndex(rendered),
+									expectedVisibleRowIndex: expectedVisibleRowIndex(rendered.scroll.scrollTop)
+								});
+								nativeWheelState.afterFrameTaskComplete = true;
+							}, 0);
+						});
+					}, true);
 					nativeWheelState.initial = {
 						scrollTop: rendered.scroll.scrollTop,
 						visibleRowIndex: getVisibleRowIndex(rendered)

@@ -85,6 +85,37 @@ test('same-execution WebDriver evidence stays diagnostic even when collection fa
 	}
 });
 
+test('runtime counter WebDriver evidence is diagnostic-only even when collection is blocked', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'nyala-runtime-counters-webdriver-'));
+	try {
+		const output = join(root, 'evidence.json');
+		await assert.rejects(
+			execFileAsync(process.execPath, [
+				'scripts/benchmark-sql-result-grid-webdriver.mjs',
+				'--runtime-counters',
+				'true',
+				'--renderer',
+				'zeus',
+				'--zeus-bundle',
+				join(root, 'missing-bundle.js'),
+				'--output',
+				output,
+				'--screenshot-dir',
+				join(root, 'screenshots')
+			]),
+			error => error.code === 1
+		);
+		const report = JSON.parse(await readFile(output, 'utf8'));
+		assert.equal(report.status, 'blocked');
+		assert.equal(report.diagnosticOnly, true);
+		assert.equal(report.admissionGrade, false);
+		assert.equal(report.runtimeCounterInstrumentation, 'zeus-runtime-counter-hook-v1');
+		assert.match(report.limitations.join(' '), /Runtime counter snapshots/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test('Windows recovery probe is fail-closed and cannot be admission evidence', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'nyala-recovery-probe-'));
 	const output = join(root, 'evidence.json');
@@ -237,6 +268,10 @@ test('WebDriver benchmark runner records platform evidence and screenshots', asy
 	assert.match(source, /appRestarts/);
 	assert.match(source, /getRecoveryProbeRestartReason/);
 	assert.match(source, /validateRecoveryProbe/);
+	assert.match(source, /--runtime-counters/);
+	assert.match(source, /runtimeCounters/);
+	assert.match(source, /zeusDiag/);
+	assert.match(source, /diagnosticOnly/);
 	// Viewport observation is a trivial evaluation and must not consume the
 	// full script budget on every calibration attempt.
 	assert.match(source, /OBSERVE_EVAL_TIMEOUT_MS/);
@@ -1102,6 +1137,16 @@ test('platform workflow can measure the real product stylesheet', async () => {
 			/inputs\.zeus_package_version == '' && inputs\.zeus_variant == '' && inputs\.zeus_css_package_version == ''/g
 		) ?? [];
 	assert.equal(gateGuards.length, 2, 'both the merge and the gate must skip product-CSS runs');
+});
+
+test('platform workflow can build a diagnostic fixed-capacity Zeus variant', async () => {
+	const source = await import('node:fs/promises').then(fs =>
+		fs.readFile(new URL('../.github/workflows/sql-result-grid-platform.yml', import.meta.url), 'utf8')
+	);
+	assert.match(source, /zeus_fixed_capacity_variant:/);
+	assert.match(source, /FIXED_CAPACITY_VARIANT:/);
+	assert.match(source, /sql-result-grid-fixed-capacity-variant\.mjs/);
+	assert.match(source, /Requested fixed capacity variant was not built/);
 });
 
 test('benchmark geometry overrides the product stylesheet row metrics', async () => {

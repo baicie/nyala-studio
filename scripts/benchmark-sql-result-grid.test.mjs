@@ -131,6 +131,7 @@ async function createSameExecutionPageHarness(query = {}, { visibleOnAttempt = 1
 			return 300;
 		},
 		clientHeight: 300,
+		scrollHeight: 3000,
 		getBoundingClientRect() {
 			assert.equal(inFrame, false);
 			counts.rect += 1;
@@ -144,7 +145,7 @@ async function createSameExecutionPageHarness(query = {}, { visibleOnAttempt = 1
 		async finish(promise) {
 			let done = false;
 			promise.finally(() => { done = true; }).catch(() => {});
-			for (let turn = 0; !done && turn < 50; turn += 1) {
+			for (let turn = 0; !done && turn < 200; turn += 1) {
 				for (const [id, callback] of [...frames]) {
 					frames.delete(id);
 					attempt += 1;
@@ -252,6 +253,38 @@ test('same-execution profile records every existing retry wait without another i
 	assert.deepEqual(harness.counts, { now: 17, frame: 2, timer: 4, input: 1, offsetHeight: 2, rect: 2, hitTest: 2 });
 	assert.deepEqual(harness.events, ['input', 'rAF', 'after-frame-task', 'offsetHeight', 'visible-row',
 		'rAF', 'after-frame-task', 'offsetHeight', 'visible-row']);
+});
+
+test('runtime counters bracket every Zeus scroll sample and remain diagnostic-only', async () => {
+	const pageScript = await loadSameExecutionPageScript();
+	assert.match(pageScript, /startBenchmark = \(\) => \{\s*try \{\s*startZeusRuntimeCounters\(\);/);
+	assert.match(pageScript, /scroll\.runtimeCounters\.reset = \{/);
+	const harness = await createSameExecutionPageHarness({ runtimeCounters: 'true' });
+	let started = false;
+	let snapshots = 0;
+	harness.context.__ZEUS_RUNTIME_COUNTERS__ = {
+		start() { started = true; },
+		snapshot() {
+			assert.equal(started, true, 'counter session must start before rendering and sampling');
+			return { ticks: snapshots++ };
+		}
+	};
+	harness.context.startZeusRuntimeCounters();
+	const scroll = await harness.finish(harness.context.measureScroll(harness.rendered));
+	assert.equal(scroll.samples.length, 20);
+	assert.equal(snapshots, 43, 'initial, preposition, and every sample edge are sampled separately');
+	assert.equal(scroll.runtimeCounters.initial.ticks, 0);
+	assert.equal(scroll.runtimeCounters.preposition.delta.ticks, 1);
+	for (const [sampleIndex, sample] of scroll.samples.entries()) {
+		assert.equal(sample.runtimeCounters.before.ticks, 3 + sampleIndex * 2);
+		assert.equal(sample.runtimeCounters.after.ticks, 4 + sampleIndex * 2);
+		assert.equal(sample.runtimeCounters.delta.ticks, 1);
+	}
+	harness.context.writeBenchmarkResult({ status: 'ok', scroll, diagnostics: { runtimeCounters: scroll.runtimeCounters } });
+	const record = JSON.parse(harness.resultElement.textContent);
+	assert.equal(record.diagnosticOnly, true);
+	assert.equal(record.admissionGrade, false);
+	assert.equal(record.runtimeCounterInstrumentation, 'zeus-runtime-counter-hook-v1');
 });
 
 test('same-execution page rejects invalid profile combinations before starting the benchmark', async () => {
@@ -1247,7 +1280,7 @@ test('benchmark CLI records the Zeus node-churn A/B arm in diagnostic metadata',
 		fs.readFile(new URL('./benchmark-sql-result-grid.mjs', import.meta.url), 'utf8')
 	);
 	assert.match(source, /--zeus-measure-node-churn <bool>/);
-	assert.match(source, /zeusMeasureNodeChurn = parseBoolean\(cli\['zeus-measure-node-churn'\]/);
+	assert.match(source, /zeusMeasureNodeChurn\s*=\s*parseBoolean\(cli\['zeus-measure-node-churn'\]/);
 	assert.match(source, /measureNodeChurn: zeusMeasureNodeChurn/);
 	assert.match(source, /measureNodeChurn: String\(measureNodeChurn\)/);
 	assert.match(source, /traceProfile = parseBoolean\(cli\['trace-profile'\]/);

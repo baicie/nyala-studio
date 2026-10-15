@@ -15,14 +15,20 @@ import {
 	resolveLoopbackDriverEndpoint,
 	webdriverRequest
 } from './tauri-embedded-webdriver.mjs';
-import { evaluateNativeWheelSmoke, parseNativeWheelHelperResult } from './sql-result-grid-native-wheel-contract.mjs';
+import {
+	evaluateNativeWheelSmoke,
+	evaluateNativeWheelTimeline,
+	parseNativeWheelHelperResult,
+	summarizeNativeWheelTimeline
+} from './sql-result-grid-native-wheel-contract.mjs';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const cli = parseArgs(process.argv.slice(2));
+const diagnosticProfile = parseBoolean(cli['diagnostic-profile'] ?? 'true', '--diagnostic-profile');
 
 if (cli.help === 'true') {
 	process.stdout.write(
-		'Usage: node scripts/sql-result-grid-native-wheel-smoke.mjs --app-binary <path> --zeus-bundle <path> [--platform macos|windows] [--output <path>]\n'
+		'Usage: node scripts/sql-result-grid-native-wheel-smoke.mjs --app-binary <path> --zeus-bundle <path> [--platform macos|windows] [--workload 1k-x-20|10k-x-50] [--diagnostic-profile true|false] [--output <path>]\n'
 	);
 	process.exit(0);
 }
@@ -43,20 +49,29 @@ const pagePath = join(temporaryRoot, 'benchmark.html');
 const helperPath = join(temporaryRoot, platform === 'macos' ? 'post-wheel.swift' : 'post-wheel.ps1');
 const helperBinaryPath = join(temporaryRoot, 'post-wheel');
 const runToken = randomUUID();
-const workload = { rows: 1_000, columns: 20, width: 1440, height: 420, wide: false };
+const workloads = {
+	'1k-x-20': { rows: 1_000, columns: 20, width: 1440, height: 420, wide: false },
+	'10k-x-50': { rows: 10_000, columns: 50, width: 1440, height: 420, wide: false }
+};
+const workloadId = cli.workload ?? '10k-x-50';
+const workload = workloads[workloadId];
+if (!workload) throw new Error(`Unsupported workload: ${workloadId}`);
 const report = {
 	version: 1,
 	kind: 'native-wheel-smoke-v1',
 	status: 'blocked',
 	diagnostic: true,
 	admissionGrade: false,
+	diagnosticProfile,
+	workloadId,
 	platform,
 	runToken,
 	workload,
 	checks: {},
 	limitations: [
 		'This smoke verifies trusted wheel delivery and viewport behavior only; it is not a performance measurement.',
-		'The page is the standalone Zeus benchmark fixture, not the Nyala SQL Result panel.'
+		'The page is the standalone Zeus benchmark fixture, not the Nyala SQL Result panel.',
+		'Diagnostic observers add overhead, and rAF/task timestamps are presentation opportunities rather than proof of displayed pixels.'
 	]
 };
 
@@ -64,6 +79,8 @@ let appHost;
 let sessionId;
 let benchmarkServer;
 let driverUrl;
+let before;
+let helperResult;
 
 try {
 	execFileSync(
@@ -108,17 +125,18 @@ try {
 		columns: String(workload.columns),
 		width: String(workload.width),
 		height: String(workload.height),
+		diagnosticProfile: String(diagnosticProfile),
+		measureNodeChurn: 'false',
 		nativeWheelSmoke: 'true'
 	}).toString();
 	await webdriverRequest(endpoint.driverUrl, `/session/${sessionId}/url`, 'POST', { url: url.toString() });
 	await waitForPage(endpoint.driverUrl, sessionId, url.toString());
 	await prepareGrid(endpoint.driverUrl, sessionId);
-	const before = await readProbe(endpoint.driverUrl);
+	before = await readProbe(endpoint.driverUrl);
 	if (before.status !== 'ready') throw new Error(`Benchmark fixture was not ready: ${before.error ?? before.status}`);
 	report.before = before;
 
 	await writeFile(helperPath, platform === 'macos' ? macHelperSource() : windowsHelperSource(), 'utf8');
-	let helperResult;
 	if (platform === 'macos') {
 		execFileSync(
 			'swiftc',
@@ -129,6 +147,7 @@ try {
 		);
 		const windowRect = await readWindowRect(endpoint.driverUrl, sessionId);
 		report.windowRect = windowRect;
+		await armNativeWheel(endpoint.driverUrl);
 		helperResult = runHelper(helperBinaryPath, [
 			String(appHost.child.pid),
 			String((windowRect.x + before.viewportRect.left + before.viewportRect.width / 2) / before.devicePixelRatio),
@@ -139,6 +158,7 @@ try {
 			'-3'
 		]);
 	} else {
+		await armNativeWheel(endpoint.driverUrl);
 		helperResult = runHelper('pwsh', [
 			'-NoProfile',
 			'-ExecutionPolicy',
@@ -160,11 +180,17 @@ try {
 	report.nativeInput = helperResult;
 	await waitForScroll(endpoint.driverUrl, sessionId);
 	const after = await readProbe(endpoint.driverUrl);
-	report.after = after;
-	report.checks = evaluateNativeWheelSmoke({ nativeInput: helperResult, before, after });
-	report.status = Object.values(report.checks).every(Boolean) ? 'passed' : 'failed';
+	recordNativeWheelOutcome({ nativeInput: helperResult, before, after });
 } catch (error) {
 	report.error = error instanceof Error ? error.message : String(error);
+	if (sessionId && driverUrl && before && helperResult) {
+		try {
+			const after = await readProbe(driverUrl);
+			recordNativeWheelOutcome({ nativeInput: helperResult, before, after });
+		} catch (probeError) {
+			report.afterProbeError = probeError instanceof Error ? probeError.message : String(probeError);
+		}
+	}
 } finally {
 	if (sessionId) {
 		await webdriverRequest(
@@ -186,18 +212,40 @@ try {
 process.stdout.write(`Native wheel smoke ${report.status}: ${outputPath}\n`);
 if (report.status !== 'passed') process.exitCode = 1;
 
+function recordNativeWheelOutcome({ nativeInput, before, after }) {
+	report.after = after;
+	report.checks = evaluateNativeWheelSmoke({ nativeInput, before, after });
+	report.diagnosticChecks = diagnosticProfile ? evaluateNativeWheelTimeline({ after }) : { skipped: true };
+	report.timelineSummary = diagnosticProfile ? summarizeNativeWheelTimeline({ after }) : { skipped: true };
+	report.status =
+		Object.values(report.checks).every(Boolean) &&
+		(!diagnosticProfile || Object.values(report.diagnosticChecks).every(Boolean))
+			? 'passed'
+			: 'failed';
+}
+
 function parseArgs(args) {
 	const parsed = {};
 	for (let index = 0; index < args.length; index += 1) {
 		const token = args[index];
 		if (!token.startsWith('--')) throw new Error(`Unexpected argument: ${token}`);
 		const key = token.slice(2);
+		if (key === 'help') {
+			parsed.help = 'true';
+			continue;
+		}
 		const value = args[index + 1];
 		if (value === undefined || value.startsWith('--')) throw new Error(`Missing value for --${key}`);
 		parsed[key] = value;
 		index += 1;
 	}
 	return parsed;
+}
+
+function parseBoolean(value, name) {
+	if (value === 'true') return true;
+	if (value === 'false') return false;
+	throw new Error(`${name} must be true or false`);
 }
 
 async function servePage(path) {
@@ -246,6 +294,11 @@ async function readProbe(baseUrl) {
 	return evaluateViaDirectEval(baseUrl, 'globalThis.__nyalaNativeWheelSmokeRead()');
 }
 
+async function armNativeWheel(baseUrl) {
+	const armed = await evaluateViaDirectEval(baseUrl, 'globalThis.__nyalaNativeWheelSmokeArm()');
+	if (armed !== true) throw new Error('Native wheel fixture could not arm the isolated gesture.');
+}
+
 async function readWindowRect(baseUrl, id) {
 	const payload = await webdriverRequest(baseUrl, `/session/${id}/window/rect`);
 	const value = payload.value ?? payload;
@@ -256,12 +309,45 @@ async function readWindowRect(baseUrl, id) {
 }
 
 async function waitForScroll(baseUrl, id) {
-	const deadline = Date.now() + 2_000;
+	const deadline = Date.now() + 5_000;
+	let stableCounts;
+	let quietSince;
 	while (Date.now() < deadline) {
 		const state = await readProbe(baseUrl);
-		if (state.wheelEvents?.length > 0 && state.scrollTop !== state.initialScrollTop) return;
+		const wheel = state.timeline?.find(
+			event => event.kind === 'wheel' && event.isTrusted === true && Number.isSafeInteger(event.gestureId)
+		);
+		const gestureId = wheel?.gestureId;
+		const gestureScrolled = state.timeline?.some(
+			event => event.kind === 'scroll' && event.gestureId === gestureId
+		);
+		const gestureReachedAfterFrameTask = state.timeline?.some(
+			event => event.kind === 'after-frame-task' && event.gestureId === gestureId
+		);
+		if (
+			Number.isSafeInteger(gestureId) &&
+			gestureScrolled &&
+			state.scrollTop !== state.initialScrollTop &&
+			state.diagnosticComplete === true &&
+			gestureReachedAfterFrameTask
+		) {
+			const eventCounts = [
+				state.wheelEvents?.filter(event => event.isTrusted === true).length ?? 0,
+				state.scrollEvents?.length ?? 0
+			].join(':');
+			if (eventCounts !== stableCounts) {
+				stableCounts = eventCounts;
+				quietSince = Date.now();
+			} else if (Date.now() - quietSince >= 150) {
+				return;
+			}
+		} else {
+			stableCounts = undefined;
+			quietSince = undefined;
+		}
 		await delay(75);
 	}
+	throw new Error('Timed out waiting for the trusted wheel gesture, renderer diagnostics, and after-frame task.');
 }
 
 function runHelper(command, args) {
