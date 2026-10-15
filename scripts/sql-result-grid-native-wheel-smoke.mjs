@@ -416,7 +416,7 @@ if (-not [NyalaWheelNative]::SetCursorPos($point.X, $point.Y)) {
 }
 $input = New-Object NyalaWheelNative+INPUT
 $input.type = 0
-$input.U.mi.mouseData = [uint32]$Delta
+$input.U.mi.mouseData = [BitConverter]::ToUInt32([BitConverter]::GetBytes([int32]$Delta), 0)
 $input.U.mi.dwFlags = 0x0800
 $inputs = @($input)
 $inserted = [NyalaWheelNative]::SendInput(1, $inputs, [Runtime.InteropServices.Marshal]::SizeOf([type][NyalaWheelNative+INPUT]))
