@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { evaluateNativeWheelSmoke } from './sql-result-grid-native-wheel-contract.mjs';
+import { evaluateNativeWheelSmoke, parseNativeWheelHelperResult } from './sql-result-grid-native-wheel-contract.mjs';
 
 test('native wheel smoke passes only for trusted input that reaches and scrolls the viewport', () => {
 	const checks = evaluateNativeWheelSmoke({
@@ -41,4 +42,29 @@ test('native wheel smoke rejects synthetic, mis-targeted, or ineffective input',
 		viewportMoved: false,
 		visibleRowChanged: false
 	});
+});
+
+test('Windows wheel helper avoids PowerShell automatic PID variable', async () => {
+	const source = await readFile(new URL('./sql-result-grid-native-wheel-smoke.mjs', import.meta.url), 'utf8');
+	const helper = source.match(/function windowsHelperSource\(\) \{\s*return `([\s\S]*?)`;\s*\}/)?.[1];
+	assert.ok(helper, 'Windows native input helper source must be present');
+	assert.match(helper, /\[uint32\]\$windowProcessId = 0/);
+	assert.match(helper, /GetWindowThreadProcessId\(\$hwnd, \[ref\]\$windowProcessId\)/);
+	assert.match(helper, /\$windowProcessId -eq \$ProcessId/);
+	assert.doesNotMatch(helper, /\$pid\b/i);
+});
+
+test('native wheel helper result preserves stderr alongside valid JSON', () => {
+	assert.deepEqual(
+		parseNativeWheelHelperResult({
+			stdout: '{"posted":false,"reason":"target-window-not-found"}',
+			stderr: 'PowerShell diagnostic',
+			status: 3
+		}),
+		{
+			posted: false,
+			reason: 'target-window-not-found',
+			helperStderr: 'PowerShell diagnostic'
+		}
+	);
 });

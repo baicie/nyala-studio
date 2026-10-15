@@ -15,7 +15,7 @@ import {
 	resolveLoopbackDriverEndpoint,
 	webdriverRequest
 } from './tauri-embedded-webdriver.mjs';
-import { evaluateNativeWheelSmoke } from './sql-result-grid-native-wheel-contract.mjs';
+import { evaluateNativeWheelSmoke, parseNativeWheelHelperResult } from './sql-result-grid-native-wheel-contract.mjs';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const cli = parseArgs(process.argv.slice(2));
@@ -266,19 +266,12 @@ async function waitForScroll(baseUrl, id) {
 
 function runHelper(command, args) {
 	const result = spawnSync(command, args, { encoding: 'utf8', timeout: 15_000, windowsHide: true });
-	let payload;
-	try {
-		payload = JSON.parse(result.stdout.trim());
-	} catch {
-		payload = {
-			posted: false,
-			error:
-				result.stderr.trim() || result.stdout.trim() || result.error?.message || 'Native input helper returned no JSON.'
-		};
-	}
-	if (result.error) payload.error = result.error.message;
-	if (result.status !== 0 && payload.posted !== false) payload.posted = false;
-	return payload;
+	return parseNativeWheelHelperResult({
+		stdout: result.stdout,
+		stderr: result.stderr,
+		status: result.status,
+		errorMessage: result.error?.message
+	});
 }
 
 function closeServer(server) {
@@ -389,9 +382,9 @@ if ($desktop -eq [IntPtr]::Zero) {
 
 $script:targetWindow = [IntPtr]::Zero
 [NyalaWheelNative]::EnumWindows({ param($hwnd, $unused)
-    [uint32]$pid = 0
-    [void][NyalaWheelNative]::GetWindowThreadProcessId($hwnd, [ref]$pid)
-    if ($pid -eq $ProcessId -and [NyalaWheelNative]::IsWindowVisible($hwnd)) { $script:targetWindow = $hwnd; return $false }
+    [uint32]$windowProcessId = 0
+    [void][NyalaWheelNative]::GetWindowThreadProcessId($hwnd, [ref]$windowProcessId)
+    if ($windowProcessId -eq $ProcessId -and [NyalaWheelNative]::IsWindowVisible($hwnd)) { $script:targetWindow = $hwnd; return $false }
     return $true
 }, [IntPtr]::Zero) | Out-Null
 if ($script:targetWindow -eq [IntPtr]::Zero) {
