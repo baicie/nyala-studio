@@ -55,6 +55,7 @@ test('Windows wheel helper avoids PowerShell automatic PID variable', async () =
 	assert.match(helper, /\[BitConverter\]::ToUInt32\(\[BitConverter\]::GetBytes\(\[int32\]\$Delta\), 0\)/);
 	assert.match(helper, /WindowFromPoint/);
 	assert.match(helper, /GetGUIThreadInfo/);
+	assert.match(helper, /ConvertTo-Json -Compress -Depth 8/);
 	assert.doesNotMatch(helper, /\$pid\b/i);
 	assert.match(source, /'-Delta',\s*'-120'/);
 });

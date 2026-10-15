@@ -504,7 +504,7 @@ $lastError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
     delta = $Delta
     inserted = $inserted
     win32Error = $lastError
-} | ConvertTo-Json -Compress
+} | ConvertTo-Json -Compress -Depth 8
 if ($inserted -ne 1) { exit 3 }
 `;
 }
