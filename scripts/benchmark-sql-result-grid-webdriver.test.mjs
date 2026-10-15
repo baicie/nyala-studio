@@ -125,8 +125,8 @@ test('Windows recovery probe restarts between workload phases and binds records 
 	const restart = {
 		reason: RECOVERY_PROBE_PHASE_BOUNDARY_REASON,
 		status: 'recovered',
-		previousGeneration: 0,
-		nextGeneration: 1,
+		previousGeneration: 1,
+		nextGeneration: 2,
 		previousProcessId: 7100,
 		nextProcessId: 7101,
 		previousSessionId: 'session-0',
@@ -136,16 +136,22 @@ test('Windows recovery probe restarts between workload phases and binds records 
 		driverReady: true
 	};
 	const records = [
-		...Array.from({ length: 5 }, () => ({
+		...Array.from({ length: 3 }, () => ({
 			workloadId: '10k-x-50',
 			status: 'ok',
 			appGeneration: 0,
+			appProcessId: 7000
+		})),
+		...Array.from({ length: 2 }, () => ({
+			workloadId: '10k-x-50',
+			status: 'ok',
+			appGeneration: 1,
 			appProcessId: 7100
 		})),
 		...Array.from({ length: 5 }, () => ({
 			workloadId: 'narrow-panel',
 			status: 'ok',
-			appGeneration: 1,
+			appGeneration: 2,
 			appProcessId: 7101
 		}))
 	];
@@ -163,10 +169,25 @@ test('Windows recovery probe restarts between workload phases and binds records 
 		getRecoveryProbeRestartReason({ recoveryProbe: false, workloadId: 'narrow-panel', iteration: 1 }),
 		undefined
 	);
-	assert.equal(validateRecoveryProbe(records, [restart], 5).passed, true);
+	const automaticRecovery = {
+		reason: 'navigation-failure',
+		status: 'recovered',
+		previousGeneration: 0,
+		nextGeneration: 1,
+		previousProcessId: 7000,
+		nextProcessId: 7100,
+		previousSessionId: 'session-old',
+		nextSessionId: 'session-0',
+		stopConfirmed: true,
+		endpointReleased: true,
+		driverReady: true
+	};
+	const validation = validateRecoveryProbe(records, [automaticRecovery, restart], 5);
+	assert.equal(validation.passed, true);
+	assert.equal(validation.checks.exactlyOneBoundaryRestart, true);
 
 	const staleNarrowRecords = records.map(record =>
-		record.workloadId === 'narrow-panel' ? { ...record, appGeneration: 0, appProcessId: 7100 } : record
+		record.workloadId === 'narrow-panel' ? { ...record, appGeneration: 1, appProcessId: 7100 } : record
 	);
 	const invalid = validateRecoveryProbe(staleNarrowRecords, [restart], 5);
 	assert.equal(invalid.passed, false);
