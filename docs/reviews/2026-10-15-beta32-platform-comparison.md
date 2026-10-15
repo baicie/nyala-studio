@@ -376,3 +376,18 @@ Layout beginData 显示典型 dirtyObjects=940、totalObjects=1036。分别对�
 顺序采集不能用于效益估计，但足以否定“此 containment 在该场景减少 dirty 对象数”
 这一预测。不据此修改生产代码，也不把普通文本局部下降解释为收益。
 临时 trace 保存在 /tmp/z1-layout-*.json，未混入提交或 admission evidence。
+
+## 固有宽度隔离与 flex 布局对象的临时实验
+
+Chromium 同一临时 harness 做 baseline / inline-size / baseline / inline-size 顺序采集。
+contain:inline-size 下普通文本 20 次 Layout 累计约 48/43ms，基线约 37/36ms；长文本
+方向不一致（候选约 46/53ms，基线约 43/62ms）。不支持此候选，未改产品代码。
+
+单元格源码直接包含文本，没有可删除的 DOM wrapper；产品样式令其 display:flex。
+临时对实际 DOM 的 cell.style.display='block' 后，Layout 记录中 dirtyObjects 从
+940 降到 635，totalObjects 从 1036 降到 714，普通/长文本都一致。这里改变的是浏览器
+生成的布局对象，DOM 节点数不变。两轮顺序采集的普通 Layout 总耗时为基线 29/43ms、
+block 22/40ms；wide 为基线 35/45ms、block 37/43ms，尚无稳定时长收益。直接 block
+也会改变文本垂直对齐，因此不能当作可发布修复。后续若探索此方向，必须保持对齐语义、
+核实 computed style 与像素结果，并使用真正不同的样式变体做官方配对验证。
+本实验写的是实际 DOM inline style，明确进入被测页面，区别于此前未加载的源 CSS A/B。
