@@ -492,3 +492,38 @@ admissionGrade=false，计数6401。这里只验证仪器行为，不宣称性�
 现在必须两边明确admissionGrade=true、干净仪器标记、bundle身份存在且不同、无重大
 control漂移才可计分；缺失标记的旧历史两边互比也不得计分。仍输出机械delta供诊断，
 不输出性能改善宣称。
+
+## 修正仪器后的 block-center 双平台交错诊断（38683697061）
+
+为复核匿名 flex 布局对象候选，在同一 WebView 会话内交错运行 pinned beta.32 与
+附加 `display: block; align-content: center` 的 block-center 变体。macOS WKWebView
+和 Windows WebView2 各产生 36 条 record（4 个 workload、两个 Zeus 变体和
+WorkbenchTable 对照、每项 3 轮），全部 `status: ok`，没有重试或可见行校验失败。
+页面和 trace 均为 `no-global-dom-observer-v2`，measurement contract 为 7。
+
+候选 bundle 的身份完整记录如下：pinned 为
+`f363cf4391f93868b35f4ec3077f498d1d5908f9754f015a260ebb57fc5a2921`，
+block-center 为
+`097ea321759641388b66a272ca70294c087ddf96eefcf10130193764d1ec7e00`。
+两侧都加载同一份 beta.32 product CSS（SHA-256
+`0ac6d781d7d677a6f2d2684722295221a08e82cd8fe5a6037317daae1eb0bcd1`）。
+
+以下是每个变体三轮 record 的 `scrollP95Ms` 中位数，单位 ms；括号内是
+block-center 相对 pinned 的变化：
+
+| workload     | macOS pinned → block-center | Windows pinned → block-center |
+| ------------ | --------------------------: | ----------------------------: |
+| 10k-x-50     |               35 → 38（+3） |           20.1 → 19.5（−0.6） |
+| wide-columns |               39 → 40（+1） |           23.6 → 19.9（−3.7） |
+| 1k-x-20      |               36 → 37（+1） |           18.0 → 17.9（−0.1） |
+| narrow-panel |               18 → 20（+2） |           17.6 → 18.1（+0.5） |
+
+Windows 的 10k 和 wide 下降幅度很小，且没有在 macOS 重现；1k 与窄面板也没有
+一致方向。`visualProbe.cellTextLayout` 确认两侧 row/cell 几何保持有效：两种 Zeus
+变体均为 28px cell、14px 文本、7px 顶部偏移，只有 `display` 和
+`alignContent` 按预期改变。候选没有改善文本位置，也没有形成跨平台端到端收益。
+
+该 run 顶层 `admissionGrade` 明确为 `false`，并声明这是 paired variant diagnostic，
+不能作为单版本 v7 admission。结合结果，block-center 不满足“两平台稳定收益且 1k
+无回归”的生产修改条件；不修改 `zeus-ui` 的生产 CSS，不发布新 beta/dev 版本，
+Z1 继续保持 `NO-GO`。
