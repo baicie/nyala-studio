@@ -61,6 +61,7 @@ export function createBalancedBenchmarkPlan(workloads, renderers, repeat) {
 					workload: workloads[workloadIndex],
 					renderer: renderers[(rendererOffset + position) % renderers.length],
 					iteration,
+					pairId: `${workloads[workloadIndex].id}:${iteration}`,
 					executionOrdinal
 				});
 				executionOrdinal += 1;
@@ -160,11 +161,12 @@ export function isBenchmarkResultForRun(record, expected) {
 		typeof record === 'object' &&
 		record.runToken === expected.runToken &&
 		record.renderer === expected.renderer &&
-		record.measurementContractVersion === MEASUREMENT_CONTRACT_VERSION &&
+		record.measurementContractVersion === (expected.measurementContractVersion ?? MEASUREMENT_CONTRACT_VERSION) &&
 		record.scrollCommitBoundary === SCROLL_COMMIT_BOUNDARY &&
 		record.executionOrder === (expected.executionOrder ?? EXECUTION_ORDER) &&
 		record.executionOrder === expected.executionOrder &&
 		record.executionOrdinal === expected.executionOrdinal &&
+		(expected.pairId === undefined || record.pairId === expected.pairId) &&
 		(expected.zeusVariant === undefined ||
 			record.zeusVariant === expected.zeusVariant ||
 			(record.zeusVariant === undefined && expected.zeusVariant === null)) &&

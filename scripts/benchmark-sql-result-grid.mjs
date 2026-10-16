@@ -92,6 +92,11 @@ import {
 	createSameExecutionProfileMetadata,
 	validateSameExecutionProfileRecord
 } from './sql-result-grid-same-execution-profile.mjs';
+import {
+	FRAME_AWARE_CORRELATION,
+	FRAME_AWARE_MEASUREMENT_CONTRACT_VERSION,
+	createFrameAwareContractMetadata
+} from './sql-result-grid-frame-aware-contract.mjs';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const defaultOutput = join(repositoryRoot, 'docs/sql-mvp-phases/phase-z1-benchmark.json');
@@ -125,15 +130,23 @@ const traceProfile = parseBoolean(cli['trace-profile'] ?? 'false', '--trace-prof
 const jankTrace = parseBoolean(cli['jank-trace'] ?? 'false', '--jank-trace');
 const segmentTrace = parseBoolean(cli['segment-trace'] ?? 'false', '--segment-trace');
 const sameExecutionProfile = parseBoolean(cli['same-execution-profile'] ?? 'false', '--same-execution-profile');
+const frameAware = parseBoolean(cli['frame-aware'] ?? 'false', '--frame-aware');
 if (sameExecutionProfile && (!diagnosticProfile || floorOnly || segmentTrace || jankTrace)) {
 	throw new Error(
 		'--same-execution-profile requires --diagnostic-profile true, --floor-only false, --segment-trace false, and --jank-trace false (diagnostic only).'
 	);
 }
+if (frameAware && (!diagnosticProfile || floorOnly || segmentTrace || jankTrace || sameExecutionProfile)) {
+	throw new Error(
+		'--frame-aware requires --diagnostic-profile true, --floor-only false, --segment-trace false, --jank-trace false, and --same-execution-profile false.'
+	);
+}
 const textChurn = parseBoolean(cli['text-churn'] ?? 'false', '--text-churn');
 if (textChurn && !segmentTrace) throw new Error('--text-churn requires --segment-trace true (diagnostic only).');
 const zeusMeasureNodeChurn =
-	parseBoolean(cli['zeus-measure-node-churn'] ?? 'true', '--zeus-measure-node-churn') && !sameExecutionProfile;
+	parseBoolean(cli['zeus-measure-node-churn'] ?? 'true', '--zeus-measure-node-churn') &&
+	!sameExecutionProfile &&
+	!frameAware;
 const selectedRenderers =
 	cli.renderer === 'all' || !cli.renderer ? ['native', 'workbench-table', 'zeus'] : cli.renderer.split(',');
 const supportedRenderers = new Set(['native', 'workbench-table', 'zeus']);
@@ -148,6 +161,17 @@ if (sameExecutionProfile && selectedRenderers.includes('workbench-table') && wor
 	throw new Error(
 		'--same-execution-profile requires --workbench-table-implementation real when measuring workbench-table.'
 	);
+}
+if (frameAware && selectedRenderers.includes('workbench-table') && workbenchTableImplementation !== 'real') {
+	throw new Error('--frame-aware requires --workbench-table-implementation real when measuring workbench-table.');
+}
+if (
+	frameAware &&
+	(selectedRenderers.length !== 2 ||
+		!selectedRenderers.includes('workbench-table') ||
+		!selectedRenderers.includes('zeus'))
+) {
+	throw new Error('--frame-aware requires exactly the workbench-table and zeus renderers.');
 }
 const selectedWorkloads = cli.workload
 	? workloads.filter(workload => cli.workload.split(',').includes(workload.id))
@@ -243,7 +267,7 @@ try {
 
 	const records = [];
 	const benchmarkPlan = createBalancedBenchmarkPlan(selectedWorkloads, selectedRenderers, repeat);
-	for (const { workload, renderer, iteration, executionOrdinal } of benchmarkPlan) {
+	for (const { workload, renderer, iteration, pairId, executionOrdinal } of benchmarkPlan) {
 		const record = await runBrowserBenchmark(
 			browserRunner.client,
 			benchmarkUrl,
@@ -255,7 +279,8 @@ try {
 			traceProfile,
 			zeusMeasureNodeChurn,
 			jankTrace,
-			segmentTrace
+			segmentTrace,
+			pairId
 		);
 		records.push(record);
 		process.stdout.write(
@@ -264,7 +289,8 @@ try {
 	}
 	const report = {
 		version: 1,
-		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
+		...(frameAware ? { frameAware: true } : {}),
+		measurementContractVersion: frameAware ? FRAME_AWARE_MEASUREMENT_CONTRACT_VERSION : MEASUREMENT_CONTRACT_VERSION,
 		scrollCommitBoundary: SCROLL_COMMIT_BOUNDARY,
 		executionOrder: EXECUTION_ORDER,
 		pageInstrumentation: textChurn ? 'text-churn-observer-v1' : 'no-global-dom-observer-v2',
@@ -274,6 +300,25 @@ try {
 					diagnostic: true,
 					admissionGrade: false,
 					sameExecutionProfile: createSameExecutionProfileMetadata()
+				}
+			: {}),
+		...(frameAware
+			? {
+					frameAwareContract: createFrameAwareContractMetadata(),
+					frameAwareCalibration: {
+						version: 1,
+						passed: false,
+						rendererWorkRelativeChange: 0,
+						rendererWorkAbsoluteChangeMs: 0,
+						totalRelativeChange: 0
+					},
+					admissionGrade: false,
+					admission: {
+						mode: 'same-execution',
+						correlation: FRAME_AWARE_CORRELATION,
+						grade: false,
+						reasons: ['renderer-operation calibration is unavailable']
+					}
 				}
 			: {}),
 		generatedAt: new Date().toISOString(),
@@ -541,7 +586,8 @@ async function runBrowserBenchmark(
 	traceProfile,
 	measureNodeChurn,
 	jankTrace,
-	segmentTrace
+	segmentTrace,
+	pairId
 ) {
 	const runToken = randomUUID();
 	const query = new URLSearchParams({
@@ -554,6 +600,8 @@ async function runBrowserBenchmark(
 		traceProfile: String(traceProfile),
 		segmentTrace: String(segmentTrace),
 		sameExecutionProfile: String(sameExecutionProfile),
+		frameAware: String(frameAware),
+		...(frameAware ? { pairId } : {}),
 		textChurn: String(textChurn),
 		measureNodeChurn: String(measureNodeChurn),
 		rows: String(workload.rows),
@@ -578,6 +626,8 @@ async function runBrowserBenchmark(
 		renderer,
 		executionOrder: EXECUTION_ORDER,
 		executionOrdinal,
+		measurementContractVersion: frameAware ? FRAME_AWARE_MEASUREMENT_CONTRACT_VERSION : MEASUREMENT_CONTRACT_VERSION,
+		...(frameAware ? { frameAware: true, pairId } : {}),
 		workload,
 		workbenchTableImplementation,
 		workbenchTableBundleSha256: workbenchTableBundle?.sha256
@@ -945,12 +995,17 @@ const traceProfile = params.get('traceProfile') === 'true';
 	const jankTrace = params.get('jankTrace') === 'true';
 	const jankTraceWorkloadId = params.get('workloadId') || '';
 const sameExecutionProfile = params.get('sameExecutionProfile') === 'true';
+const frameAware = params.get('frameAware') === 'true';
+const pairId = params.get('pairId') || undefined;
 const runtimeCountersEnabled = params.get('runtimeCounters') === 'true';
 if (runtimeCountersEnabled && renderer !== 'zeus') {
 	throw new Error('Runtime counter sampling requires the Zeus renderer.');
 }
 if (sameExecutionProfile && (!diagnosticProfile || floorOnly || segmentTrace || jankTrace)) {
 	throw new Error('Same-execution profiling requires diagnosticProfile=true, floorOnly=false, segmentTrace=false, and jankTrace=false.');
+}
+if (frameAware && (!diagnosticProfile || floorOnly || segmentTrace || jankTrace || sameExecutionProfile)) {
+	throw new Error('Frame-aware profiling requires diagnosticProfile=true, floorOnly=false, segmentTrace=false, jankTrace=false, and sameExecutionProfile=false.');
 }
 	const measureNodeChurn = sameExecutionProfile ? 'false' : params.get('measureNodeChurn');
 const workbenchTableImplementation = ${JSON.stringify(workbenchTableImplementation)};
@@ -998,6 +1053,10 @@ const SQL_RESULT_GRID_JANK_MINIMUM_HORIZONTAL_SPAN_PX = ${SQL_RESULT_GRID_JANK_M
 const SQL_RESULT_GRID_SEGMENT_TRACE_VERSION = ${SQL_RESULT_GRID_SEGMENT_TRACE_VERSION};
 const SQL_RESULT_GRID_SEGMENT_TRACE_CORRELATION = ${JSON.stringify(SQL_RESULT_GRID_SEGMENT_TRACE_CORRELATION)};
 const SQL_RESULT_GRID_SEGMENT_TRACE_INSTRUMENTATION = ${JSON.stringify(SQL_RESULT_GRID_SEGMENT_TRACE_INSTRUMENTATION)};
+const FRAME_AWARE_CONTRACT_METADATA = ${JSON.stringify(createFrameAwareContractMetadata())};
+const FRAME_AWARE_CORRELATION = ${JSON.stringify(FRAME_AWARE_CORRELATION)};
+const FRAME_AWARE_BOUNDARY_VERSION = FRAME_AWARE_CONTRACT_METADATA.boundaryVersion;
+const FRAME_AWARE_MEASUREMENT_CONTRACT_VERSION = ${FRAME_AWARE_MEASUREMENT_CONTRACT_VERSION};
 const JANK_TRACE_CONTROL_TIMEOUT_MS = 30_000;
 ${isValidVisibleRowIndex.toString()}
 ${maximumVirtualRenderedRows.toString()}
@@ -1062,10 +1121,13 @@ function writeBenchmarkResult(result) {
 		// 交错采集时，同一 workload/renderer 会在同一会话内用不同 Zeus bundle 变体
 		// 各测一次。变体身份必须随记录一起上报，否则两组数字无法配对。
 		...(params.get('zeusVariant') ? { zeusVariant: params.get('zeusVariant') } : {}),
-		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
-			scrollCommitBoundary: SCROLL_COMMIT_BOUNDARY,
-			executionOrder,
-			executionOrdinal,
+		...(frameAware ? { frameAware: true, pairId } : {}),
+		measurementContractVersion: frameAware
+			? FRAME_AWARE_MEASUREMENT_CONTRACT_VERSION
+			: MEASUREMENT_CONTRACT_VERSION,
+		scrollCommitBoundary: SCROLL_COMMIT_BOUNDARY,
+		executionOrder,
+		executionOrdinal,
 		workload,
 		browserViewport: {
 			width: window.innerWidth,
@@ -1078,6 +1140,23 @@ function writeBenchmarkResult(result) {
 			admissionGrade: false,
 			sameExecutionProfile: createSameExecutionProfileMetadata(),
 			limitations: createSameExecutionProfileMetadata().limitations
+		} : {}),
+		...(frameAware ? {
+			frameAwareContract: FRAME_AWARE_CONTRACT_METADATA,
+			frameAwareCalibration: {
+				version: 1,
+				passed: false,
+				rendererWorkRelativeChange: 0,
+				rendererWorkAbsoluteChangeMs: 0,
+				totalRelativeChange: 0
+			},
+			admissionGrade: false,
+			admission: {
+				mode: 'same-execution',
+				correlation: FRAME_AWARE_CORRELATION,
+				grade: false,
+				reasons: ['renderer-operation calibration is unavailable']
+			}
 		} : {}),
 		...(runtimeCountersEnabled ? {
 			diagnostic: true,
@@ -1203,7 +1282,7 @@ async function commitScroll(rendered, targetOffset, sampleIndex) {
 	scrollController.scrollTop = targetOffset;
 	const inputEnd = performance.now();
 	const inputMs = inputEnd - startedAt;
-	const sameExecution = sameExecutionProfile ? { inputStart: startedAt, inputEnd, waits: [] } : undefined;
+	const sameExecution = sameExecutionProfile || frameAware ? { inputStart: startedAt, inputEnd, waits: [] } : undefined;
 	let actualOffset = scrollController.scrollTop;
 	let expectedRowIndex = expectedVisibleRowIndex(actualOffset);
 	let visibleRowIndex = -1;
@@ -1294,6 +1373,9 @@ async function commitScrollWithDiagnostics(rendered, targetOffset, sampleIndex, 
 	if (sample.sameExecution) {
 		sample.sameExecution.phase = phase;
 		sample.sameExecution.sampleIndex = diagnosticSampleIndex;
+		if (frameAware && phase === 'sample' && pairId !== undefined) {
+			sample.sameExecution.pairSampleId = pairId + '-sample-' + diagnosticSampleIndex;
+		}
 	}
 	return sample;
 }
@@ -1501,6 +1583,7 @@ function renderWorkbenchTable(root, rows, columns) {
   if (workbenchTableImplementation !== 'real') return renderWorkbenchTableCharacterization(root, rows, columns);
   const factory = globalThis.__NYALA_CREATE_WORKBENCH_TABLE_BENCHMARK__;
   if (typeof factory !== 'function') throw new Error('Real WorkbenchTable benchmark factory is unavailable.');
+  globalThis.__NYALA_FRAME_AWARE__ = frameAware;
   const rendered = factory(root, rows, columns, {
     width: viewportWidth,
     height: Math.max(1, viewportHeight - 20),
@@ -1535,8 +1618,9 @@ function renderWorkbenchTable(root, rows, columns) {
 async function renderZeus(root, rows, columns) {
   if (!customElements.get('zw-data-grid')) return { unavailable: 'Zeus bundle was not provided.' };
   const grid = document.createElement('zw-data-grid');
+	globalThis.__NYALA_FRAME_AWARE__ = frameAware;
 	const zeusDiagnostics = diagnosticProfile && !floorOnly ? createZeusDataGridDiagnosticCollector(
-		segmentTrace || measureNodeChurn === 'false' ? { measureNodeChurn: false } : undefined
+		measureNodeChurn === 'false' ? { measureNodeChurn: false } : undefined
 	) : undefined;
 	if (zeusDiagnostics) grid.diagnostics = zeusDiagnostics.observer;
   grid.setAttribute('aria-label', 'SQL result benchmark');
@@ -1669,6 +1753,7 @@ async function main() {
 		diagnostics: diagnosticProfile || traceProfile || runtimeCountersEnabled ? {
 			...(diagnosticProfile ? { presentationFloor } : {}),
 			measureNodeChurn: measureNodeChurn === 'true',
+			...(frameAware ? { measureNodeChurn: false } : {}),
 			floorOnly,
 			traceProfile,
 			...(zeusDataGrid ? { zeusDataGrid } : {}),

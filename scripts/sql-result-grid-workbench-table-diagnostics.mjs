@@ -38,6 +38,7 @@ export function createWorkbenchTableDiagnosticCollector(options = {}) {
 	const commits = [];
 	const scrollOperations = [];
 	const wrappers = {};
+	const frameAware = options.frameAware === true || globalThis.__NYALA_FRAME_AWARE__ === true;
 	let activeOperation;
 	let activeTransaction;
 	let nextTransactionId = 1;
@@ -58,11 +59,42 @@ export function createWorkbenchTableDiagnosticCollector(options = {}) {
 	}
 
 	function cloneOperation(operation) {
-		return {
+		const cloned = {
 			phase: operation.phase,
 			sampleIndex: operation.sampleIndex,
 			commitTransactionIds: [...operation.commitTransactionIds],
 			primaryCommitTransactionId: operation.primaryCommitTransactionId
+		};
+		if (frameAware && operation.boundaryVersion !== undefined) {
+			cloned.boundaryVersion = operation.boundaryVersion;
+			cloned.startTime = operation.startTime;
+			cloned.endTime = operation.endTime;
+			cloned.durationMs = operation.durationMs;
+		}
+		return cloned;
+	}
+
+	function addFrameAwareBoundary(correlation, operationCommits) {
+		if (!frameAware || operationCommits.length === 0) return correlation;
+		const starts = operationCommits.flatMap(commit => commit.rangeIntervals.map(interval => interval[0]));
+		const ends = operationCommits.flatMap(commit => commit.commitIntervals.map(interval => interval[1]));
+		if (
+			starts.length === 0 ||
+			ends.length === 0 ||
+			starts.some(value => !Number.isFinite(value)) ||
+			ends.some(value => !Number.isFinite(value))
+		) {
+			return correlation;
+		}
+		const startTime = Math.min(...starts);
+		const endTime = Math.max(...ends);
+		if (endTime < startTime) return correlation;
+		return {
+			...correlation,
+			boundaryVersion: 'symmetric-renderer-work-v1',
+			startTime,
+			endTime,
+			durationMs: endTime - startTime
 		};
 	}
 
@@ -153,13 +185,17 @@ export function createWorkbenchTableDiagnosticCollector(options = {}) {
 				throw new Error('WorkbenchTable diagnostics operation ended with an open scroll transaction.');
 			}
 			activeOperation = undefined;
-			const commitTransactionIds = commits.slice(operation.commitCursor).map(commit => commit.transactionId);
-			const correlation = {
-				phase: operation.phase,
-				sampleIndex: operation.sampleIndex,
-				commitTransactionIds,
-				primaryCommitTransactionId: commitTransactionIds.at(-1) ?? null
-			};
+			const operationCommits = commits.slice(operation.commitCursor);
+			const commitTransactionIds = operationCommits.map(commit => commit.transactionId);
+			const correlation = addFrameAwareBoundary(
+				{
+					phase: operation.phase,
+					sampleIndex: operation.sampleIndex,
+					commitTransactionIds,
+					primaryCommitTransactionId: commitTransactionIds.at(-1) ?? null
+				},
+				operationCommits
+			);
 			scrollOperations.push(correlation);
 			return cloneOperation(correlation);
 		},

@@ -55,7 +55,10 @@ async function loadSameExecutionPageScript() {
 			const page = join(root, 'benchmark.html');
 			await execFileAsync(process.execPath, [benchmarkScript.pathname, '--emit-page', page, '--renderer', 'native']);
 			const html = await readFile(page, 'utf8');
-			sameExecutionPageScript = html.slice(html.lastIndexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
+			sameExecutionPageScript = html.slice(
+				html.lastIndexOf('<script>') + '<script>'.length,
+				html.lastIndexOf('</script>')
+			);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -82,32 +85,45 @@ async function createSameExecutionPageHarness(query = {}, { visibleOnAttempt = 1
 		innerWidth: 1440,
 		innerHeight: 420,
 		devicePixelRatio: 1,
-		performance: { now() { counts.now += 1; return ++clock; } },
+		performance: {
+			now() {
+				counts.now += 1;
+				return ++clock;
+			}
+		},
 		requestAnimationFrame(callback) {
 			counts.frame += 1;
 			const id = nextId++;
 			frames.set(id, callback);
 			return id;
 		},
-		cancelAnimationFrame(id) { frames.delete(id); },
+		cancelAnimationFrame(id) {
+			frames.delete(id);
+		},
 		setTimeout(callback, delay) {
 			counts.timer += 1;
 			const id = nextId++;
 			timers.set(id, { callback, delay });
 			return id;
 		},
-		clearTimeout(id) { timers.delete(id); },
+		clearTimeout(id) {
+			timers.delete(id);
+		},
 		document: {
-			getElementById() { return resultElement; },
+			getElementById() {
+				return resultElement;
+			},
 			elementFromPoint() {
 				assert.equal(inFrame, false, 'the rAF callback must never probe DOM');
 				counts.hitTest += 1;
 				events.push('visible-row');
 				const index = attempt < visibleOnAttempt ? 0 : Math.floor((scrollOffset + 14) / 28);
-				return { closest: () => ({
-					textContent: String(index),
-					closest: () => ({ getAttribute: () => String(index) })
-				}) };
+				return {
+					closest: () => ({
+						textContent: String(index),
+						closest: () => ({ getAttribute: () => String(index) })
+					})
+				};
 			}
 		}
 	});
@@ -115,14 +131,23 @@ async function createSameExecutionPageHarness(query = {}, { visibleOnAttempt = 1
 	runInContext(await loadSameExecutionPageScript(), context);
 	const diagnostics = context.createZeusDataGridDiagnosticCollector({ measureNodeChurn: false });
 	const scroll = {
-		get scrollTop() { assert.equal(inFrame, false); return scrollOffset; },
+		get scrollTop() {
+			assert.equal(inFrame, false);
+			return scrollOffset;
+		},
 		set scrollTop(value) {
 			assert.equal(inFrame, false);
 			counts.input += 1;
 			events.push('input');
 			scrollOffset = value;
-			diagnostics.observer.onCommit({ source: 'scroll', transactionId: nextTransactionId++, handlerStartTime: clock,
-				handlerEndTime: clock, commitStartTime: clock, commitEndTime: clock });
+			diagnostics.observer.onCommit({
+				source: 'scroll',
+				transactionId: nextTransactionId++,
+				handlerStartTime: clock,
+				handlerEndTime: clock,
+				commitStartTime: clock,
+				commitEndTime: clock
+			});
 		},
 		get offsetHeight() {
 			assert.equal(inFrame, false);
@@ -137,27 +162,43 @@ async function createSameExecutionPageHarness(query = {}, { visibleOnAttempt = 1
 			counts.rect += 1;
 			return { left: 0, top: 0, right: 100, bottom: 300, width: 100 };
 		},
-		contains() { assert.equal(inFrame, false); return true; }
+		contains() {
+			assert.equal(inFrame, false);
+			return true;
+		}
 	};
 	return {
-		context, counts, events, diagnostics, resultElement,
+		context,
+		counts,
+		events,
+		diagnostics,
+		resultElement,
 		rendered: { scroll, zeusDiagnostics: diagnostics },
 		async finish(promise) {
 			let done = false;
-			promise.finally(() => { done = true; }).catch(() => {});
+			promise
+				.finally(() => {
+					done = true;
+				})
+				.catch(() => {});
 			for (let turn = 0; !done && turn < 200; turn += 1) {
 				for (const [id, callback] of [...frames]) {
 					frames.delete(id);
 					attempt += 1;
 					events.push('rAF');
 					inFrame = true;
-					try { callback(clock); } finally { inFrame = false; }
+					try {
+						callback(clock);
+					} finally {
+						inFrame = false;
+					}
 				}
-				for (const [id, timer] of [...timers]) if (timer.delay === 0) {
-					timers.delete(id);
-					events.push('after-frame-task');
-					timer.callback();
-				}
+				for (const [id, timer] of [...timers])
+					if (timer.delay === 0) {
+						timers.delete(id);
+						events.push('after-frame-task');
+						timer.callback();
+					}
 				await Promise.resolve();
 			}
 			assert.equal(done, true, 'page operation must finish using its existing waits');
@@ -165,7 +206,9 @@ async function createSameExecutionPageHarness(query = {}, { visibleOnAttempt = 1
 			assert.equal(timers.size, 0, 'the existing watchdog must be cleared');
 			return promise;
 		},
-		get attempts() { return attempt; }
+		get attempts() {
+			return attempt;
+		}
 	};
 }
 
@@ -182,11 +225,17 @@ test('same-execution profile is opt-in and leaves the default input, waits, DOM 
 });
 
 test('same-execution profile timestamps the original callbacks and validation in the same renderer operation', async () => {
-	const harness = await createSameExecutionPageHarness({ diagnosticProfile: 'true', sameExecutionProfile: 'true', measureNodeChurn: 'true' });
+	const harness = await createSameExecutionPageHarness({
+		diagnosticProfile: 'true',
+		sameExecutionProfile: 'true',
+		measureNodeChurn: 'true'
+	});
 	assert.equal(runInContext('measureNodeChurn', harness.context), 'false');
 	const samples = [];
 	for (let sampleIndex = 0; sampleIndex < 2; sampleIndex += 1) {
-		const sample = await harness.finish(harness.context.commitScrollWithDiagnostics(harness.rendered, (sampleIndex + 1) * 280, sampleIndex, 'sample'));
+		const sample = await harness.finish(
+			harness.context.commitScrollWithDiagnostics(harness.rendered, (sampleIndex + 1) * 280, sampleIndex, 'sample')
+		);
 		samples.push(sample);
 		const timing = sample.sameExecution;
 		assert.equal(timing.waits.length, sample.attempts);
@@ -197,11 +246,24 @@ test('same-execution profile timestamps the original callbacks and validation in
 		assert.equal(timing.rendererOperation.sampleIndex, sampleIndex);
 		assert.deepEqual(Array.from(timing.rendererOperation.commitTransactionIds), [sampleIndex + 1]);
 		const wait = timing.waits[0];
-		const orderedTimes = [timing.inputStart, timing.inputEnd, wait.waitStart, wait.rafTime,
-			wait.afterFrameTaskTime, wait.waitEnd, wait.offsetHeightStart, wait.offsetHeightEnd,
-			wait.visibleRowValidationStart, wait.visibleRowValidationEnd, timing.endTime];
+		const orderedTimes = [
+			timing.inputStart,
+			timing.inputEnd,
+			wait.waitStart,
+			wait.rafTime,
+			wait.afterFrameTaskTime,
+			wait.waitEnd,
+			wait.offsetHeightStart,
+			wait.offsetHeightEnd,
+			wait.visibleRowValidationStart,
+			wait.visibleRowValidationEnd,
+			timing.endTime
+		];
 		assert.ok(orderedTimes.every(Number.isFinite));
-		assert.deepEqual(orderedTimes, [...orderedTimes].sort((left, right) => left - right));
+		assert.deepEqual(
+			orderedTimes,
+			[...orderedTimes].sort((left, right) => left - right)
+		);
 		assert.equal(wait.waitEnd - wait.waitStart, sample.presentationWaitMs);
 		assert.equal(wait.visibleRowValidationEnd - wait.offsetHeightStart, sample.validationMs);
 	}
@@ -210,10 +272,19 @@ test('same-execution profile timestamps the original callbacks and validation in
 	await harness.finish(harness.context.waitForPresentationOpportunity());
 	assert.equal(JSON.stringify(samples), beforeUnrelatedWait, 'unrelated waits must not mutate a completed operation');
 	const snapshot = harness.diagnostics.snapshot();
-	assert.deepEqual(Array.from(snapshot.scrollOperations, operation => operation.sampleIndex), [0, 1]);
-	harness.context.writeBenchmarkResult({ status: 'ok', scroll: { samples }, diagnostics: {
-		floorOnly: false, measureNodeChurn: false, zeusDataGrid: snapshot
-	} });
+	assert.deepEqual(
+		Array.from(snapshot.scrollOperations, operation => operation.sampleIndex),
+		[0, 1]
+	);
+	harness.context.writeBenchmarkResult({
+		status: 'ok',
+		scroll: { samples },
+		diagnostics: {
+			floorOnly: false,
+			measureNodeChurn: false,
+			zeusDataGrid: snapshot
+		}
+	});
 	const record = JSON.parse(harness.resultElement.textContent);
 	assert.equal(record.diagnostic, true);
 	assert.equal(record.admissionGrade, false);
@@ -222,37 +293,78 @@ test('same-execution profile timestamps the original callbacks and validation in
 	assert.match(record.limitations.join(' '), /wall-clock/);
 	assert.equal(validateSameExecutionProfileRecord(record, { expectedSampleCount: 2 }), record);
 	for (const mutate of [
-		value => { delete value.scroll.samples[0].sameExecution; },
-		value => { value.scroll.samples[0].sameExecution.waits[0].rafTime = Infinity; },
-		value => { value.scroll.samples[0].sameExecution.waits[0].afterFrameTaskTime = 0; },
-		value => { value.scroll.samples[0].attempts += 1; },
-		value => { value.scroll.samples[0].presentationOpportunities += 1; },
-		value => { value.scroll.samples[0].committed = false; },
-		value => { value.diagnostics.measureNodeChurn = true; },
-		value => { value.scroll.samples[0].inputMs += 5; },
-		value => { value.scroll.samples[0].totalMs += 5; },
-		value => { value.scroll.samples[1].sameExecution.rendererOperation.commitTransactionIds = [1]; },
-		value => { value.diagnostics.zeusDataGrid.commits[0].handlerEndTime = 10000; },
-		value => { value.diagnostics.zeusDataGrid.commits[0].commitEndTime = 10000; },
-		value => { value.diagnostics.zeusDataGrid.scrollOperations[0].sampleIndex = 1; }
+		value => {
+			delete value.scroll.samples[0].sameExecution;
+		},
+		value => {
+			value.scroll.samples[0].sameExecution.waits[0].rafTime = Infinity;
+		},
+		value => {
+			value.scroll.samples[0].sameExecution.waits[0].afterFrameTaskTime = 0;
+		},
+		value => {
+			value.scroll.samples[0].attempts += 1;
+		},
+		value => {
+			value.scroll.samples[0].presentationOpportunities += 1;
+		},
+		value => {
+			value.scroll.samples[0].committed = false;
+		},
+		value => {
+			value.diagnostics.measureNodeChurn = true;
+		},
+		value => {
+			value.scroll.samples[0].inputMs += 5;
+		},
+		value => {
+			value.scroll.samples[0].totalMs += 5;
+		},
+		value => {
+			value.scroll.samples[1].sameExecution.rendererOperation.commitTransactionIds = [1];
+		},
+		value => {
+			value.diagnostics.zeusDataGrid.commits[0].handlerEndTime = 10000;
+		},
+		value => {
+			value.diagnostics.zeusDataGrid.commits[0].commitEndTime = 10000;
+		},
+		value => {
+			value.diagnostics.zeusDataGrid.scrollOperations[0].sampleIndex = 1;
+		}
 	]) {
 		const corrupt = structuredClone(record);
 		mutate(corrupt);
-		assert.throws(() => validateSameExecutionProfileRecord(corrupt, { expectedSampleCount: 2 }), /Invalid same-execution profile/);
+		assert.throws(
+			() => validateSameExecutionProfileRecord(corrupt, { expectedSampleCount: 2 }),
+			/Invalid same-execution profile/
+		);
 	}
 	assert.throws(() => validateSameExecutionProfileRecord(record), /scroll sample count is incomplete/);
 });
 
 test('same-execution profile records every existing retry wait without another input or probe', async () => {
-	const harness = await createSameExecutionPageHarness({ diagnosticProfile: 'true', sameExecutionProfile: 'true' }, { visibleOnAttempt: 2 });
+	const harness = await createSameExecutionPageHarness(
+		{ diagnosticProfile: 'true', sameExecutionProfile: 'true' },
+		{ visibleOnAttempt: 2 }
+	);
 	const sample = await harness.finish(harness.context.commitScrollWithDiagnostics(harness.rendered, 280, 0, 'sample'));
 	assert.equal(sample.committed, true);
 	assert.equal(sample.attempts, 2);
 	assert.equal(sample.sameExecution.waits.length, 2);
 	assert.ok(sample.sameExecution.waits[0].visibleRowValidationEnd <= sample.sameExecution.waits[1].waitStart);
 	assert.deepEqual(harness.counts, { now: 17, frame: 2, timer: 4, input: 1, offsetHeight: 2, rect: 2, hitTest: 2 });
-	assert.deepEqual(harness.events, ['input', 'rAF', 'after-frame-task', 'offsetHeight', 'visible-row',
-		'rAF', 'after-frame-task', 'offsetHeight', 'visible-row']);
+	assert.deepEqual(harness.events, [
+		'input',
+		'rAF',
+		'after-frame-task',
+		'offsetHeight',
+		'visible-row',
+		'rAF',
+		'after-frame-task',
+		'offsetHeight',
+		'visible-row'
+	]);
 });
 
 test('runtime counters bracket every Zeus scroll sample and remain diagnostic-only', async () => {
@@ -263,7 +375,9 @@ test('runtime counters bracket every Zeus scroll sample and remain diagnostic-on
 	let started = false;
 	let snapshots = 0;
 	harness.context.__ZEUS_RUNTIME_COUNTERS__ = {
-		start() { started = true; },
+		start() {
+			started = true;
+		},
 		snapshot() {
 			assert.equal(started, true, 'counter session must start before rendering and sampling');
 			return { ticks: snapshots++ };
@@ -280,7 +394,11 @@ test('runtime counters bracket every Zeus scroll sample and remain diagnostic-on
 		assert.equal(sample.runtimeCounters.after.ticks, 4 + sampleIndex * 2);
 		assert.equal(sample.runtimeCounters.delta.ticks, 1);
 	}
-	harness.context.writeBenchmarkResult({ status: 'ok', scroll, diagnostics: { runtimeCounters: scroll.runtimeCounters } });
+	harness.context.writeBenchmarkResult({
+		status: 'ok',
+		scroll,
+		diagnostics: { runtimeCounters: scroll.runtimeCounters }
+	});
 	const record = JSON.parse(harness.resultElement.textContent);
 	assert.equal(record.diagnosticOnly, true);
 	assert.equal(record.admissionGrade, false);
@@ -288,19 +406,32 @@ test('runtime counters bracket every Zeus scroll sample and remain diagnostic-on
 });
 
 test('same-execution page rejects invalid profile combinations before starting the benchmark', async () => {
-	for (const query of [{}, { diagnosticProfile: 'true', floorOnly: 'true' },
-		{ diagnosticProfile: 'true', segmentTrace: 'true' }, { diagnosticProfile: 'true', jankTrace: 'true' },
-		{ diagnosticProfile: 'true', renderer: 'workbench-table' }]) {
-		await assert.rejects(createSameExecutionPageHarness({ sameExecutionProfile: 'true', ...query }), /Same-execution profiling requires/);
+	for (const query of [
+		{},
+		{ diagnosticProfile: 'true', floorOnly: 'true' },
+		{ diagnosticProfile: 'true', segmentTrace: 'true' },
+		{ diagnosticProfile: 'true', jankTrace: 'true' },
+		{ diagnosticProfile: 'true', renderer: 'workbench-table' }
+	]) {
+		await assert.rejects(
+			createSameExecutionPageHarness({ sameExecutionProfile: 'true', ...query }),
+			/Same-execution profiling requires/
+		);
 	}
 });
 
 test('same-execution CLI rejects invalid profile combinations without launching a browser', async () => {
-	for (const flags of [[], ['--diagnostic-profile', 'true', '--floor-only', 'true'],
-		['--diagnostic-profile', 'true', '--segment-trace', 'true'], ['--diagnostic-profile', 'true', '--jank-trace', 'true'],
-		['--diagnostic-profile', 'true', '--repeat', '3']]) {
-		await assert.rejects(execFileAsync(process.execPath, [benchmarkScript.pathname, '--same-execution-profile', 'true', ...flags]),
-			error => error.code === 1 && /--same-execution-profile requires/.test(error.stderr));
+	for (const flags of [
+		[],
+		['--diagnostic-profile', 'true', '--floor-only', 'true'],
+		['--diagnostic-profile', 'true', '--segment-trace', 'true'],
+		['--diagnostic-profile', 'true', '--jank-trace', 'true'],
+		['--diagnostic-profile', 'true', '--repeat', '3']
+	]) {
+		await assert.rejects(
+			execFileAsync(process.execPath, [benchmarkScript.pathname, '--same-execution-profile', 'true', ...flags]),
+			error => error.code === 1 && /--same-execution-profile requires/.test(error.stderr)
+		);
 	}
 });
 
@@ -646,7 +777,11 @@ test('scroll metric uses one completion contract for every renderer', async () =
 	assert.equal(MEASUREMENT_CONTRACT_VERSION, 7);
 	assert.equal(EXECUTION_ORDER, 'renderer-balanced-rotation-v1');
 	assert.equal(SCROLL_COMMIT_BOUNDARY, 'post-presentation-opportunity');
-	assert.match(source, /measurementContractVersion:\s*MEASUREMENT_CONTRACT_VERSION/);
+	assert.match(
+		source,
+		/measurementContractVersion:\s*(?:MEASUREMENT_CONTRACT_VERSION|frameAware\s*\?\s*FRAME_AWARE_MEASUREMENT_CONTRACT_VERSION)/
+	);
+	assert.match(source, /FRAME_AWARE_MEASUREMENT_CONTRACT_VERSION/);
 	assert.match(source, /scrollCommitBoundary:\s*SCROLL_COMMIT_BOUNDARY/);
 	assert.match(source, /async function commitScroll/);
 	assert.match(source, /async function measureScroll/);
@@ -1267,7 +1402,10 @@ test('diagnostic benchmark page assigns the beta.4 observer before data and DOM 
 		assert.ok(diagnosticsAssignment < source.indexOf('root.append(grid)'));
 		assert.match(source, /validateZeusDataGridDiagnosticSnapshot/);
 		assert.match(source, /zeusDataGrid/);
-		assert.match(source, /const measureNodeChurn = sameExecutionProfile \? 'false' : params\.get\('measureNodeChurn'\)/);
+		assert.match(
+			source,
+			/const measureNodeChurn = sameExecutionProfile \? 'false' : params\.get\('measureNodeChurn'\)/
+		);
 		assert.match(source, /measureNodeChurn === 'false' \? \{ measureNodeChurn: false \} : undefined/);
 		assert.match(source, /measureNodeChurn: measureNodeChurn === 'true'/);
 	} finally {

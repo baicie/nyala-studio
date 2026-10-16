@@ -49,6 +49,11 @@ import {
 	INTERLEAVED_EXECUTION_ORDER
 } from './sql-result-grid-interleaved-plan.mjs';
 import { getRecoveryProbeRestartReason, validateRecoveryProbe } from './sql-result-grid-recovery-probe.mjs';
+import {
+	FRAME_AWARE_CORRELATION,
+	FRAME_AWARE_MEASUREMENT_CONTRACT_VERSION,
+	createFrameAwareContractMetadata
+} from './sql-result-grid-frame-aware-contract.mjs';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const defaultOutput = join(repositoryRoot, 'platform-evidence.json');
@@ -79,6 +84,9 @@ if (cli.help === 'true') {
   --same-execution-profile <true|false>  Timestamp the existing primary scroll
     callbacks and validation spans. Requires --instrument-baseline true and
     disables node-churn measurement. Diagnostic evidence only; never admission.
+  --frame-aware <true|false>  Collect v8 same-execution renderer operations for
+    WorkbenchTable and Zeus in an embedded app. Calibration remains required by
+    the independent v8 verifier.
   --runtime-counters <true|false>  Read Zeus runtime counters around every scroll
     sample. Requires the Zeus renderer. Diagnostic evidence only; never admission.
   --instrument-baseline <true|false>  Instrument the baseline renderer so commit
@@ -143,6 +151,11 @@ if (textChurn && !traceProfile) throw new Error('--text-churn requires --trace-p
 // overhead inside scrollP95Ms; that same guarantee is why an instrumented run
 // cannot produce admission-grade scrollP95Ms.
 const instrumentBaseline = String(cli['instrument-baseline'] ?? 'false') === 'true';
+const frameAwareValue = String(cli['frame-aware'] ?? 'false');
+if (!['true', 'false'].includes(frameAwareValue)) {
+	throw new Error('--frame-aware must be true or false.');
+}
+const frameAware = frameAwareValue === 'true';
 const sameExecutionProfileValue = String(cli['same-execution-profile'] ?? 'false');
 if (!['true', 'false'].includes(sameExecutionProfileValue)) {
 	throw new Error('--same-execution-profile must be true or false.');
@@ -185,6 +198,24 @@ const workloads = [
 const renderers = ['native', 'workbench-table', 'zeus'];
 const selectedWorkloads = selectValues(cli.workload, workloads, 'workload');
 const selectedRenderers = selectValues(cli.renderer, renderers, 'renderer');
+if (frameAware && (!appBinary || traceProfile || sameExecutionProfile || runtimeCounters || instrumentBaseline)) {
+	throw new Error(
+		'--frame-aware requires an embedded app binary, --trace-profile false, --same-execution-profile false, --runtime-counters false, and --instrument-baseline false.'
+	);
+}
+if (
+	frameAware &&
+	(selectedRenderers.includes('native') ||
+		!selectedRenderers.includes('workbench-table') ||
+		!selectedRenderers.includes('zeus'))
+) {
+	throw new Error(
+		'--frame-aware requires exactly the WorkbenchTable and Zeus renderers; native has no v8 operation collector.'
+	);
+}
+if (frameAware && zeusCss) {
+	throw new Error('--frame-aware does not accept product CSS diagnostic evidence.');
+}
 if (runtimeCounters && !selectedRenderers.includes('zeus')) {
 	throw new Error('--runtime-counters requires --renderer zeus (or a renderer list containing zeus).');
 }
@@ -215,7 +246,6 @@ if (recoveryProbe) {
 if (zeusCss && !(await exists(resolve(zeusCss)))) {
 	throw new Error(`Unable to load Zeus product CSS at ${zeusCss}`);
 }
-
 await run();
 
 async function run() {
@@ -545,6 +575,7 @@ async function run() {
 		// bug in this runner.
 		async function runBenchmarkRound({ workload, renderer, iteration, executionOrdinal, variant }) {
 			const runToken = randomUUID();
+			const pairId = `${workload.id}:${iteration}`;
 			const attemptScreenshots = [];
 			await resetPageForViewportCalibration(driverUrl, sessionId, Boolean(appBinary));
 			const query = {
@@ -552,6 +583,7 @@ async function run() {
 				renderer,
 				executionOrder: effectiveExecutionOrder,
 				executionOrdinal: String(executionOrdinal),
+				pairId,
 				rows: String(workload.rows),
 				columns: String(workload.columns),
 				wide: String(workload.wide),
@@ -568,6 +600,14 @@ async function run() {
 				diagnosticProfile: 'true',
 				floorOnly: String(!instrumentBaseline)
 			};
+			if (frameAware) {
+				// v8 installs both renderer-operation collectors in the primary
+				// navigation. Keeping this as an override preserves the frozen v7
+				// default expression above while ensuring renderer work is observed.
+				query.frameAware = 'true';
+				query.floorOnly = 'false';
+				query.measureNodeChurn = 'false';
+			}
 			if (runtimeCounters && renderer === 'zeus') {
 				query.runtimeCounters = 'true';
 				query.zeusDiag = '1';
@@ -617,10 +657,14 @@ async function run() {
 					renderer,
 					executionOrder: effectiveExecutionOrder,
 					executionOrdinal,
+					pairId,
 					zeusVariant: variant ? variant.id : null,
 					workload,
 					workbenchTableImplementation: 'real',
-					workbenchTableBundleSha256: provenance.workbenchTableBundleSha256
+					workbenchTableBundleSha256: provenance.workbenchTableBundleSha256,
+					measurementContractVersion: frameAware
+						? FRAME_AWARE_MEASUREMENT_CONTRACT_VERSION
+						: MEASUREMENT_CONTRACT_VERSION
 				},
 				benchmarkServer
 			);
@@ -641,9 +685,16 @@ async function run() {
 				workloadId: workload.id,
 				renderer,
 				iteration,
+				pairId,
 				executionOrder: effectiveExecutionOrder,
 				executionOrdinal,
 				...(appHost ? { appGeneration: appHost.generation, appProcessId: appHost.pid } : {}),
+				...(frameAware
+					? {
+							bundleSha256: renderer === 'zeus' ? provenance.zeusBundleSha256 : provenance.workbenchTableBundleSha256,
+							sessionGeneration: appHost ? appHost.generation + 1 : undefined
+						}
+					: {}),
 				viewportCalibration
 			};
 			const visualReady = validateVisualProbe(record, workload);
@@ -1282,9 +1333,20 @@ async function writeEvidence({
 	appRestarts = [],
 	recoveryProbeValidation
 }) {
+	const outputRecords = frameAware
+		? records.map(record => ({
+				...record,
+				measurementContractVersion: FRAME_AWARE_MEASUREMENT_CONTRACT_VERSION,
+				bundleSha256:
+					record.renderer === 'zeus' ? provenance?.zeusBundleSha256 : provenance?.workbenchTableBundleSha256,
+				provenance: { ...provenance },
+				sessionGeneration: record.sessionGeneration
+			}))
+		: records;
 	const report = {
-		version: 2,
+		version: frameAware ? 3 : 2,
 		measurementContractVersion: MEASUREMENT_CONTRACT_VERSION,
+		...(frameAware ? { measurementContractVersion: FRAME_AWARE_MEASUREMENT_CONTRACT_VERSION } : {}),
 		scrollCommitBoundary: SCROLL_COMMIT_BOUNDARY,
 		executionOrder: interleaved ? INTERLEAVED_EXECUTION_ORDER : EXECUTION_ORDER,
 		pageInstrumentation: 'no-global-dom-observer-v2',
@@ -1296,13 +1358,36 @@ async function writeEvidence({
 		reason,
 		...(runtimeCounters
 			? {
-				diagnostic: true,
-				diagnosticOnly: true,
-				runtimeCounterInstrumentation: 'zeus-runtime-counter-hook-v1'
-			}
+					diagnostic: true,
+					diagnosticOnly: true,
+					runtimeCounterInstrumentation: 'zeus-runtime-counter-hook-v1'
+				}
 			: {}),
 		...identity,
 		provenance,
+		...(frameAware
+			? {
+					frameAwareContract: createFrameAwareContractMetadata(),
+					admissionGrade: false,
+					admission: {
+						mode: 'same-execution',
+						correlation: FRAME_AWARE_CORRELATION,
+						grade: false,
+						reasons: ['renderer-operation calibration is unavailable']
+					},
+					// Calibration is an independent precondition of v8 admission. The
+					// collector records it explicitly as unavailable until a measured
+					// calibration run is supplied; the v8 verifier therefore fails closed.
+					frameAwareCalibration: {
+						version: 1,
+						passed: false,
+						rendererWorkRelativeChange: null,
+						rendererWorkAbsoluteChangeMs: null,
+						totalRelativeChange: null,
+						reason: 'No independent renderer-operation calibration was supplied.'
+					}
+				}
+			: {}),
 		// An instrumented-baseline run installs renderer observers, so its
 		// scrollP95Ms carries observer overhead and its presentation floor is not
 		// sampled cleanly. Such evidence may answer diagnostic questions about
@@ -1315,7 +1400,9 @@ async function writeEvidence({
 			!textChurn &&
 			!zeusCss &&
 			!sameExecutionProfile &&
-			!runtimeCounters,
+			!runtimeCounters &&
+			!frameAware,
+		...(frameAware ? { admissionGrade: true } : {}),
 		...(recoveryProbe
 			? {
 					diagnostic: true,
@@ -1380,12 +1467,13 @@ async function writeEvidence({
 					]
 				}
 			: {}),
-		summary: summarize(records),
-		records,
+		summary: frameAware ? summarizeFrameAware(outputRecords) : summarize(outputRecords),
+		records: outputRecords,
 		screenshots,
 		retriedRounds,
 		appRestarts
 	};
+	if (frameAware) report.admissionGrade = false;
 	await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 	process.stdout.write(`Wrote ${outputPath}\n`);
 }
@@ -1440,6 +1528,45 @@ function summarize(records) {
 			}
 		])
 	);
+}
+
+function summarizeFrameAware(records) {
+	const groups = new Map();
+	for (const record of records) {
+		if (record.status !== 'ok') continue;
+		const key = `${record.workloadId}/${record.renderer}`;
+		const group = groups.get(key) ?? { rendererWork: [], totals: [] };
+		for (const sample of record.scroll?.samples ?? []) {
+			const duration = sample.sameExecution?.rendererOperation?.durationMs;
+			if (Number.isFinite(duration)) group.rendererWork.push(duration);
+			if (Number.isFinite(sample.totalMs)) group.totals.push(sample.totalMs);
+		}
+		groups.set(key, group);
+	}
+	return Object.fromEntries(
+		[...groups.entries()].map(([key, group]) => [
+			key,
+			{
+				count: group.rendererWork.length,
+				rendererWorkP50Ms: summarizeFrameAwareMetric(group.rendererWork),
+				rendererWorkP95Ms: summarizeFrameAwareMetric(group.rendererWork),
+				scrollP95Ms: summarizeFrameAwareMetric(group.totals)
+			}
+		])
+	);
+}
+
+function summarizeFrameAwareMetric(values) {
+	if (values.length === 0) return { available: false, count: 0 };
+	const sorted = [...values].sort((left, right) => left - right);
+	return {
+		available: true,
+		count: values.length,
+		median: sorted[Math.floor(sorted.length / 2)],
+		p95: sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)],
+		min: sorted[0],
+		max: sorted.at(-1)
+	};
 }
 
 /**

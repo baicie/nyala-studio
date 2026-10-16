@@ -1,6 +1,6 @@
 # ADR 0005: Zeus 10k Scroll Latency Causes and a Frame-Aware Z1 Gate
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-14
 - Owners: SQL Result, Product, Zeus Evaluation
 - Related: [ADR 0004](./0004-zeus-data-grid-v7-floor-aware-metrics.md), [beta31 platform forensics](../reviews/2026-10-14-beta31-platform-forensics.md)
@@ -21,9 +21,10 @@ reproduces a 53.0%-91.3% commit-median improvement, with 76.6%-87.6% of Workbenc
 time inside its width-measurement wrappers. This does not exclude a production bottleneck
 in Zeus, prove one exists, or support the assertion that only a gate change remains.
 
-The metrics below remain historical proposals, not an accepted or pre-registered v8
-contract. Status stays Proposed; Z1 remains NO-GO. A future decision needs measurements
-with symmetric boundaries and same-execution attribution before admission use.
+The decision below accepts a separate, pre-registered v8 measurement contract. It does not
+change the frozen v7 evidence or turn Z1 into a `GO`. v8 admission is allowed only for new
+records that carry symmetric renderer-operation boundaries and same-execution attribution;
+the historical separately navigated traces remain diagnostic-only.
 
 ## Context
 
@@ -81,7 +82,33 @@ The interpretation above did not validate a specific Zeus or zeus-ui production 
 does not rule one out: same-execution measurements with calibrated boundaries are required
 before attributing the remaining latency.
 
-## Historical proposal (not an implementation decision)
+## Accepted v8 decision
+
+1. Keep measurement contract v7, its verifier, fixtures, and attestations frozen for
+   historical evidence. v8 uses an independent verifier and must reject v7 records.
+2. Measure only the Zeus and repository WorkbenchTable renderers. Native has no equivalent
+   renderer-operation collector and is not a v8 baseline.
+3. For each scroll input, both renderers must report one same-execution operation with the
+   boundary `symmetric-renderer-work-v1`: `startTime`, `endTime`, `durationMs`, and the
+   associated `commitTransactionIds`. The duration must be recomputable from the timestamps,
+   and the operation must be linked to the same sample input.
+4. Use the per-platform `10k-x-50` renderer-work median as the primary metric. Zeus must
+   improve over WorkbenchTable by at least 20%. The renderer-work p95 is a non-regression
+   guard, and `1k-x-20` total latency may regress by at most 10%.
+5. Require calibration evidence for instrumentation overhead. The calibration must show
+   renderer-work relative change no greater than 5% and absolute change no greater than
+   0.25ms; missing or failing calibration is `UNAVAILABLE`/`NO-GO`.
+6. Require matching provenance, bundle digests, run tokens, session generation, and workflow
+   identity for every paired record. Any recovery, retry, app restart, session-generation
+   transition, diagnostic-only flag, or cross-navigation trace makes v8 admission unavailable.
+7. Host frame excess and presentation-floor values may be reported for context but cannot
+   by themselves change an admission result.
+
+This is a measurement-contract decision only. It authorizes implementation of the v8
+collector, verifier, and workflow; it does not authorize a production renderer change,
+release, or a `GO` result without new real-platform evidence.
+
+## Historical proposal (superseded by the accepted decision)
 
 1. Do not change Zeus or `@zeus-web/data-grid` solely on the withdrawn causal decomposition.
    Establish same-execution measurements before selecting a production fix.
@@ -155,5 +182,5 @@ renderers, and it does not propose a value.
 
 ## Status meaning
 
-`Proposed` is ready for product review. It is not an implementation contract, not a sampling
-authorization, and not a performance Go.
+`Accepted` makes the v8 measurement contract binding for new work. It does not rewrite v7
+evidence, approve a production optimization, authorize a release, or change the Z1 result.

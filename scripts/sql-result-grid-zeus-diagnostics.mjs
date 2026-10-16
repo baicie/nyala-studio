@@ -5,6 +5,7 @@ export function createZeusDataGridDiagnosticCollector(options = {}) {
 	const modelBuilds = [];
 	const commits = [];
 	const scrollOperations = [];
+	const frameAware = options.frameAware === true || globalThis.__NYALA_FRAME_AWARE__ === true;
 
 	function cloneModelBuild(sample) {
 		return {
@@ -35,9 +36,7 @@ export function createZeusDataGridDiagnosticCollector(options = {}) {
 			...(Number.isFinite(sample.signalPublishStartTime)
 				? { signalPublishStartTime: sample.signalPublishStartTime }
 				: {}),
-			...(Number.isFinite(sample.signalPublishEndTime)
-				? { signalPublishEndTime: sample.signalPublishEndTime }
-				: {}),
+			...(Number.isFinite(sample.signalPublishEndTime) ? { signalPublishEndTime: sample.signalPublishEndTime } : {}),
 			commitEndTime: sample.commitEndTime,
 			...(Number.isFinite(sample.diagnosticsEndTime) ? { diagnosticsEndTime: sample.diagnosticsEndTime } : {}),
 			layoutReadIntervals: Array.from(sample.layoutReadIntervals ?? [], interval => [interval[0], interval[1]]),
@@ -52,11 +51,37 @@ export function createZeusDataGridDiagnosticCollector(options = {}) {
 	}
 
 	function cloneOperation(operation) {
-		return {
+		const cloned = {
 			phase: operation.phase,
 			sampleIndex: operation.sampleIndex,
 			commitTransactionIds: [...operation.commitTransactionIds],
 			primaryCommitTransactionId: operation.primaryCommitTransactionId
+		};
+		if (frameAware && operation.boundaryVersion !== undefined) {
+			cloned.boundaryVersion = operation.boundaryVersion;
+			cloned.startTime = operation.startTime;
+			cloned.endTime = operation.endTime;
+			cloned.durationMs = operation.durationMs;
+		}
+		return cloned;
+	}
+
+	function addFrameAwareBoundary(correlation, operationCommits) {
+		if (!frameAware || operationCommits.length === 0) return correlation;
+		const starts = operationCommits.map(commit => commit.rangeStartTime);
+		const ends = operationCommits.map(commit => commit.commitEndTime);
+		if (starts.some(value => !Number.isFinite(value)) || ends.some(value => !Number.isFinite(value))) {
+			return correlation;
+		}
+		const startTime = Math.min(...starts);
+		const endTime = Math.max(...ends);
+		if (endTime < startTime) return correlation;
+		return {
+			...correlation,
+			boundaryVersion: 'symmetric-renderer-work-v1',
+			startTime,
+			endTime,
+			durationMs: endTime - startTime
 		};
 	}
 
@@ -68,7 +93,7 @@ export function createZeusDataGridDiagnosticCollector(options = {}) {
 			onCommit(sample) {
 				commits.push(cloneCommit(sample));
 			},
-			...(options.measureNodeChurn === false ? { measureNodeChurn: false } : {})
+			...(options.measureNodeChurn === false || frameAware ? { measureNodeChurn: false } : {})
 		},
 		beginOperation(phase, sampleIndex) {
 			return {
@@ -82,12 +107,16 @@ export function createZeusDataGridDiagnosticCollector(options = {}) {
 				.slice(operation.commitCursor)
 				.filter(commit => commit.source === 'scroll')
 				.map(commit => commit.transactionId);
-			const correlation = {
-				phase: operation.phase,
-				sampleIndex: operation.sampleIndex,
-				commitTransactionIds,
-				primaryCommitTransactionId: commitTransactionIds.at(-1) ?? null
-			};
+			const operationCommits = commits.slice(operation.commitCursor).filter(commit => commit.source === 'scroll');
+			const correlation = addFrameAwareBoundary(
+				{
+					phase: operation.phase,
+					sampleIndex: operation.sampleIndex,
+					commitTransactionIds,
+					primaryCommitTransactionId: commitTransactionIds.at(-1) ?? null
+				},
+				operationCommits
+			);
 			scrollOperations.push(correlation);
 			return cloneOperation(correlation);
 		},

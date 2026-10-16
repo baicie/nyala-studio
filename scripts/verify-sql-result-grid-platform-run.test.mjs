@@ -99,6 +99,40 @@ test('verifies one immutable result-grid platform run and its four exact artifac
 	assert.deepEqual(report.reasons, []);
 });
 
+test('verifies the independent v8 workflow and artifact contract', () => {
+	const runMetadata = createRunMetadata();
+	runMetadata.name = 'SQL Result Grid Frame-Aware v8 Platform Evidence';
+	runMetadata.path = '.github/workflows/sql-result-grid-platform-v8.yml';
+	const artifactMetadata = createArtifactMetadata();
+	const v8Names = [
+		'sql-result-grid-v8-zeus-audit',
+		'sql-result-grid-v8-macos-webkit',
+		'sql-result-grid-v8-windows-webview2',
+		'sql-result-grid-v8-platform-gate'
+	];
+	for (const [index, artifact] of artifactMetadata.artifacts.entries()) artifact.name = v8Names[index];
+	const report = verifySqlResultGridPlatformRunMetadata({
+		runMetadata,
+		artifactMetadata,
+		expectedRepository: repository,
+		expectedRunId: runId,
+		expectedRevision: sourceRevision,
+		expectedRef: sourceRef,
+		now,
+		spec: {
+			artifactNames: v8Names,
+			aggregateArtifactName: 'sql-result-grid-v8-platform-gate',
+			workflow: {
+				name: 'SQL Result Grid Frame-Aware v8 Platform Evidence',
+				path: '.github/workflows/sql-result-grid-platform-v8.yml',
+				event: 'workflow_dispatch'
+			}
+		}
+	});
+	assert.equal(report.status, 'verified');
+	assert.equal(report.aggregateArtifactId, '444');
+});
+
 test('rejects a different repository, run, or workflow even when artifact names match', () => {
 	const runMetadata = createRunMetadata();
 	runMetadata.id += 1;

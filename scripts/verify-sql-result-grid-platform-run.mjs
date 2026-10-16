@@ -4,17 +4,33 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const expectedArtifactNames = [
-	'sql-result-grid-zeus-audit',
-	'sql-result-grid-macos-webkit',
-	'sql-result-grid-windows-webview2',
-	'sql-result-grid-platform-gate'
-];
-const aggregateArtifactName = 'sql-result-grid-platform-gate';
-const expectedWorkflow = {
-	name: 'SQL Result Grid Native WebView Evidence',
-	path: '.github/workflows/sql-result-grid-platform.yml',
-	event: 'workflow_dispatch'
+const V7_PLATFORM_RUN_SPEC = {
+	artifactNames: [
+		'sql-result-grid-zeus-audit',
+		'sql-result-grid-macos-webkit',
+		'sql-result-grid-windows-webview2',
+		'sql-result-grid-platform-gate'
+	],
+	aggregateArtifactName: 'sql-result-grid-platform-gate',
+	workflow: {
+		name: 'SQL Result Grid Native WebView Evidence',
+		path: '.github/workflows/sql-result-grid-platform.yml',
+		event: 'workflow_dispatch'
+	}
+};
+const V8_PLATFORM_RUN_SPEC = {
+	artifactNames: [
+		'sql-result-grid-v8-zeus-audit',
+		'sql-result-grid-v8-macos-webkit',
+		'sql-result-grid-v8-windows-webview2',
+		'sql-result-grid-v8-platform-gate'
+	],
+	aggregateArtifactName: 'sql-result-grid-v8-platform-gate',
+	workflow: {
+		name: 'SQL Result Grid Frame-Aware v8 Platform Evidence',
+		path: '.github/workflows/sql-result-grid-platform-v8.yml',
+		event: 'workflow_dispatch'
+	}
 };
 const isMain = process.argv[1] ? resolve(process.argv[1]) === fileURLToPath(import.meta.url) : false;
 
@@ -27,8 +43,12 @@ export function verifySqlResultGridPlatformRunMetadata({
 	expectedRunId,
 	expectedRevision,
 	expectedRef,
+	spec = V7_PLATFORM_RUN_SPEC,
 	now = new Date()
 }) {
+	const artifactNames = spec.artifactNames;
+	const aggregateArtifactName = spec.aggregateArtifactName;
+	const expectedWorkflow = spec.workflow;
 	const reasons = [];
 	const repository = validRepository(expectedRepository) ? expectedRepository : undefined;
 	const requestedRunId = normalizeId(expectedRunId);
@@ -81,16 +101,13 @@ export function verifySqlResultGridPlatformRunMetadata({
 	}
 
 	const rawArtifacts = Array.isArray(artifactMetadata?.artifacts) ? artifactMetadata.artifacts : [];
-	if (
-		artifactMetadata?.total_count !== expectedArtifactNames.length ||
-		rawArtifacts.length !== expectedArtifactNames.length
-	) {
+	if (artifactMetadata?.total_count !== artifactNames.length || rawArtifacts.length !== artifactNames.length) {
 		reasons.push(
 			`platform run must expose exactly 4 artifacts, got ${String(artifactMetadata?.total_count)}/${rawArtifacts.length}`
 		);
 	}
 	const names = rawArtifacts.map(artifact => artifact?.name);
-	for (const name of expectedArtifactNames) {
+	for (const name of artifactNames) {
 		const count = names.filter(candidate => candidate === name).length;
 		if (count !== 1) reasons.push(`expected exactly one ${name} artifact, got ${count}`);
 	}
@@ -109,10 +126,11 @@ export function verifySqlResultGridPlatformRunMetadata({
 				runUpdatedAt,
 				nowMs
 			},
+			artifactNames,
 			reasons
 		)
 	);
-	const orderedArtifacts = expectedArtifactNames
+	const orderedArtifacts = artifactNames
 		.map(name => artifacts.find(artifact => artifact.name === name))
 		.filter(Boolean);
 	const aggregateArtifact = orderedArtifacts.find(artifact => artifact.name === aggregateArtifactName);
@@ -155,7 +173,7 @@ export function verifySqlResultGridPlatformRunMetadata({
 	};
 }
 
-function normalizeArtifact(artifact, index, expected, reasons) {
+function normalizeArtifact(artifact, index, expected, artifactNames, reasons) {
 	const prefix = `artifact ${index}`;
 	const id = normalizeId(artifact?.id);
 	const digest = normalizeArtifactDigest(artifact?.digest);
@@ -163,7 +181,7 @@ function normalizeArtifact(artifact, index, expected, reasons) {
 	const updatedAt = parseIsoDate(artifact?.updated_at);
 	const expiresAt = parseIsoDate(artifact?.expires_at);
 	if (!id) reasons.push(`${prefix} id is invalid`);
-	if (!expectedArtifactNames.includes(artifact?.name)) reasons.push(`${prefix} name is unexpected`);
+	if (!artifactNames.includes(artifact?.name)) reasons.push(`${prefix} name is unexpected`);
 	if (!positiveInteger(artifact?.size_in_bytes)) reasons.push(`${prefix} size is invalid`);
 	if (artifact?.expired !== false) reasons.push(`${prefix} is expired`);
 	if (!digest) reasons.push(`${prefix} SHA-256 digest is invalid or missing`);
@@ -210,6 +228,7 @@ function normalizeArtifact(artifact, index, expected, reasons) {
 
 async function runCli() {
 	const cli = parseArgs(process.argv.slice(2).filter(argument => argument !== '--'));
+	const spec = cli.contract === 'v8' ? V8_PLATFORM_RUN_SPEC : V7_PLATFORM_RUN_SPEC;
 	const outputPath = resolve(cli.output ?? 'sql-result-grid-platform-run.json');
 	let report;
 	try {
@@ -223,7 +242,8 @@ async function runCli() {
 			expectedRepository: cli['expected-repository'],
 			expectedRunId: cli['expected-run-id'],
 			expectedRevision: cli['expected-revision'],
-			expectedRef: cli['expected-ref']
+			expectedRef: cli['expected-ref'],
+			spec
 		});
 	} catch (error) {
 		report = {
