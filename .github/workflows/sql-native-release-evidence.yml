@@ -1,0 +1,166 @@
+name: SQL Native-only Release Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      a4_attestation_run_id:
+        description: 'Successful SQL Agent Checkpoint W Attestation run ID for this revision'
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: sql-native-release-evidence-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  verify-native-release:
+    name: Authenticate A4 and run native-only release gate
+    if: github.ref_protected == true && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    environment: sql-native-release
+    env:
+      A4_ATTESTATION_RUN_ID: ${{ inputs.a4_attestation_run_id }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Initialize release evidence directory
+        run: |
+          EVIDENCE_ROOT="$RUNNER_TEMP/sql-native-release-evidence"
+          echo "EVIDENCE_ROOT=$EVIDENCE_ROOT" >> "$GITHUB_ENV"
+          mkdir -p "$EVIDENCE_ROOT/a4"
+          node -e "const fs=require('node:fs');const p=process.env.RUNNER_TEMP+'/sql-native-release-evidence/phase-native-release-gate.json';fs.writeFileSync(p,JSON.stringify({version:1,generatedAt:new Date().toISOString(),sourceRevision:process.env.GITHUB_SHA,decision:'NO-GO',checks:[],blockers:['The authenticated native-only release workflow did not complete.']},null,2)+'\\n')"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Verify protected default-branch source
+        run: |
+          test "$GITHUB_REF_PROTECTED" = "true" || { echo 'Native-only release requires a protected branch.' >&2; exit 1; }
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" || { echo 'Native-only release must run from the protected default branch.' >&2; exit 1; }
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA" || { echo 'Default branch moved after dispatch; rerun against the current revision.' >&2; exit 1; }
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Fetch A4 attestation metadata
+        env:
+          GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          case "$A4_ATTESTATION_RUN_ID" in
+            ''|*[!0-9]*) echo 'a4_attestation_run_id must be a positive integer' >&2; exit 1 ;;
+          esac
+          curl --fail-with-body --silent --show-error --location \
+            --header "Authorization: Bearer $GH_API_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$A4_ATTESTATION_RUN_ID" \
+            --output "$EVIDENCE_ROOT/a4-run-api.json"
+          curl --fail-with-body --silent --show-error --location \
+            --header "Authorization: Bearer $GH_API_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$A4_ATTESTATION_RUN_ID/artifacts?per_page=100" \
+            --output "$EVIDENCE_ROOT/a4-artifacts-api.json"
+
+      - id: a4-run
+        name: Verify A4 attestation run metadata
+        run: |
+          node scripts/verify-sql-agent-attestation-run.mjs \
+            --run-metadata "$EVIDENCE_ROOT/a4-run-api.json" \
+            --artifact-metadata "$EVIDENCE_ROOT/a4-artifacts-api.json" \
+            --output "$EVIDENCE_ROOT/a4-attestation-run.json" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-run-id "$A4_ATTESTATION_RUN_ID" \
+            --expected-revision "$GITHUB_SHA" \
+            --expected-ref "$GITHUB_REF" \
+            --expected-workflow-name 'SQL Agent Checkpoint W Attestation' \
+            --expected-workflow-path .github/workflows/sql-agent-checkpoint-w-attest.yml \
+            --expected-workflow-event workflow_dispatch \
+            --expected-artifact-name sql-agent-checkpoint-w \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Download and verify A4 evidence archive
+        env:
+          GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          A4_ARTIFACT_URL: ${{ steps.a4-run.outputs.artifact_url }}
+          A4_ARTIFACT_DIGEST: ${{ steps.a4-run.outputs.artifact_digest }}
+        run: |
+          archive="$EVIDENCE_ROOT/a4.zip"
+          entries="$EVIDENCE_ROOT/a4-entries.txt"
+          case "$A4_ARTIFACT_URL" in
+            https://api.github.com/repos/"$GITHUB_REPOSITORY"/actions/artifacts/*/zip) ;;
+            *) echo "Unexpected A4 archive URL: $A4_ARTIFACT_URL" >&2; exit 1 ;;
+          esac
+          test "${#A4_ARTIFACT_DIGEST}" -eq 64 || { echo 'Invalid A4 archive digest length' >&2; exit 1; }
+          curl --fail-with-body --silent --show-error --location \
+            --header "Authorization: Bearer $GH_API_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$A4_ARTIFACT_URL" --output "$archive"
+          printf '%s  %s\n' "$A4_ARTIFACT_DIGEST" "$archive" | sha256sum --check --strict -
+          unzip -Z1 "$archive" > "$entries"
+          ENTRIES_FILE="$entries" node <<'NODE'
+          const fs = require('node:fs');
+          const entries = fs.readFileSync(process.env.ENTRIES_FILE, 'utf8').split(/\r?\n/).filter(Boolean);
+          if (entries.length === 0) throw new Error('A4 artifact archive is empty.');
+          for (const entry of entries) {
+            if (entry.startsWith('/') || /^[A-Za-z]:/.test(entry) || entry.includes('\\') || entry.split('/').includes('..')) {
+              throw new Error(`Unsafe A4 artifact archive entry: ${entry}`);
+            }
+          }
+          NODE
+          unzip -q "$archive" -d "$EVIDENCE_ROOT/a4"
+          rm "$archive" "$entries"
+          test -z "$(find "$EVIDENCE_ROOT/a4" -type l -print -quit)" || {
+            echo 'A4 artifact contains an unsafe symbolic link.' >&2
+            exit 1
+          }
+          test -f "$EVIDENCE_ROOT/a4/phase-a4-checkpoint-w.json" && test ! -L "$EVIDENCE_ROOT/a4/phase-a4-checkpoint-w.json" || {
+            echo 'A4 gate artifact is missing or unsafe.' >&2
+            exit 1
+          }
+
+      - id: native-gate
+        name: Run native-only release gate
+        continue-on-error: true
+        env:
+          NYALA_EXPECTED_SOURCE_REVISION: ${{ github.sha }}
+          NYALA_A4_CHECKPOINT_W_GATE: ${{ runner.temp }}/sql-native-release-evidence/a4/phase-a4-checkpoint-w.json
+        run: node scripts/verify-sql-native-release.mjs "$EVIDENCE_ROOT/phase-native-release-gate.json"
+
+      - name: Publish native-only release summary
+        if: always()
+        run: |
+          echo '## SQL Native-only Release' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat "$EVIDENCE_ROOT/phase-native-release-gate.json" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload native-only release evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sql-native-release-evidence
+          path: |
+            ${{ runner.temp }}/sql-native-release-evidence/phase-native-release-gate.json
+            ${{ runner.temp }}/sql-native-release-evidence/a4-run-api.json
+            ${{ runner.temp }}/sql-native-release-evidence/a4-artifacts-api.json
+            ${{ runner.temp }}/sql-native-release-evidence/a4-attestation-run.json
+            ${{ runner.temp }}/sql-native-release-evidence/a4
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+      - name: Enforce native-only release decision
+        if: steps.native-gate.outcome == 'failure'
+        run: |
+          echo 'Native-only release remains NO-GO. Inspect the authenticated evidence artifact.' >&2
+          exit 1
