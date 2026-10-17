@@ -55,6 +55,18 @@ Agent A4 的 Result action contract 稳定后再开始，避免两个分支同�
 如果 Z1 得出 No-Go，不能把“评估完成”算成 Zeus 接入完成，也不能绕过门槛强行增加
 生产依赖。此时 vNext 保持未完成，必须由产品负责人明确修改 Zeus 目标或批准新的方案。
 
+### Native-only release track（2026-10-17）
+
+产品决定先发布已完成的 SQL Agent 与 native Result Grid 能力，Zeus Z1/Z2 remain deferred。
+这条路径不把 Z1 的 `NO-GO` 改成 `GO`，也不把整体 vNext DoD 标记为完成；它使用独立的
+`pnpm run verify:sql-native-release` gate，要求 A4 Checkpoint W 在同一 revision 上为 `GO`，
+保留 native renderer 为默认 renderer，且不增加 `@zeus-web/data-grid` production dependency。
+完整准入说明见 [`phase-native-release-gate.md`](./phase-native-release-gate.md)。
+
+Native-only gate 通过后，发布范围只包含 Agent A0-A4 和 native Result surface；Z1 benchmark、
+Zeus bundle audit 与 v8/floor-aware 诊断继续作为非阻塞证据保存。重新引入 Zeus 仍须单独完成
+Z1 Go、Z2 Preview contract、双平台原生 QA 和 production decision。
+
 ## 3. 架构决策与不变量
 
 1. **Agent runtime 在本地 Rust**：loop、tool dispatch、policy、budget、audit 和

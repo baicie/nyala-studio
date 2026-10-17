@@ -43,6 +43,11 @@ Core MVP 00-08 已完成后，新的 MVP 目标由
 | Zeus Z2  | Result Grid Preview    | 禁止开始（A4 Checkpoint W 未完成且 Z1 `NO-GO`）                                                                      | feature flag + native fallback + behavior parity         |
 | R0       | vNext release          | prework 已实现；结构化 release gate `NO-GO`                                                                          | Agent A4 + Zeus Z2 + full release gate                   |
 
+2026-10-17 产品决策：增加独立 Native-only release track，使用
+[`phase-native-release-gate.md`](./phase-native-release-gate.md) 和
+`pnpm run verify:sql-native-release`。该路径仍要求 A4 Checkpoint W `GO`，只解除对 Z1/Z2
+的发布依赖；Zeus 的 `NO-GO`、Z2 禁止开始和整体 vNext DoD 未改变。
+
 关键依赖：`A0/A1 → A2 → A3 → A4`；`Z0 → Z1` 可以并行进行；生产试点必须
 `A4 + Z1 Go → Z2 → R0`。Z1 No-Go 不等于 Zeus 接入完成，必须回到产品决策。
 
